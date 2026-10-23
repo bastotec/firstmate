@@ -14,8 +14,10 @@ SET_MODEL 1 records that this turn's Deck takes `deck-control: set_model`
 HOME selects captain recall's operational home; absent, it defaults to STATE's
 parent. bin/fm_captain_memory.py owns the recall contract.
 start prints the turn projection path; end retires the active descriptor.
-fm_stream_deck.py captain STATE ID flushes eligible direct sources and bound
+fm_stream_deck.py captain STATE ID [--timings] flushes eligible direct sources and bound
 Bridge orders; project_captain owns eligibility and acknowledgement rules.
+--timings emits privacy-safe lifecycle-lock and projection durations to stderr;
+a started phase without completion localizes an interrupted best-effort call.
 with_deck_images owns how a captain attachment becomes a Deck image part.
 """
 import contextlib
@@ -99,10 +101,16 @@ class Receiver:
         self.root = self.inbox / ('deck-' + endpoint)
 
     @contextlib.contextmanager
-    def locked(self):
+    def locked(self, timings=False):
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         with (self.root / '.lifecycle.lock').open('a') as lock:
+            started = time.monotonic()
+            if timings:
+                print('handoff lifecycle-lock phase=waiting', file=sys.stderr, flush=True)
             fcntl.flock(lock, fcntl.LOCK_EX)
+            if timings:
+                print('handoff lifecycle-lock phase=acquired elapsed_ms=%.1f' %
+                      ((time.monotonic() - started) * 1000), file=sys.stderr, flush=True)
             yield
 
     def active(self):
@@ -439,7 +447,7 @@ def conversation_record(text):
     return stream == 'conversation' and not HANDOFF.match(body)
 
 
-def project_captain(state, task):
+def project_captain(state, task, timings=False):
     """Best-effort ordered publication of native sources into live Deck turns.
 
     The ring and driver turn-start call this independently of terminal input.
@@ -467,14 +475,20 @@ def project_captain(state, task):
     for root in sorted(inbox.glob('deck-*')):
         endpoint = root.name[len('deck-'):]
         receiver = Receiver(state, task, endpoint)
-        with receiver.locked():
+        with receiver.locked(timings=timings):
             active = receiver.active()
             if not active or not active.get('active') or not active.get('supported'):
                 continue
             projection = receiver.root / active['turn']
             if not projection.is_dir():
                 continue
+            started = time.monotonic()
+            if timings:
+                print('handoff projection phase=started', file=sys.stderr, flush=True)
             published += receiver.publish(active)
+            if timings:
+                print('handoff projection phase=completed elapsed_ms=%.1f' %
+                      ((time.monotonic() - started) * 1000), file=sys.stderr, flush=True)
     return published
 
 
@@ -553,7 +567,7 @@ def main():
         sys.exit(0 if conversation_busy(sys.argv[2], sys.argv[3]) else 1)
     if sys.argv[1:2] == ['captain']:
         _, state, task = sys.argv[1:4]
-        print(project_captain(state, task))
+        print(project_captain(state, task, timings='--timings' in sys.argv[4:]))
         return
     action, state, task, endpoint, *args = sys.argv[1:]
     receiver = Receiver(state, task, endpoint)

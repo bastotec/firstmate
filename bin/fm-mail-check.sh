@@ -174,8 +174,10 @@ record_write() {
 poll_has_publication_evidence() {
   local rc=${1:-0} out=$2 woken_before=$3
   [ "$rc" -eq 124 ] && return 0
-  if [ -n "$out" ] && printf '%s\n' "$out" | grep -qE \
-    '^fm-mail: woke for |the wake stays queued|could not clear retry for recovered'
+  # Drain the pipe: grep -q can close it while printf is still writing,
+  # leaking a broken-pipe diagnostic into the check's one-line report.
+  if [ -n "$out" ] && printf '%s\n' "$out" | grep -E \
+    '^fm-mail: woke for |the wake stays queued|could not clear retry for recovered' >/dev/null
   then
     return 0
   fi

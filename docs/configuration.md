@@ -26,6 +26,7 @@ config/
   backend                 absent or stream; inherited ("Runtime backend")
   stream-hub stream-token stream-hub-tokens stream-machine stream-impl stream-native-dir  stream hub, credentials, fleet name, implementation; never committed (docs/stream-backend.md)
   launch-env-allowlist    optional worker environment allowlist; inherited ("Worker launch environment")
+  secondmate-tool-path    explicit home-host tool directories; home-local, not inherited (bin/fm-deck-worker.sh header)
   startup-memory-budget   per-home startup-memory allowance; inherited ("Startup memory budget")
   trace-context           optional presence flag; inherited at launch ("Trace context propagation")
   stow-pass-horizon       optional presence flag ("Stow pass horizon")
@@ -40,6 +41,7 @@ config/
   deck-mcp.json           optional Deck MCP servers ("Harness support")
   primary-split           optional presence flag: conversation (captain thread) and inner monologue (supervisor); inherited (bin/fm-config-inherit-lib.sh); first mate: bin/fm_primary_chat.py header; second mate: bin/fm-captain-lane.sh header
   model-policy.json       home-local route policy for in-place switches (bin/fm_model_switch.py owns validation and policy semantics)
+  merge-policy.json       the captain's per-repository merge policy (auto, ask, never); inherited; bin/fm-merge-policy.sh header owns shape and semantics
   power-host              optional ssh alias for fleet quota reads (bin/fm_report.py owns default and bridge flow)
   shared-skills           optional skills repo shipped to connected machines; primary home only (bin/fm-machine.sh header)
   vnc/<machine>.password  mode-600 VNC password per machine; primary home only (bin/fm-machine-vnc.sh header)
@@ -76,7 +78,11 @@ state/
   <id>.supervisor-failing <id>.conversation-failing  secondmate lane-health episodes (bin/fm-deck-worker.sh "SUPERVISOR HEALTH", bin/fm-captain-lane.sh lane-health comment own escalation and recovery)
   <id>.supervisor-notes   owed supervisor conversation notes, one note text per line, oldest first; failed delivery is queued independently of health episodes and retried in order at every turn start and recovery; teardown removes it
   <id>.lane-heal-<lane>  the first mate's automatic relaunch and escalation of a second mate whose lane keeps failing, one record per lane (bin/fm-secondmate-revive.sh "LANE HEALTH")
-  <id>.parked-run  a worker's parked validation run being nudged and escalated (bin/fm-parked-run-watch.sh header)
+  <id>.approval-wait approval-waits/  parent approval exclusion and release archive (bin/fm-approval-wait.sh owns schema, declaration and release)
+  <id>.parked-run <id>.quiet-noted  parked validation episode and quiet-worker check-in marker (bin/fm-parked-run-watch.sh header)
+  ci-stall/               stalled-CI re-trigger progress per worker, learned check durations, and the events dreaming counts (bin/fm_ci_stall.py docstring)
+  keepalive/              worker and secondmate-question episodes (bin/fm_worker_keepalive.py docstring)
+  .spawn-serial.lock      fresh-spawn serialization (bin/fm-spawn.sh header "Serialized spawns")
   <id>.model <id>.deck-caps  in-place model choice and live driver capability (bin/fm-control.sh owns public behavior; bin/fm_model_switch.py owns capability checks)
   <id>.progress           in-turn native activity, read for the busy-age bound only (bin/fm-busy-event.sh)
   <id>.crew-state         local ship task's validation record for file watchers; bin/fm-task-state-lib.sh "PUBLISHED RECORD" owns fields, refreshes, and cleanup
@@ -94,7 +100,7 @@ state/
   <id>.reconcile-nudged   last inventory-reconcile nudge time (bin/fm-secondmate-reconcile.sh)
   <id>.revive secondmate-revive.log  mid-session second-mate revival record and log (bin/fm-secondmate-revive.sh)
   <id>.held-stopped       deliberate secondmate stop marker (bin/fm-control.sh)
-  idle-sweep.json idle-sweep.log idle-sweep/<id>.raised <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, raised-decision fingerprints, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
+  idle-sweep.json idle-sweep.log idle-sweep/<id>.raised idle-sweep/<id>.retried <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, handoff and retry markers, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
   idle-sweep/.unhandled   main-home unhandled-set wake suppression marker; bin/fm-idle-sweep.sh owns its contents and reset contract
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
@@ -102,7 +108,7 @@ state/
   endpoint-retirements.log  endpoint retirement and leftover-close assertions (operator or owning mate); written only by bin/fm-retire-endpoint.sh
   pr-unbinds.log          wrong-PR metadata clear assertions; written only by bin/fm-pr-unbind.sh
   terminal-outcomes/      inactive terminal-outcome receipts (bin/fm-inactive-reconcile.sh)
-  slot-quarantine/       preserved scratch from pooled worktree slots (bin/fm-spawn.sh header owns eligibility and destination layout)
+  slot-quarantine/       preserved untracked leftovers from pooled worktree slots (bin/fm-spawn.sh header owns eligibility and destination layout)
   model-chain/            per-lane model cooldowns ("Model fallback chains")
   pending-replies/        parent-owned secondmate pending replies (bin/fm-pending-reply-lib.sh)
   captain-direct/ captain-direct.log  parent-side captain-direct delivery ledger and echo-guard log (bin/fm-captain-direct-lib.sh)
@@ -153,6 +159,12 @@ state/
 `bin/fm-session-start.sh`'s header owns session-start ordering, blocking reads, and the digest; `bin/fm-startup-network.sh`'s header owns the deferred checks and inactive-outcome scan.
 `AGENTS.md` keeps the run-once and read-once rules, lock-refusal safety, installation consent, and direct-report recovery boundaries; `stuck-crewmate-recovery` owns dead-direct-report recovery and `secondmate-provisioning` owns persistent-secondmate recovery.
 
+## Private startup diagnostics
+
+For private timings on an authorized fresh start, use the destination-home selector in [`fm-startup-diagnostics.sh`](../bin/fm-startup-diagnostics.sh); its header covers local use and selection through `fm-on.sh` despite remote environment stripping.
+Don't run a second digest beside an active session.
+[`fm-session-start.sh`'s header](../bin/fm-session-start.sh) owns the environment override, private artifact contract, retention, and startup deadline; [`fm-startup-diagnostics-lib.sh`](../bin/fm-startup-diagnostics-lib.sh) owns the fixed event/stage allowlist.
+
 ## Model fallback chains (spawn-side)
 
 Every spawn-side model surface accepts a fallback chain: a `config/crew-dispatch.json` profile's `model`, the model token in `config/secondmate-harness`, and `fm-spawn.sh --model`.
@@ -179,13 +191,15 @@ On an automatic-backend home, missing or incompatible `tasks-axi`, an unresolvab
 Migrated-hold resolution on a beads home reads only the root `.tasks.toml` `[beads]` section and refuses (rc=2) when beads is selected elsewhere without one.
 Secondmate handoffs use `fm-backlog-handoff.sh`, which validates fleet-level rules and delegates the move to `tasks-axi mv`; its [header](../bin/fm-backlog-handoff.sh) owns route-specific outcomes.
 It moves in-scope `## Queued` items only, refuses `## In flight` and `## Done` records, and refuses an item whose body continuation is indented with fewer than two spaces or a tab.
-Set `config/backlog-backend` to `manual` to force hand-editing and suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact; absent or `tasks-axi` selects tasks-axi.
-A `manual` home owns its backlog file outright: automatic lifecycle transitions are skipped, and teardown prints the hand edit that is owed, but its [PR-resolution preflight](../bin/fm-teardown.sh) still applies.
+Set `config/backlog-backend` to `manual` for manual lifecycle updates and to suppress the verbose `BOOTSTRAP_INFO: tasks-axi available` fact; absent or `tasks-axi` selects tasks-axi.
+A `manual` home skips automatic lifecycle transitions, and teardown prints the hand edit that is owed, but its [PR-resolution preflight](../bin/fm-teardown.sh) still applies.
+The knob does not disable the sweep's [markdown normalization](../bin/fm-idle-sweep.sh), whose repair and skip rules are owned by the [`fm-backlog-normalize.sh` header](../bin/fm-backlog-normalize.sh).
 The knob does not affect the handoff helper, which works fleet-wide because bootstrap requires compatible `tasks-axi` on every profile.
 
 The tracked `.tasks.toml` paths resolve against the directory tasks-axi runs in, not `FM_HOME`, so a bare `tasks-axi` run from the code root addresses the code root's `data/`.
 tasks-axi writes by renaming over its target, so symlinking the code-root copy into a home forks the queue on the first write.
 Every routine backlog command therefore runs through [`bin/fm-tasks-axi.sh`](../bin/fm-tasks-axi.sh), which addresses this home's backlog and archive from any working directory.
+Markdown access through the wrapper, captain-hold commands, and lifecycle transitions follows the shared [addressing and repair contract](../bin/fm-backlog-transition-lib.sh).
 PR-bearing completion follows the [completion-claim gate in `bin/fm-pr-lib.sh`](../bin/fm-pr-lib.sh); the wrapper's header owns PR resolution and hand-close refusals.
 [`fm_backlog_record_pr_outcome`](../bin/fm-backlog-transition-lib.sh) owns the recorded PR outcome format and title-link handling, and [`bin/fm-landed-lib.sh`](../bin/fm-landed-lib.sh) owns how those outcomes affect Recently Landed.
 For existing Done records, [`bin/fm-pr-record-audit.sh`](../bin/fm-pr-record-audit.sh) owns the read-only audit and opt-in migration, including its limits and reconciliation diagnostics.
@@ -204,12 +218,13 @@ A task record on the retired `tmux` or `herdr` backend, including a record with 
 [Endpoint retirement](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) owns the operator assertion required to retire such a record with [`bin/fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh), and the owning mate's `--finished` path for its own finished work.
 A stream endpoint the hub still lists live after its task record is gone is closed only by `bin/fm-retire-endpoint.sh --orphan`, which [the same section](stream-backend.md#retiring-an-endpoint-record-without-a-confirmed-stop) points to.
 `fm-spawn.sh` spawns local ship, scout, and `--secondmate` tasks on stream, and [remote placement](remote-secondmates.md#normal-operation) owns remote secondmates.
-A spawn refusal from a missing dependency, version gate, or unreachable hub is terminal, and firstmate surfaces it as a blocker.
+A spawn refusal from a missing dependency, version gate, or unreachable hub ends that invocation; [AGENTS.md section 4](../AGENTS.md#4-harness-and-runtime-dispatch) owns the repair and retry policy before escalation.
 Every spawn records `backend=stream`, `endpoint_task_id=` (the cleanup binding between the metadata filename and the opaque endpoint), `stream_hub=`, and `stream_endpoint_id=` in task meta.
 The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns a remote secondmate's parent-record endpoint binding.
 The session-start and watcher-run secondmate recovery paths use `fm_backend_agent_state`, whose comment in `bin/fm-backend.sh` owns its state contract; [Secondmate lifecycle](stream-backend.md#secondmate-lifecycle) owns automatic recovery behavior and limits.
 
-This paragraph is the single owner of the ordinary task-selector vocabulary for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh`.
+This paragraph is the single owner of the ordinary endpoint-task selector vocabulary for `fm-peek.sh`, `fm-send.sh`, and `fm-crew-state.sh`.
+The [`fm-send.sh` header](../bin/fm-send.sh) owns the specialist-selector exception before endpoint routing.
 A selector containing `:` is an explicit `<hub-tag>:<endpoint-id>` escape hatch.
 Otherwise an exact task id matching `state/<id>.meta` wins before the legacy `fm-<id>` label fallback, so task ids that start with `fm-` route to their own metadata.
 A metadata-routed selector returns the recorded target (`window=`) and carries secondmate-marker and recorded-harness context; explicit escape hatches do not.
@@ -295,9 +310,11 @@ Running hosts pick up a change to the code only after a restart, and a change to
 ## Fleet dreaming (config/dream.json)
 
 `bin/fm-dream.sh` is the fleet's optional nightly pass over its own day; its [header](../bin/fm-dream.sh) owns running, inspecting, scheduling and uninstalling the service.
-It collects a private digest, improves shared skills, and proposes harness fixes as tasks for the owning mates.
-Dreaming never pushes to or opens PRs on harness repositories; the mates' own no-mistakes and autoland rules decide what lands.
-[`bin/fm_dream.py`](../bin/fm_dream.py)'s header owns the sources, steps, budgets, guards and private files; [`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) exercises them offline.
+Alongside its skill and harness-triage passes, the improve pass measures mate tasks against session branches and acts on evidence-linked changes: shared instruction edits go through a gated firstmate PR, code fixes become priority tasks with immediate dispatch orders to owning mates, private charter additions are applied automatically under the [charter guards](../bin/fm_dream.py), and captain-only changes follow the [runner's captain-card handling](../bin/fm_dream.py).
+[Auto-land](#auto-land-configautolandjson-configpost-merge) owns merge authority and deployment; dreaming does not grant either.
+The morning summary reports what slowed work down, the [runner-defined action outcomes](../bin/fm_dream.py), and last night's changes with their targeted measurements then and now.
+[`bin/fm_dream.py`](../bin/fm_dream.py)'s header owns the steps, budgets, guards and private files; [`bin/fm_lifecycle.py`](../bin/fm_lifecycle.py)'s header owns timeline sources and measurement limits.
+[`tests/fm-dream.test.sh`](../tests/fm-dream.test.sh) and [`tests/fm-lifecycle.test.sh`](../tests/fm-lifecycle.test.sh) exercise them offline.
 
 This section owns `config/dream.json`, a gitignored, per-home JSON object whose fields are all optional.
 An absent file means `{}`; an unreadable, malformed or mistyped configuration stops the run rather than silently dropping privacy exclusions.
@@ -313,6 +330,8 @@ An absent file means `{}`; an unreadable, malformed or mistyped configuration st
   Their backlogs are omitted from triage's open-work reads.
   An unparsable registry entry stops a run with exclusions because the private homes cannot be reliably identified.
 - `model`: a string selecting the deck model; absent or empty uses the primary chat's recorded model, then the runner's `DEFAULT_MODEL`.
+- `improve`: an object whose optional `model` string pins the improve step's gateway model; absent or empty uses `IMPROVE_MODEL` in [`bin/fm_dream.py`](../bin/fm_dream.py) (`claude/opus-5-5`).
+  An unavailable model is named in the morning summary and never replaced by another; the measurement and the steps that need no model still run.
 
 The fleet and primary reports expose the last published run through `dream` and the markdown "Overnight" section; [`bin/fm_report.py`](../bin/fm_report.py)'s header owns that projection and its time window.
 
@@ -446,6 +465,9 @@ For endpoint launches, values come from the destination pane at execution time a
 For direct specialist and group runs, values come from the launcher environment; an automatically discovered `PROXAI_API_KEY_FILE` is also subject to filtering and must be listed when needed.
 Listing a name does not provision it on another machine.
 
+For an explicit home-local tool selection before a secondmate's startup/bootstrap, [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh)'s header owns `config/secondmate-tool-path` syntax, activation, and scope.
+It does not install tools or authorize a relaunch; a command-scoped bootstrap result is not proof that a fresh home launch used the grant.
+
 | Provider or Git transport | Additional names needed |
 | --- | --- |
 | Provider login stored under the home directory | None for tools that load the store themselves; launcher-supplied credential locations still need the grants described above. |
@@ -495,7 +517,7 @@ Bootstrap validates the file with `jq`: valid files stay silent unless `FM_BOOTS
 
 ## Toolchain
 
-On session start firstmate lists each missing or too-old required tool with an exact install command or manual instructions, and installs supported tools only after you say go.
+On session start firstmate lists each missing or too-old required tool with an exact install command or manual instructions; [AGENTS.md section 3](../AGENTS.md#3-session-start-run-once-at-every-session-start) owns installation authority and [`bootstrap-diagnostics`](../.agents/skills/bootstrap-diagnostics/SKILL.md) owns repair and retry.
 [`bin/fm-home-tools-lib.sh`](../bin/fm-home-tools-lib.sh) owns the universal toolchain and install commands shared by bootstrap and remote machine setup; [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns compatibility detection, including the no-mistakes version floor.
 no-mistakes runs the validation pipeline, gh-axi and chrome-devtools-axi cover GitHub and browser work, and tasks-axi and quota-axi back backlog mutations and quota-aware dispatch.
 [`bin/fm-bootstrap.sh`](../bin/fm-bootstrap.sh) owns the axi floor policy and the gh-axi and lavish-axi floors, while [`bin/fm-tasks-axi-lib.sh`](../bin/fm-tasks-axi-lib.sh) and [`bin/fm-quota-axi-lib.sh`](../bin/fm-quota-axi-lib.sh) hold their own floors.
@@ -613,11 +635,13 @@ See [`docs/examples/autoland.json`](examples/autoland.json) for a starting point
 ```
 
 Every entry needs `repo` and at least one of `project` or `authority`, repository names must be unique, and each `hook` name may belong to one entry only.
-Without `authority`, the repository merges only while its `project` entry carries `+yolo`, read every tick, so dropping `+yolo` stops auto-merge.
-A nonempty `authority` cites a real captain ruling granting standing merge authority, as for the Firstmate repository itself, and removing `+yolo` alone does not revoke it.
-The PR body's no-mistakes attestation must name the current head with review and document `completed` and test `completed` or `skipped` when `attestation: true` or the project is registered as `no-mistakes` or `no-mistakes-prod-only`.
+A repository or owner entry in `config/merge-policy.json` ([`bin/fm-merge-policy.sh`'s header](../bin/fm-merge-policy.sh) owns policy values and resolution) decides first: `auto` is standing authority and `ask` or `never` stop auto-merge; under the policy's bare default the rules below apply, and `never` always stops it.
+Under that bare default, without `authority`, the repository merges only while its `project` entry carries `+yolo`; removing `+yolo` revokes that authority.
+A nonempty `authority` cites a real captain ruling granting standing merge authority, as for the Firstmate repository itself, and removing `+yolo` alone does not revoke it under that bare default.
+Merge policy is re-read each tick and immediately before the forge merge command, including for task-owned PRs.
+The PR body's no-mistakes attestation must name the current head with review and document `completed` and test `completed` or `skipped` when authority comes from a repository or owner `auto` policy (including built-in owner defaults), when `attestation: true`, or when the project is registered as `no-mistakes` or `no-mistakes-prod-only`.
 A skipped Test step is accepted for repositories whose trusted pipeline skips it, but head CI must still be green.
-`attestation: false` relaxes that only for `direct-PR`/`local-only` projects or authority-only entries, never for a registered no-mistakes project.
+`attestation: false` relaxes that only for `direct-PR`/`local-only` projects or authority-only entries without repository or owner `auto` authority, never for a registered no-mistakes project.
 When attestation is required, a missing Risk Assessment holds the PR; otherwise a missing rating counts as unrated, but a present rating must still pass the cap, so use that posture only where every eligible green PR is safe to merge.
 `max_risk` caps the no-mistakes risk rating (`low`, `medium`, or `high`; default `low`), and `method` is `squash` (default), `merge`, or `rebase`.
 
@@ -630,8 +654,8 @@ That wake fires once per head and reason and again after `FM_AUTOLAND_RENOTIFY` 
 
 ### Post-merge hooks
 
-An entry with `hook` deploys its default branch whenever that head differs from the commit the hook last deployed, regardless of who merged it or whether the entry has merge authority.
-Deployment is discovered from the next tick's snapshot and reported on a later tick.
+An entry with `hook` runs its post-merge hook for a default-branch head that differs from the commit the hook last deployed, subject to the outcome and retry rules below, regardless of who merged it or whether the entry has merge authority.
+A new head is discovered from the next tick's snapshot; reportable outcomes appear on a later tick.
 A detached runner first refreshes `projects/<project>` through `bin/fm-fleet-sync.sh` when the entry names an existing project clone (bounded to 300 seconds; a failure is a logged warning), then runs `config/post-merge/<hook>.sh <commit>`.
 The hook must be an executable regular file not writable by group or others, and runs in `state/autoland/` with these variables:
 
@@ -644,14 +668,23 @@ FM_AUTOLAND_DEPLOYED    # the commit this hook last deployed, empty when none is
 FM_AUTOLAND_APPROVED    # 1 only for `bin/fm-autoland.sh deploy <hook> --approved`
 ```
 
-Exit 0 means deployed, exit 75 means "not now" (for example, a shared service with work in flight), and anything else is a failure.
+Exit 0 means deployed, exit 78 means skipped (nothing was deployed), exit 75 means "not now" (for example, a shared service with work in flight), and anything else is a failure.
+Only exit 0 advances `state/autoland/<hook>.deployed` and can emit a deployed notification; a successful clone refresh alone is not a deployment.
+A skipped result preserves any previously deployed revision, emits no notification, and is retried only when the head moves or an operator runs `bin/fm-autoland.sh deploy <hook>`.
+The foreground `deploy` command prints the outcome and succeeds for deployed, skipped, or deferred results; failures return nonzero, and later ticks don't repeat its report.
 The last nonblank output line, capped at 200 characters, is the wake summary, and the whole output is `state/autoland/<hook>.log` with the previous run in `.log.prev`.
 A deferral retries every `FM_AUTOLAND_DEFER_RETRY` seconds (default 300); a failure is reported once and retried only when the head moves or an operator runs `bin/fm-autoland.sh deploy <hook>` in the foreground.
 `FM_AUTOLAND_HOOK_TIMEOUT` (default 1800) bounds one run.
-A hook must be idempotent, install atomically (stage beside the target and rename, keeping the previous copy), leave the old install in place on any failure, and never restart a shared service while work is in flight; a hook with nothing to deploy prints why and exits 0.
+A hook must be idempotent, install atomically (stage beside the target and rename, keeping the previous copy), leave the old install in place on any failure, and never restart a shared service while work is in flight; a hook with nothing to deploy prints why and exits 78.
 The runner cannot prove those obligations, so after a fleet-sync warning the hook must verify its inputs match the requested commit and fail closed otherwise.
 Use `deploy <hook> --approved` only for a captain-approved restart window; it signals approval and waives none of the hook's safety obligations.
 [`docs/examples/post-merge/firstmate.sh`](examples/post-merge/firstmate.sh) deploys the Firstmate repository through `bin/fm-update.sh`, leaving second-mate restarts to `/updatefirstmate`.
+
+For an existing no-op hook, land and install the exit-78-capable runner before activating the replacement hook; older runners classify 78 as failure.
+Verify the installed runner with an isolated exit-78 hook: the result must be `skipped`, preserve the deployed revision, and emit no deployed notification.
+Staging isn't activation: an active exit-0 no-op hook still records deployed until replaced.
+This migration doesn't authorize starting or restarting services.
+The regression coverage is in [`tests/fm-autoland.test.sh`](../tests/fm-autoland.test.sh).
 
 ## Relay (.env)
 
@@ -745,7 +778,9 @@ Variables documented in a section above are not repeated: mail plane, auto-land 
 Script headers own the exact parsing and fallback of each value.
 [`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
 For lane-failure thresholds, overdue hand-offs, and recovery tuning, see the health comments in [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh), [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh), and [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh).
-[`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
+[`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run and quiet-worker check-in timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
+[`fm_ci_stall.py`'s docstring](../bin/fm_ci_stall.py) owns stalled-CI bounds and recovery tuning.
+[`fm_worker_keepalive.py`'s docstring](../bin/fm_worker_keepalive.py) owns the worker and parent-question bounds (`FM_KEEPALIVE_*`); [`fm-spawn.sh`'s header](../bin/fm-spawn.sh) owns `FM_SPAWN_TRANSIENT_RETRIES`, `FM_SPAWN_TRANSIENT_RETRY_SECS` and `FM_SPAWN_SERIAL_WAIT_SECS`.
 
 ```sh
 # homes and paths ("FM_HOME")

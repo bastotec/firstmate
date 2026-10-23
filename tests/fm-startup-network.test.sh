@@ -514,13 +514,16 @@ killed_runner_case() {  # <signal> <stage-bound> <seconds-to-settle>
 $rec
 EOF
   # shellcheck disable=SC2016  # Expanded by the child runner.
+  # Carry fixture paths through positional arguments so the child can restore
+  # them after sourcing tests/lib.sh; that helper owns the isolation rule.
   FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=60 FM_STARTUP_NETWORK_TIMEOUT="$bound" \
-    PATH="$root/bin:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$root" \
+    PATH="$root/bin:$PATH" \
     bash -c '
       . "$1/tests/lib.sh"
       FM_TEST_CLEANUP_DIRS+=("$2")
+      FM_HOME="$4" FM_ROOT_OVERRIDE="$3" export FM_HOME FM_ROOT_OVERRIDE
       printf "%s\n" $$ > "$FM_HOME/state/.lock"
-      if [ "$3" = 2 ]; then
+      if [ "$5" = 2 ]; then
         FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 0 --harvest-pid $$
         sed -n "s/^pid=//p" "$FM_HOME/state/.startup-network.status" > "$2/first-pid"
         waited=0
@@ -533,7 +536,7 @@ EOF
       FM_FAKE_HARNESS_PID=$$ "$FM_ROOT_OVERRIDE/bin/fm-startup-network.sh" start --locked 1 --harvest-pid $$
       touch "$2/runner-ready"
       while :; do sleep 0.2; done
-    ' _ "$ROOT" "${home%/home}" "$generations" >/dev/null 2>&1 &
+    ' _ "$ROOT" "${home%/home}" "$root" "$home" "$generations" >/dev/null 2>&1 &
   runner=$!
   waited=0
   while [ ! -f "${home%/home}/runner-ready" ] && [ "$waited" -lt 100 ]; do
@@ -858,7 +861,11 @@ $rec
 EOF
   printf '%s\n' $$ > "$home/state/.lock"
 
-  FM_STARTUP_NETWORK_TIMEOUT=1 FM_SESSION_START_TIMEOUT=2 \
+  # Headroom matters here: the composed sweep runs the real inactive-outcome
+  # scan before the fake bootstrap records its phase. Five seconds gives that
+  # startup work room to finish before the bound; the bootstrap records even
+  # with no secondmates, then sleeps 20s so the bound interrupts it mid-sweep.
+  FM_STARTUP_NETWORK_TIMEOUT=5 FM_SESSION_START_TIMEOUT=10 \
     FM_FAKE_BOOTSTRAP_LOG="$log" FM_FAKE_BOOTSTRAP_SLEEP=20 \
     FM_FAKE_TIMING_PHASE=secondmate-liveness FM_FAKE_TIMING_DETAIL='mate-a@host-one' \
     run_stage "$home" "$root" run --locked 1
@@ -866,7 +873,7 @@ EOF
   [ "$(sed -n 's/^state=//p' "$home/state/.startup-network.status")" = timeout ] \
     || fail "the bounded run did not record itself as timed out"
   report_out=$(run_stage "$home" "$root" report)
-  assert_contains "$report_out" "hit the 1s bound" "the bound stopped being reported"
+  assert_contains "$report_out" "hit the 5s bound" "the bound stopped being reported"
   assert_contains "$report_out" "secondmate-liveness mate-a@host-one" \
     "a timed-out run discarded the partial timings its sweeps had already recorded"
   pass "fm-startup-network: a timed-out run still publishes the partial timings it recorded"

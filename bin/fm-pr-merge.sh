@@ -116,6 +116,14 @@
 #
 # A merge this machine's ~/.agents/AGENTS.md asks the captain about
 # (bin/fm-machine-rules.sh check merge) is refused without --attended-override.
+# A GitHub repository whose merge policy (bin/fm-merge-policy.sh) is never is
+# refused without --attended-override as well; an unreadable policy refuses even
+# with that override. Policy is read on entry and immediately before gh merge.
+# FM_PR_MERGE_AUTOLAND=1 marks task-owned auto-land calls: the final policy check
+# also enforces the current policy's auto-land permission and any auto-policy
+# current-head attestation requirement (docs/configuration.md "Auto-land").
+# Unmarked calls retain the never-only policy refusal so a captain-approved ask
+# merge can proceed.
 #
 # Usage: fm-pr-merge.sh <task-id> <pr-url> [--attended-override] [--allow-red <check-name>] [-- <extra forge merge args>]
 #
@@ -194,6 +202,36 @@ if [ "${#ALLOW_RED[@]}" -gt 0 ] && [ "$PROVIDER" = gitlab ]; then
   echo "error: --allow-red does not apply to GitLab, where a merge already requires the head pipeline to have succeeded" >&2
   exit 2
 fi
+require_merge_policy() {
+  [ "$PROVIDER" = github ] || return 0
+  local policy
+  if ! policy=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$PR_OWNER/$PR_REPO" 2>&1); then
+    echo "error: refusing to merge $URL: its merge policy cannot be read: $policy" >&2
+    return 1
+  fi
+  if [ "${policy%% *}" = never ] && [ "$ATTENDED_OVERRIDE" != true ]; then
+    echo "error: refusing to merge $URL: the captain's merge policy for $PR_OWNER/$PR_REPO is never (bin/fm-merge-policy.sh); he merges it himself" >&2
+    return 1
+  fi
+  if [ "${1:-}" = 1 ]; then
+    case "$policy" in
+      'auto default'|'ask default'|auto\ *) ;;
+      *)
+        echo "error: refusing to merge $URL: its current merge policy no longer permits autoland" >&2
+        return 1
+        ;;
+    esac
+    case "$policy" in
+      'auto repo'|auto\ owner\ *)
+        if [ "$FM_PR_MERGE_ATTESTATION" != ok ]; then
+          echo "error: refusing to merge $URL: its no-mistakes attestation is $FM_PR_MERGE_ATTESTATION for the current head" >&2
+          return 1
+        fi
+        ;;
+    esac
+  fi
+}
+require_merge_policy || exit 1
 
 caller_has_merge_method() {
   local arg
@@ -526,7 +564,7 @@ github_verify_mergeable() {
   local total=0 named=0 refusals=''
   local state='' draft='' mergeable='' merge_state='' live_head='' base=''
 
-  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup 2>/dev/null) \
+  if ! json=$(gh pr view "$URL" --json state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,statusCheckRollup,body 2>/dev/null) \
     || [ -z "$json" ]; then
     echo "error: could not read the GitHub pull request state before merging" >&2
     return 1
@@ -624,6 +662,9 @@ EOF
     "$URL" "$live_head" >&2
   FM_PR_MERGE_HEAD=$live_head
   FM_PR_GITHUB_BASE=$base
+  if [ "${FM_PR_MERGE_AUTOLAND:-}" = 1 ]; then
+    FM_PR_MERGE_ATTESTATION=$(printf '%s' "$json" | jq -r "$(fm_pr_attestation_jq)"'attest(.headRefOid // "")') || return 1
+  fi
 }
 
 # Read one live GitHub pull request view after gh returns. The selected
@@ -1136,6 +1177,7 @@ case "$PROVIDER" in
     [ "$away_status" -eq 0 ] || exit "$away_status"
     refuse_github_queue_while_away || exit 2
     merge_status=0
+    require_merge_policy "${FM_PR_MERGE_AUTOLAND:-}" || exit 1
     merge_output=$(gh pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" \
       --match-head-commit "$FM_PR_MERGE_HEAD" \
       "${merge_args[@]+"${merge_args[@]}"}" "$@" 2>&1) || merge_status=$?

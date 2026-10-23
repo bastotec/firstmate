@@ -65,6 +65,18 @@ unset FM_ASK_TRIAGE_HELPER FM_ASK_TRIAGE_KEY_VAR
 # under the marker. A case that verifies the refusal sets FM_TASK_ID itself.
 unset FM_TASK_ID
 
+# Fixture home identity must not come from the invoking worker's environment.
+# FM_STATE_OVERRIDE alone cannot isolate parent-channel writes: the channel
+# resolver reads the home's secondmate markers, not the overridden state dir.
+# Clearing these values is only the first layer: an unset home can still fall
+# back to a code root carrying live secondmate markers. After sourcing this
+# helper, launch fixtures with FM_HOME pinned to their synthetic home and any
+# FM_ROOT_OVERRIDE pinned to their synthetic code root; do not rely on an empty
+# fallback. Nested shells must establish that identity after sourcing too.
+# tests/fm-inactive-reconcile.test.sh covers explicitly pinned launches under a
+# hostile ambient home and from a synthetic marked code root.
+unset FM_HOME FM_ROOT_OVERRIDE
+
 # Clear the tasks-axi env overrides. An operator shell exports TASKS_AXI_FILE
 # (and may export TASKS_AXI_BACKEND) at its real home's backlog, and tasks-axi
 # resolves that env AHEAD of the .tasks.toml a fixture copies, so a suite that

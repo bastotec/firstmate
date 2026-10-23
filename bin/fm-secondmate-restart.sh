@@ -4,6 +4,14 @@
 #
 # Usage: fm-secondmate-restart.sh [--background] [--persist-wait seconds] [--persist-poll seconds] <secondmate-id>... [--help]
 #
+# A remote mate's sends get FM_SEND_REMOTE_BUDGET seconds per transport
+# attempt, defaulting to 120 when unset or empty, because a busy remote home
+# can take longer to record a message. bin/fm-send.sh owns validation and its
+# standalone default.
+# An unconfirmed persist request is resent once with its same correlation,
+# which lands on the same remote record rather than a duplicate.
+# A failed send's error line takes precedence over any earlier warning banner.
+#
 # --background arms this same pass as a one-shot process-event job
 # (bin/fm-procevent-when.sh, condition /usr/bin/true) and returns at once; its
 # per-mate lines and summary arrive later as that job's notification. Exit 0
@@ -51,12 +59,12 @@
 # clean reload. Once a relaunch is attempted, any failed or ambiguous result is
 # reported as unknown rather than attributing it to either incarnation.
 #
-# Placement changes the transport and nothing else. A local mate is restarted
-# with bin/fm-control.sh <id> relaunch; a remote mate is restarted by running THAT
-# SAME command on its host over bin/fm-on.sh, through the host-local
-# fm-remote-secondmate-control.sh relaunch verb. The restart decision, the
-# profile, the request text, the bound, the failure vocabulary, and this report
-# are all computed here in the primary and are identical for both.
+# A local mate uses bin/fm-control.sh <id> relaunch and its profile rules.
+# A remote mate uses fm-remote-secondmate-control.sh relaunch on its host over
+# bin/fm-on.sh, with the primary home's harness and effort. Its model comes
+# from its own model_choice, else recorded model, else the home default;
+# empty and literal default values count as unset. Both placements share
+# the persist gate, request text, wait bound, failure vocabulary and report.
 #
 # Nothing here forces, stashes, or discards anything. bin/fm-control.sh owns the
 # restart transaction, its checkpoint, its journal, and its rollback; a refusal
@@ -76,6 +84,8 @@
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FM_SEND_REMOTE_BUDGET=${FM_SEND_REMOTE_BUDGET:-120}
+export FM_SEND_REMOTE_BUDGET
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 
 usage() {
@@ -171,12 +181,13 @@ restarted_count=0
 nudged_count=0
 unreached_count=0
 
-# Report the first nonblank, non-warning line, flattened with "error: " dropped,
-# so a preceding composer warning cannot hide the deciding failure. Fall back
-# to a warning only when no other output carries the outcome.
+# Prefer the send's own error over advisory guard/composer output, which does
+# not establish delivery. Fall back to a non-warning line, then any output
+# only when neither carries a reason.
 first_reported_line() {  # <text>
   local line
-  line=$(printf '%s\n' "$1" | sed -n '/^warning: /d;/./{s/^error: //;s/[[:space:]]\{1,\}/ /g;p;q;}')
+  line=$(printf '%s\n' "$1" | sed -n '/^[Ee]rror: /{s/^[Ee]rror: //;s/[[:space:]]\{1,\}/ /g;p;q;}')
+  [ -n "$line" ] || line=$(printf '%s\n' "$1" | sed -n '/^[Ww][Aa][Rr][Nn][Ii][Nn][Gg]: /d;/./{s/[[:space:]]\{1,\}/ /g;p;q;}')
   [ -n "$line" ] || line=$(printf '%s\n' "$1" | sed -n '/./{s/[[:space:]]\{1,\}/ /g;p;q;}')
   printf '%s\n' "$line"
 }
@@ -186,7 +197,7 @@ first_reported_line() {  # <text>
 fall_back_to_nudge() {  # <id> <reason>
   local id=$1 reason=$2 out
   if out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
-    FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
+    FM_PENDING_REPLY_WAKE=none FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECOND_MATE_NUDGE_MESSAGE" 2>&1); then
     nudged_count=$((nudged_count + 1))
     printf 'nudged: %s: %s\n' "$id" "$reason"
   else
@@ -312,10 +323,15 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     # a home whose config/secondmate-harness is deliberately NOT inherited, so
     # the file on that host belongs to a different home and re-resolving there
     # would silently move the mate onto another runtime. Resolve the pin here and
-    # pass it explicitly, so both placements land on the same decision.
+    # pass the harness and effort explicitly rather than using host defaults.
     HARNESS[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate) || exit 1
     [ -n "${HARNESS[i]}" ] || HARNESS[i]=$FM_SECONDMATE_RESTART_HARNESS
-    MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
+    # Apply the header's remote model precedence, not the host's home default.
+    MODEL[i]=$(fm_meta_get "$STATE/$id.meta" model_choice 2>/dev/null || true)
+    [ "${MODEL[i]}" != default ] || MODEL[i]=
+    [ -n "${MODEL[i]}" ] || MODEL[i]=$(fm_meta_get "$STATE/$id.meta" model 2>/dev/null || true)
+    [ "${MODEL[i]}" != default ] || MODEL[i]=
+    [ -n "${MODEL[i]}" ] || MODEL[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-model 2>/dev/null || true)
     EFFORT[i]=$("$SCRIPT_DIR/fm-harness.sh" secondmate-effort 2>/dev/null || true)
     case "${EFFORT[i]}" in
       ''|low|medium|high|xhigh|max) ;;
@@ -323,15 +339,26 @@ while [ "$i" -lt "${#IDS[@]}" ]; do
     esac
   fi
 
-  if ! corr=$(fm_pending_reply_create "$FM_HOME" "$STATE" "$id" \
+  # This pass reads the correlated answer itself (phase B), so the reply
+  # needs no supervisor turn (bin/fm-pending-reply-lib.sh reply_wake).
+  if ! corr=$(FM_PENDING_REPLY_WAKE=none fm_pending_reply_create "$FM_HOME" "$STATE" "$id" \
     "$FM_SECONDMATE_PERSIST_REQUEST"); then
     REASON[i]="its answer about the open work cannot be tracked, so a clean reload could not be proven"
     i=$((i + 1))
     continue
   fi
-  if ! send_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+  send_rc=0
+  send_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
     FM_PENDING_REPLY_EXISTING_CORR="$corr" \
-    FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECONDMATE_PERSIST_REQUEST" 2>&1); then
+    FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECONDMATE_PERSIST_REQUEST" 2>&1) || send_rc=$?
+  if [ "$send_rc" -ne 0 ] && printf '%s' "$send_out" | grep -q 'is unconfirmed'; then
+    # Same correlation: an idempotent resend that lands on the same record.
+    send_rc=0
+    send_out=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" \
+      FM_PENDING_REPLY_EXISTING_CORR="$corr" \
+      FM_SEND_STREAM=monologue "$SCRIPT_DIR/fm-send.sh" "$id" "$FM_SECONDMATE_PERSIST_REQUEST" 2>&1) || send_rc=$?
+  fi
+  if [ "$send_rc" -ne 0 ]; then
     fm_pending_reply_discard_undelivered "$STATE" "$corr" >/dev/null 2>&1 || true
     REASON[i]="the request to write down its open work could not be delivered: $(first_reported_line "$send_out")"
     i=$((i + 1))

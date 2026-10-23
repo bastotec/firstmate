@@ -25,6 +25,69 @@ Those samples were captured live from harnesses that are no longer supported, so
 
 ## stream
 
+### Watcher publication and startup refusal boundaries
+
+Verified on 2026-10-19 on Linux with Bash 5.3.9 and Python 3.14.4 using the real home-host driver, synthetic startup/watcher/Deck executables, and a separate process owning the real sequence-lock primitive, without model calls.
+The current regression entry point is:
+
+```sh
+FM_LIVE=0 FM_TEST_DECK_CASES='test_secondmate_host_refuses_an_incomplete_startup_digest test_secondmate_host_retries_watcher_publication' bin/fm-test-run.sh tests/fm-deck-harness.test.sh tests/fm-task-inbox.test.sh
+```
+
+Recorded output:
+
+```text
+ok - Deck host refuses a zero-exit incomplete digest without consuming wakes or starting turns
+ok - Deck host replays accepted publications once, separates equal wakes, preserves lock custody, and honors queued exits
+```
+
+The contention fixture holds the lock through an initial enqueue refusal, verifies the same live owner remains, then releases through that owner and observes one handled record and one wake turn.
+The exhaustion control keeps the owner alive, observes no publication or wake turn, and retains the unacknowledged durable wake.
+The current publication case also asserts no duplicate record or turn after a real numeric inbox rename followed by an error return, separate delivery for distinct watcher events with equal output, and no re-enqueue after post-acceptance doorbell failure.
+It checks queued exit during backoff and after acceptance, preserving any accepted record unhandled, and the first-line identity of the serialized publication body.
+The startup control returns an incomplete report with exit zero and a stale completion marker; no model turn or watcher starts.
+[`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns retry behavior and startup safety; [`tests/fm-control-relaunch.test.sh`](../../tests/fm-control-relaunch.test.sh) separately exercises five readable child records, empty state, invalid child entries, read failure, and traversal failure diagnostics before any stop.
+These are portable driver and subprocess-boundary fixtures, not a live Deck or macOS incident reproduction.
+The original traversal failure and sequence-lock owner remain unknown.
+They do not establish the cause of any particular refusal or startup timeout.
+
+### Secondmate home-local tool selection
+
+#### Portable plumbing evidence
+
+Verified on 2026-10-19 on macOS with Bash 3.2 and Python 3.9.6 using the real Deck home-host driver, a shimmed session-start script, and synthetic Node and quota-axi executables, without model calls:
+
+```sh
+FM_LIVE=0 FM_TEST_DECK_CASES=test_secondmate_tool_path_reaches_startup_without_changing_siblings bin/fm-test-run.sh tests/fm-deck-harness.test.sh
+```
+
+```text
+PASS fresh host startup executes selected Node/npm CLI and compatibility helper; sibling, empty/absent, invalid and ship scopes preserved
+ok - Deck home-local tool path reaches startup without changing sibling/default launches
+```
+
+The startup fixture executes `node`, an env-node `quota-axi`, and the real bootstrap compatibility helper before the first model turn.
+The same regression fails against the unchanged driver because startup resolves the default tools instead of the explicit home selection.
+[`tests/fm-backend-stream.test.sh`](../../tests/fm-backend-stream.test.sh) additionally exercises tool execution during startup through `fm-spawn.sh`, a real loopback hub, and a real PTY agent.
+Both supported stream implementations invoke the same home-host driver; these portable checks do not establish activation or tool selection in any existing remote home.
+[`fm-deck-worker.sh`](../../bin/fm-deck-worker.sh)'s header owns the explicit grant and activation contract.
+
+#### Remaining destination authority decision
+
+The launch blocker remains open.
+The supplied tool-owner evidence establishes command-scoped compatibility/bootstrap for the validated candidate; the destination-home report still shows the old tools on a fresh launch.
+Neither is proof that this repair selects the candidate in that home, and no fresh actual destination launch/bootstrap was performed here.
+
+Does the destination owner authorize configuring **only the selected home's** `config/secondmate-tool-path` with the existing validated tool directories and coordinating a fresh launch through the supported route?
+The decision must cover both the home-local grant and the relaunch window.
+Until that authority is explicit, leave the destination configuration and running home untouched.
+Code delivery and passing plumbing tests aren't activation authority.
+
+After approval, the destination owner must retain fresh-launch evidence showing the actual Node and quota-axi versions and successful startup/bootstrap, with the corporate proxy unchanged and sibling homes unaffected.
+Reuse the existing tool-owner validation rather than repeating it; a one-command PATH override doesn't close this gap.
+No global/default Node, shellwide PATH, service, registry, or credential changes are authorized.
+Keep destination identifiers, tool-directory paths, and raw launch evidence in private owner reports; publish only sanitized results.
+
 ### Deck native mid-turn steering over stream
 
 The initial same-turn correction check was verified on 2026-09-29 on macOS with Python 3.9.6 and Deck 0.1.0 built from the merged native-steering interface in `bastotec/deck`.
@@ -55,6 +118,7 @@ On 2026-10-11, Rust agent 2.1.0 built locally with Rust 1.96.0 passed the portab
 The corrected driver and native receiver also passed all eight real Deck scenarios on that date, including idle human-draft preservation, ordered F/G/H/I safe-point application and no extra apostrophe-path acknowledgement turn.
 The portable application regressions run with `bin/fm-test-run.sh tests/fm-stream-deck.test.sh`, including oversized captain fallback followed by eligible native sources through both publication paths.
 The native receiver's corresponding regression is `newer_bridge_order_skips_native_ineligible_captain_sources` in [`crates/fm-stream-agent/src/receiver.rs`](../../crates/fm-stream-agent/src/receiver.rs).
+The same portable suite checks prompt successful handoff under a held lifecycle lock, privacy-safe phase diagnostics, and later driver publication of the intact source without acknowledgement.
 Current operator behavior and supported limits are owned by [`../stream-backend.md`](../stream-backend.md#command-path).
 
 ### Interactive attach latency

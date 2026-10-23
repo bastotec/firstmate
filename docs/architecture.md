@@ -14,9 +14,9 @@ The watcher header owns the printed reason vocabulary and every absorb and re-su
 
 ### Absorb only on positive evidence
 
-A no-verb wake, such as a `working:` note or a bare turn-ended signal, is benign only when every referenced task independently shows positive evidence that its crew is still working.
+Outside the quiet-reply and bookkeeping exception below, a no-verb wake, such as a `working:` note or a bare turn-ended signal, is benign only when every referenced task independently shows positive evidence that its crew is still working.
 That evidence comes from the shared [current-state interface](#current-state-reads), not an independent watcher classifier.
-Everything else surfaces, so a crew that finishes, or stops and waits, is never silently swallowed.
+Without that evidence the wake surfaces, so a crew that finishes, or stops and waits, is never silently swallowed.
 Absorbed wakes advance their suppression markers, log to `state/.watch-triage.log`, and keep the watcher blocking without a queue record or model turn.
 Routine polling, supervision no-ops, elapsed waiting time, and absorbed benign wakes stay silent.
 
@@ -30,6 +30,12 @@ Every unreadable or ambiguous input surfaces the wake without clearing prior sta
 
 A `kind=secondmate` task's status signal is its parent-directed reply stream and is never absorbed as provably working.
 Its bare turn-ended signal is absorbed only by the authoritative proof, because an active secondmate does not enter the staleness backbone that would resurface deferred churn evidence.
+
+Automatic pending-reply resolutions and replies the sender declared need no first-mate turn are bookkeeping rather than the mate's own progress.
+The restart pass reads its persist-request answer itself, and an AGENTS.md re-read acknowledgement needs no supervisor action.
+The watcher header owns absorption of batches containing only this bookkeeping; the next drain still presents the lines as unread status.
+[`status_line_is_quiet_reply` in `bin/fm-classify-lib.sh`](../bin/fm-classify-lib.sh) owns reply qualification across per-wake, heartbeat, and away-daemon classification, and [`bin/fm-pending-reply-lib.sh`](../bin/fm-pending-reply-lib.sh) owns the sender's declaration field.
+[`tests/fm-watch-quiet-reply.test.sh`](../tests/fm-watch-quiet-reply.test.sh) covers quiet absorption and fail-closed wake cases.
 
 ### A superseded Deck turn-failure is attention, not failure
 
@@ -64,8 +70,9 @@ A secondmate's worktree is never probed, because it is a firstmate home whose ow
 
 ### Declared waits
 
-Four records declare that a crew waits on something outside the fleet: a worker's `paused:` status line, a supervisor-declared external wait recorded by `bin/fm-external-wait.sh` for a worker that cannot write its own line, a verified `captain-held` status transfer, and the backlog captain call `bin/fm-captain-hold.sh` records.
-A declared wait re-surfaces on the long `FM_PAUSE_RESURFACE_SECS` cadence instead of being treated as a wedge, busy or idle, and the re-surface names which human or declarer the wait is on.
+The pane-staleness guard recognizes four declared-wait records: a worker's `paused:` status line, a supervisor-declared external wait recorded by `bin/fm-external-wait.sh` for a worker that cannot write its own line, a verified `captain-held` status transfer, and the backlog captain call `bin/fm-captain-hold.sh` records.
+Within that guard, a declared wait re-surfaces on the long `FM_PAUSE_RESURFACE_SECS` cadence instead of being treated as a wedge, busy or idle, and the re-surface names which human or declarer the wait is on.
+The independent worker keep-alive scan's treatment of mate-decidable pauses and external waits is owned by [`fm_worker_keepalive.py`'s docstring](../bin/fm_worker_keepalive.py).
 For a stopped ordinary crew the first sight still surfaces one stale wake, with inconclusive liveness fail-open, so a worker genuinely waiting on a decision is never silenced.
 A supervisor declaration's expiry alone restores ordinary escalation, and no declaration suppresses a genuinely new status line, check result, terminal outcome, or PR merge.
 A backlog captain call's first sight alarms and later alarms in its window are throttled, scoped to the call's lifecycle so a release and re-hold starts fresh; an unreadable backlog or incompatible `tasks-axi` leaves the ordinary alarm path unchanged.
@@ -181,9 +188,10 @@ Because placement is proven only at launch, `bin/fm-spawn.sh` exports `FM_TASK_I
 
 Firstmate's own no-mistakes gate runs agents inside a checkout that also contains the fleet-captain identity in `AGENTS.md`, so gate execution needs an authority boundary separate from ordinary crewmate worktree isolation.
 The tracked `.no-mistakes.yaml` sets `disable_project_settings: true`; no-mistakes honors that setting only from the trusted default-branch copy, so a pushed branch cannot enable its own project instructions during validation.
-Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, and `fm-teardown.sh` source `bin/fm-gate-refuse-lib.sh` and refuse fleet mutation under its gate-context contract.
+Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, `fm-teardown.sh`, and the mutating `fm-approval-wait.sh` commands source `bin/fm-gate-refuse-lib.sh` and refuse fleet mutation under its gate-context contract.
 The [Deck chat host](../bin/fm-deck-chat.sh) and [primary steer CLI](../bin/fm-primary-steer.sh) apply the same boundary to their mutating entrypoints; the steer CLI's status and delivery reads remain available.
-[`fm_crew.py`](../bin/fm_crew.py) applies that boundary to specialist and group lifecycle mutations, including specialist status, list, and history because they reconcile interrupted jobs; group status and list remain read-only.
+[`fm_crew.py`](../bin/fm_crew.py) applies that boundary to specialist and group lifecycle mutations, including specialist status, list, history, and result because they reconcile interrupted jobs; group status and list and the [fleet specialist-row reader](../bin/fm-fleet-snapshot.sh) remain read-only.
+[`fm-specialist.sh`](../bin/fm-specialist.sh) also refuses gate agents before routing to another mate's home, so remote execution cannot bypass the local authority boundary.
 [`fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) applies the same refusal directly to orphan closure before locking, assertion logging, or killing; its read-only orphan listing remains available, and record retirement still delegates cleanup to the guarded teardown entrypoint.
 A normal primary checkout or crewmate worktree has neither signal and is unaffected.
 The helper's header owns the exact signal detection, relocated-home limitation, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard.

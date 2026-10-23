@@ -30,6 +30,8 @@
 # The lane writes its Deck events to <work>/events.ndjson and its own log lines
 # to stderr. It exits when the host goes away, and a TERM stops its running
 # Deck turn first (bounded), so a replacement lane never runs beside it.
+# Its waits between passes end at once on TERM or HUP, so a stopping host is
+# never held up by a lane that is only waiting.
 # Attachments map to Deck image parts as on the native path
 # (bin/fm_stream_deck.py with_deck_images).
 set -u
@@ -88,7 +90,16 @@ record_session() {
   [ -f "$DECK_SESSIONS/$started.json" ] || return 0
   printf '%s\n%s\n' "$started" "$FM_HOME" > "$RECORD.tmp.$$" && mv -f "$RECORD.tmp.$$" "$RECORD" && fresh=0
 }
-trap 'stop_deck; record_session; rm -f "$STATE/$ID.captain-lane.turn"; rm -rf -- "$WORK"' EXIT
+# Waits run as a background sleep the shell waits on, which a trapped signal
+# interrupts; the header owns why.
+NAP_PID=''
+nap() {  # <seconds>
+  sleep "$1" &
+  NAP_PID=$!
+  wait "$NAP_PID" 2>/dev/null || true
+  NAP_PID=''
+}
+trap '[ -z "$NAP_PID" ] || kill "$NAP_PID" 2>/dev/null; stop_deck; record_session; rm -f "$STATE/$ID.captain-lane.turn"; rm -rf -- "$WORK"' EXIT
 trap 'exit 143' TERM HUP
 export FM_CAPTAIN_LANE_STATE=$STATE FM_CAPTAIN_LANE_ID=$ID
 # Ctrl+C in the host's pane stops the supervisor's turn, never the captain's.
@@ -293,24 +304,24 @@ while kill -0 "$HOST_PID" 2>/dev/null; do
   # Fail closed: an answer the journal could not take holds every later turn
   # until it does, and no turn starts unless its start is journaled.
   if [ -n "$unrecorded" ]; then
-    if journal answered "$unrecorded"; then unrecorded=''; else sleep "$POLL"; continue; fi
+    if journal answered "$unrecorded"; then unrecorded=''; else nap "$POLL"; continue; fi
   fi
   acknowledge_answered || true
   if ! { : >> "$ANSWERED"; } 2>/dev/null; then
     log "cannot write $ANSWERED; taking no captain turns until it can"
-    sleep 5
+    nap 5
     continue
   fi
   report_stale_handoffs
   next=$(next_record) || next=''
   if [ -z "$next" ] || [ "$(date +%s)" -lt "$retry_at" ]; then
-    sleep "$POLL"
+    nap "$POLL"
     continue
   fi
   mode=${next%% *} rec=${next#* }
   name=${rec##*/}
   body=$(bash -c '. "$1"; fm_task_inbox_body "$2"' _ "$SCRIPT_DIR/fm-task-inbox-lib.sh" "$rec" 2>/dev/null) || body=''
-  [ -n "$body" ] || { log "could not read $rec"; sleep "$POLL"; continue; }
+  [ -n "$body" ] || { log "could not read $rec"; nap "$POLL"; continue; }
   if imaged=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from fm_stream_deck import with_deck_images; sys.stdout.write(with_deck_images(sys.argv[2]))' "$SCRIPT_DIR" "$body" 2>/dev/null) \
       && [ -n "$imaged" ]; then
     body=$imaged
@@ -353,10 +364,10 @@ try:
 except Exception:
     recalled = body
 sys.stdout.write(recalled)
-' "$SCRIPT_DIR" "$FM_HOME" 2>/dev/null) || { log "cannot sanitize turn"; sleep "$POLL"; continue; }
+' "$SCRIPT_DIR" "$FM_HOME" 2>/dev/null) || { log "cannot sanitize turn"; nap "$POLL"; continue; }
   step=started
   [ "$mode" != recover ] || step=recovering
-  journal "$step" "$name" || { log "cannot journal $name; not running its turn"; sleep 5; continue; }
+  journal "$step" "$name" || { log "cannot journal $name; not running its turn"; nap 5; continue; }
   model=$MODEL
   switched=$(head -1 "$MODEL_FILE" 2>/dev/null || true)
   case "$switched" in ''|*[!A-Za-z0-9._:@/-]*) ;; *) model=$switched ;; esac
@@ -382,7 +393,7 @@ sys.stdout.write(recalled)
   while kill -0 "$DECK_PID" 2>/dev/null; do
     kill -0 "$HOST_PID" 2>/dev/null || exit 0
     [ -n "$session" ] || record_session
-    sleep 0.2
+    nap 0.2
   done
   wait "$DECK_PID" || rc=$?
   DECK_PID=''

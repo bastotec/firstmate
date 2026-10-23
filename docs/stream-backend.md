@@ -58,6 +58,7 @@ Between session starts, the owning home's watcher runs [`bin/fm-secondmate-reviv
 With the watcher running and default settings, a consistently dead or missing mate normally reaches a recovery attempt within a couple of minutes; completion depends on the control-plane postconditions, and unknown readings or a competing lifecycle action defer recovery.
 The scan uses control-plane relaunch for a dead endpoint and guarded missing-endpoint recovery for a registry gap; the local route is described below, and [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the remote route.
 A live endpoint can still have failing conversation or background turns; the scan's [LANE HEALTH contract](../bin/fm-secondmate-revive.sh) owns automatic relaunch, per-lane escalation after failed recovery, and clearing on recovery for local and remote mates.
+For a dead mate, the scan's [INTERRUPTED RELAUNCH check](../bin/fm-secondmate-revive.sh) owns completion of a recent restart, including note replay and model-choice semantics, instead of treating it as a crash.
 Successful revivals are silent and logged; a spent revival budget produces one failure notification rather than repeated restarts.
 A secondmate deliberately stopped through control-plane exit stays down across scans and session start until explicitly relaunched or freshly observed alive; [`bin/fm-control.sh`'s header](../bin/fm-control.sh) owns the stop marker and automatic-admission guard.
 [`verification/supervision.md`](verification/supervision.md#secondmate-revival) lists the portable regression entry points.
@@ -283,6 +284,7 @@ With a stream-hosted driver and a Deck build supporting `--steer-dir`, ringing a
 Published messages reach the model at its next safe point without interrupting or restarting the turn; [`project_captain`](../bin/fm_stream_deck.py) owns publication eligibility, sequencing limits, and acknowledgement rules.
 For split secondmates (`config/primary-split`), the [`fm-captain-lane.sh` header](../bin/fm-captain-lane.sh) owns conversation delivery instead; [`supervisor_direct`](../bin/fm_stream_deck.py) owns native supervisor eligibility.
 Native publication is best-effort: unsupported builds, skipped records, and publication failures retain the ordinary inbox path rather than refusing the durable send.
+For conversation-to-supervisor handoffs, the [`fm-captain-handoff.sh` header](../bin/fm-captain-handoff.sh) owns the post-enqueue publication budget, timeout fallback, and phase diagnostics.
 Captain images in native steering follow [`with_deck_images`](../bin/fm_stream_deck.py), also used by [primary steering](../bin/fm-primary-steer.sh); Bridge-order bodies are not transformed.
 Remote attachments must already be staged on the receiving host before sending; native publication does not copy attachment bytes.
 An idle driver observes new direct-source records out of band and starts a turn without waiting for Enter, including while its composer holds human text.
@@ -468,7 +470,8 @@ Ordinary cleanup removes a task's durable records only once a backend has proved
 A hub restart can leave records in exactly that state, where the hub has never heard of the endpoint and no later read can change the unconfirmed answer, so cleanup refuses every time.
 
 `bin/fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]` is the one way such a record is retired.
-No daemon invokes it; in operator mode it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
+In operator mode it names each id exactly, refuses wildcards and all-records forms, and asks you to type those ids back before anything is written.
+The [idle sweep](../bin/fm-idle-sweep.sh) can invoke the narrower `--finished` mode described below.
 By naming a record you assert, from your own inspection of the machine that ran it, that no worker is still running behind it.
 Before cleanup for each named task, the command appends one line to `state/endpoint-retirements.log` with your username, the time, the id, and whether you asserted the runtime-refusal override.
 If that line cannot be appended, that task is not retired; the line records the assertion, not an outcome.
@@ -476,7 +479,7 @@ If that line cannot be appended, that task is not retired; the line records the 
 What operator mode touches, and what it does not:
 
 - It retires RECORDS: the durable task record and, where firstmate owns the transition, the task's backlog row.
-  A manually kept backlog, or a home with no backlog file, is left exactly as the operator keeps it.
+  [Backlog backend](configuration.md#backlog-backend-taskstoml--configbacklog-backend) owns transition exemptions and the automatic-repair exception.
 - Cleanup runs first and finishes the job properly whenever its own gates allow.
   When cleanup's work-protection gate refuses, the worktree, any uncommitted work in it, the task branch and the task's data are left byte-untouched and named in the output, for you to deal with under your own authority.
   Record-only retirement after that refusal requires the task record to remain unchanged since before cleanup; a changed or vanished record stops further retirement without changing the backlog or removing a replacement worker's record.
@@ -494,7 +497,7 @@ What operator mode touches, and what it does not:
 To retire a retired-backend record instead, stop any process still behind it by hand, then use this command.
 
 The owning mate retires its own finished work on those backends under the captain's standing instruction through [`task-delivery`'s finished-work sweep](../.agents/skills/task-delivery/SKILL.md#finished-work-sweep); [`fm-retire-endpoint.sh`'s header and `--help`](../bin/fm-retire-endpoint.sh) own the narrower `--finished` checks and assertion basis.
-When tmux is installed, that mode accepts a tmux record only when a local tmux server can be read and does not list its window, or tmux definitively reports that no server is running; any other inventory failure goes to the captain rather than authorizing cleanup.
+Refusals follow the same finished-work sweep policy, never a captain card.
 
 The opposite leftover is a stream endpoint the hub still lists live after its task record is gone, for example when a captain decision removed the record.
 `FM_HOME=<home> bin/fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]` closes it, and `--list-orphans` lists that home's candidates read-only; for a remote home, run it through `bin/fm-on.sh <secondmate> fm-retire-endpoint.sh --orphan <task-id>`.

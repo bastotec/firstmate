@@ -57,6 +57,16 @@
 #       --deck <deck-binary> [--model <route>] [--secondmate] -- <first-prompt>
 # --secondmate requires FM_HOME and hosts that home, leaving --state pointed
 # at the parent task state for busy/progress and failure publication.
+# The optional home-local config/secondmate-tool-path prepends existing absolute
+# directories, one per line in priority order, to this driver's PATH before startup.
+# Blank lines are ignored; paths are literal, never expanded or evaluated as
+# assignments. Colon separators, relative paths and control bytes are refused.
+# The file must be readable, regular and not a symlink.
+# Absence or an empty file preserves PATH. This grant is not
+# inherited config: it applies only to this home's new --secondmate driver and
+# descendants, not host-side readiness checks or the pre-resolved Deck binary.
+# Changing it does not alter a running driver; activation requires a coordinated
+# fresh launch. Ordinary ship/scout drivers ignore it.
 # Startup runs once before the first turn. A tracked watcher is supervised through
 # every turn; its results become later turns, with queued stdin serialized
 # alongside them. pre_complete checks lock ownership instead of worker evidence.
@@ -79,9 +89,11 @@
 # owns what the lane does.
 # Before a pending watcher turn, consume queued composer clears and stale own
 # doorbells, waiting up to five seconds from the first such line for following
-# input. An exact /quit reached there stops the host before watcher work; real
-# steers retain watcher priority. The grace covers the control plane's delayed
-# /quit after clear/re-read retries (tests/fm-deck-harness.test.sh).
+# input. An exact /quit anywhere in queued input stops the host before watcher
+# publication or dispatch, including during enqueue backoff or just after an
+# accepted publication; an accepted record remains unhandled. Real steers
+# retain watcher priority. The grace covers the control plane's delayed /quit
+# after clear/re-read retries (tests/fm-deck-harness.test.sh).
 # Supervision uses child processes and stdin, never backend-specific injection.
 # Startup, lock, watcher, and event-capture failures publish failure status and
 # stop the driver, with these watcher recovery exceptions:
@@ -92,6 +104,15 @@
 #   FM_DECK_WATCH_FAILURE_LIMIT stops the host
 #   with failure status. The retry deadline never blocks input or turn-stop
 #   handling, and no watcher starts while turn cancellation is pending.
+# - Watcher-inbox enqueue gets at most three attempts, with one then two
+#   seconds between attempts. Each publication keeps frozen output and a stable
+#   identity on its first body line across retries, allowing candidate filtering
+#   to skip unrelated history. fm_task_inbox_write_idempotent reuses an accepted
+#   record even if its writer returned an error. Later watcher results wait
+#   separately, with distinct identities even for equal output. No lock is
+#   bypassed. Exhaustion stops the host, leaving the durable wake queue
+#   unacknowledged for supported recovery. Doorbell generation failure after
+#   successful enqueue stops immediately without re-enqueueing.
 # - A successor watcher that does not confirm startup in time or exits without
 #   a successful result first, or a refused handling-delivery confirmation,
 #   logs the condition to stderr,
@@ -169,6 +190,15 @@
 # tests/fm-deck-harness.test.sh pins cancellation, exec replacement, fork races,
 # and MCP exclusion in test_secondmate_stops_a_turn_inside_a_long_tool.
 #
+# HOST SHUTDOWN (cleanup on /quit, end of input, TERM, or HUP)
+# The host first sends TERM to its watcher arm and its captain lane, so they
+# stop while it stops its own Deck turn with the bounded stop above. Each
+# child's FM_DECK_CHILD_STOP_SECS grace starts at that TERM, not at the later
+# wait: after stopping its turn, the host waits only the remaining grace before
+# killing that child's whole process subtree. A watcher check or lane turn
+# cannot hold shutdown up indefinitely. With default bounds, cleanup stays
+# below the time bin/fm-control.sh waits for a relaunched driver to stop.
+#
 # ENVIRONMENT
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
@@ -185,10 +215,21 @@
 #                           cancelling running tool and hook trees (default 1)
 #   FM_DECK_STOP_KILL_SECS  secondmate stop bound in seconds before killing
 #                           Deck itself if it has not exited (default 15)
+#   FM_DECK_CHILD_STOP_SECS  bound in seconds on waiting for the watcher arm
+#                           and the captain lane at host shutdown before
+#                           killing that child's process tree (default 5)
 #   FM_DECK_WATCH_FAILURE_LIMIT  consecutive failed watcher cycles after which a
 #                           secondmate host stops (default 5); fewer are
 #                           retried with a fresh watcher; empty, zero, or
 #                           nonnumeric values use the default
+#   FM_DECK_SESSION_START_TIMEOUT  runtime bound in seconds on the secondmate
+#                           host's one bin/fm-session-start.sh run (default
+#                           600; empty, zero, or nonnumeric values use the
+#                           default). The host refuses to start without a
+#                           complete digest, so session start's own 120s
+#                           interactive bound would turn a slow but healthy
+#                           startup on a loaded machine or a large home into
+#                           a failed launch; nobody waits on this one.
 #   FM_DECK_FRESH_SESSION   1 starts fresh secondmate conversations instead of
 #                           resuming; see CAPTAIN LANE for the split reset
 #   FM_DECK_WATCH_CONFIRM_SECS  how long a secondmate host waits for a
@@ -250,6 +291,39 @@ if [ -z "$ID" ] || [ -z "$STATE" ] || [ -z "$GEN" ] || [ -z "$DECK" ] || [ -z "$
   echo "fm-deck-worker: --id, --state, --gen, --deck, and a first prompt are required" >&2
   exit 2
 fi
+# Apply an explicit destination-home grant here, after the remote transport and
+# PTY shell have selected their environments but before session-start/bootstrap.
+# Do not use FM_CONFIG_OVERRIDE: --state/config may belong to the parent route.
+if [ "$SECONDMATE" = 1 ]; then
+  [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME" ] || { echo 'fm-deck-worker: requires an explicit home' >&2; exit 2; }
+  TOOL_PATH_PREFIX=$(python3 - "$FM_HOME/config/secondmate-tool-path" <<'PYTHON'
+import os, pathlib, stat, sys
+path = pathlib.Path(sys.argv[1])
+try:
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        sys.exit(0)
+    if not stat.S_ISREG(mode):
+        raise ValueError('must be a readable regular non-symlink file')
+    directories = []
+    for directory in path.read_bytes().decode('utf-8').split('\n'):
+        if not directory:
+            continue
+        if (not os.path.isabs(directory) or ':' in directory
+                or any(ord(c) < 32 or ord(c) == 127 for c in directory)):
+            raise ValueError('requires absolute directories without colons or control bytes')
+        if not os.path.isdir(directory):
+            raise ValueError('directory is unavailable')
+        directories.append(directory)
+    print(':'.join(directories), end='')
+except (OSError, ValueError, UnicodeError) as error:
+    print('fm-deck-worker: config/secondmate-tool-path: ' + str(error), file=sys.stderr)
+    sys.exit(2)
+PYTHON
+  ) || exit 2
+  [ -z "$TOOL_PATH_PREFIX" ] || export PATH="$TOOL_PATH_PREFIX${PATH:+:$PATH}"
+fi
 command -v jq >/dev/null 2>&1 || { echo "fm-deck-worker: jq is required to render Deck's event stream" >&2; exit 2; }
 command -v python3 >/dev/null 2>&1 || { echo "fm-deck-worker: python3 is required for safe status I/O" >&2; exit 2; }
 [ -f "$STATE_IO" ] && [ ! -L "$STATE_IO" ] || { echo "fm-deck-worker: safe status I/O helper is unavailable" >&2; exit 2; }
@@ -275,6 +349,8 @@ WATCH_FAILURE_LIMIT=${FM_DECK_WATCH_FAILURE_LIMIT:-5}
 case "$WATCH_FAILURE_LIMIT" in ''|*[!0-9]*|0) WATCH_FAILURE_LIMIT=5 ;; esac
 WATCH_CONFIRM_SECS=${FM_DECK_WATCH_CONFIRM_SECS:-15}
 case "$WATCH_CONFIRM_SECS" in ''|*[!0-9]*|0) WATCH_CONFIRM_SECS=15 ;; esac
+CHILD_STOP=${FM_DECK_CHILD_STOP_SECS:-5}
+case "$CHILD_STOP" in ''|*[!0-9]*) CHILD_STOP=5 ;; esac
 # Match the stream backend's config-directory resolution, not the parent task's
 # --state directory: a secondmate host and its workers use its own home.
 if [ "${FM_DECK_MCP_CONFIG+set}" = set ]; then
@@ -305,6 +381,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/fm-deck-worker.XXXXXX") || exit 2
 TURN_MARK="$WORK/turn-start"
 EVENTS="$WORK/events.ndjson"
 WATCH_PENDING="$WORK/watch.pending"
+WATCH_PUBLICATION="$WORK/watch.publication"
+WATCH_PUBLICATION_SEQ=0
 TURN_STATUS="$WORK/turn-pipeline.status"
 TURN_PIPE="$WORK/turn-events.pipe"
 mkfifo "$TURN_PIPE" || exit 1
@@ -377,14 +455,17 @@ lane_start() {
 }
 lane_stop() {
   [ -n "$LANE_PID" ] || return 0
-  kill -TERM "$LANE_PID" 2>/dev/null || true
-  wait "$LANE_PID" 2>/dev/null || true
+  fm_stop_child_bounded "$LANE_PID" "$CHILD_STOP" || true
   LANE_PID=''
   rm -f "$LANE_MARK"
 }
 
+# The header's HOST SHUTDOWN section owns this order and its bounds.
 cleanup() {
+  trap '' TERM INT HUP
   deck_stream_end
+  [ -z "$WATCH_PID" ] || fm_begin_child_stop "$WATCH_PID"
+  [ -z "$LANE_PID" ] || fm_begin_child_stop "$LANE_PID"
   stop_turn
   # Deck may have saved this turn's session after the loop last looked; record
   # it before the turn's files go.
@@ -397,10 +478,7 @@ cleanup() {
     kill -TERM "$INPUT_PID" 2>/dev/null || true
     wait "$INPUT_PID" 2>/dev/null || true
   fi
-  if [ -n "$WATCH_PID" ]; then
-    kill -TERM "$WATCH_PID" 2>/dev/null || true
-    wait "$WATCH_PID" 2>/dev/null || true
-  fi
+  [ -z "$WATCH_PID" ] || fm_stop_child_bounded "$WATCH_PID" "$CHILD_STOP" || true
   lane_stop
   [ -z "$TTY_SETTINGS" ] || stty "$TTY_SETTINGS" 2>/dev/null || true
   rm -rf -- "$WORK"
@@ -695,12 +773,14 @@ watch_start() {
 # need no keystroke injection, pane scrape, or special wake implementation.
 WAKE_PREAMBLE='The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:'
 watch_doorbell() (
-  local record
+  local record pending
   # shellcheck source=bin/fm-task-inbox-lib.sh
   . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
-  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write "$STATE" "$ID" "$WAKE_PREAMBLE
-$(cat "$WATCH_PENDING")") || exit 1
-  fm_task_inbox_doorbell_line "$record"
+  pending=$(cat "$WATCH_PUBLICATION") || exit 1
+  record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write_idempotent "$STATE" "$ID" "Watcher publication: $GEN:${WORK##*/}:$WATCH_PUBLICATION_SEQ
+$WAKE_PREAMBLE
+$pending") || exit 1
+  fm_task_inbox_doorbell_line "$record" || exit 2
 )
 
 # Per-turn reasoning effort for a home host's watcher turns: the level
@@ -715,7 +795,7 @@ watch_effort() {
   for f in "$STATE/$ID.inbox"/*.msg; do
     if [ -e "$f" ] || [ -L "$f" ]; then return 0; fi
   done
-  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PENDING")" \
+  printf '%s\n%s' "$WAKE_PREAMBLE" "$(cat "$WATCH_PUBLICATION")" \
     | "$SCRIPT_DIR/fm-effort-policy.sh" classify --home "$FM_HOME" 2>/dev/null
 }
 
@@ -867,8 +947,16 @@ if [ "$SECONDMATE" = 1 ]; then
     host_failure 'could not publish a fresh recovery generation'; exit 1
   fi
   # Startup is executed exactly once by the stable host, not by a short-lived
-  # Deck run. The complete digest is supplied to the first model turn.
-  if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
+  # Deck run. The complete digest is supplied to the first model turn, and an
+  # incomplete one refuses the launch below, so the host gives session start
+  # its own larger bound (see FM_DECK_SESSION_START_TIMEOUT) instead of the
+  # 120s default.
+  SESSION_START_TIMEOUT=${FM_DECK_SESSION_START_TIMEOUT:-600}
+  # A padded zero such as 00 is still zero, which would disable the bound.
+  case "$SESSION_START_TIMEOUT" in ''|*[!0-9]*) SESSION_START_TIMEOUT=600 ;; esac
+  [ "$SESSION_START_TIMEOUT" -gt 0 ] 2>/dev/null || SESSION_START_TIMEOUT=600
+  if ! FM_SESSION_START_TIMEOUT="$SESSION_START_TIMEOUT" \
+    "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
     cat "$WORK/startup" >&2
     host_failure 'session start failed'; exit 1
   fi
@@ -1346,10 +1434,19 @@ idle_captain_ready() {
   return 1
 }
 
+exit_if_queued() {
+  if grep -qx '/quit' "$WORK"/input.[0-9]* 2>/dev/null; then
+    record_busy_event idle session-end || exit 1
+    exit 0
+  fi
+}
+
 lane_start || { host_failure 'could not start the captain lane'; exit 1; }
 drive_turn "$PROMPT"
 input_seq=0
 show_prompt=1
+watch_publish_failures=0
+watch_publish_retry_at=0
 while :; do
   if [ "$SECONDMATE" = 1 ]; then
     watch_start || exit 1
@@ -1378,26 +1475,39 @@ while :; do
       fi
       show_prompt=1
     done
-    if [ -f "$WORK/input.$input_seq" ]; then
-      if ! line=$(cat "$WORK/input.$input_seq"); then
-        host_failure 'could not read queued input'; exit 1
+    exit_if_queued
+    if [ -s "$WATCH_PUBLICATION" ] || [ -s "$WATCH_PENDING" ]; then
+      if [ ! -s "$WATCH_PUBLICATION" ]; then
+        mv "$WATCH_PENDING" "$WATCH_PUBLICATION" || { host_failure 'could not retain watcher publication'; exit 1; }
+        WATCH_PUBLICATION_SEQ=$((WATCH_PUBLICATION_SEQ + 1))
       fi
-      if [ "$line" = /quit ]; then
-        rm "$WORK/input.$input_seq" || { host_failure 'could not consume queued exit'; exit 1; }
-        record_busy_event idle session-end || exit 1
-        exit 0
+      if [ "$watch_publish_failures" -ge 3 ]; then
+        host_failure 'could not publish watcher steering doorbell'; exit 1
       fi
-    fi
-    if [ -s "$WATCH_PENDING" ]; then
+      if [ "$(date +%s)" -lt "$watch_publish_retry_at" ]; then
+        sleep 0.1
+        continue
+      fi
       if [ -z "$EFFORT_SUPPORTED" ]; then
         EFFORT_SUPPORTED=0
         "$SCRIPT_DIR/fm-effort-policy.sh" supported "$DECK" && EFFORT_SUPPORTED=1
       fi
       TURN_EFFORT=$(watch_effort)
-      if ! doorbell=$(watch_doorbell); then
-        host_failure 'could not publish watcher steering doorbell'; exit 1
+      publish_rc=0
+      doorbell=$(watch_doorbell) || publish_rc=$?
+      if [ "$publish_rc" -ne 0 ]; then
+        [ "$publish_rc" -eq 1 ] || { host_failure 'could not publish watcher steering doorbell'; exit 1; }
+        watch_publish_failures=$((watch_publish_failures + 1))
+        if [ "$watch_publish_failures" -lt 3 ]; then
+          printf 'fm-deck-worker: warning: retrying watcher steering publication (%s/3)\n' "$watch_publish_failures" >&2
+          watch_publish_retry_at=$(( $(date +%s) + watch_publish_failures ))
+        fi
+        continue
       fi
-      : > "$WATCH_PENDING"
+      exit_if_queued
+      watch_publish_failures=0
+      watch_publish_retry_at=0
+      : > "$WATCH_PUBLICATION"
       drive_turn "$doorbell"
       show_prompt=1
       continue

@@ -105,10 +105,126 @@ latest_record_body() {  # <home> <task>
 
 # --- tests ------------------------------------------------------------------
 
+test_stale_local_attempt_never_blocks_resends() {
+  local home state corr rec marker
+  home=$(setup_parent stale-attempt)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=1000
+  # An interrupted local send: attempted, never confirmed, then escalated.
+  corr=$(fm_pending_reply_create "$home" "$state" "runtime" "New routed work is in your backlog.")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted 1000 || fail "setup: attempt marker"
+  fm_pending_reply_set "$rec" phase escalated
+  fm_pending_reply_set "$rec" escalated_epoch 1100
+  marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
+  export FM_PENDING_REPLY_NOW=1300
+  fm_pending_reply_reconcile_delivery "$state" "$corr" >/dev/null 2>&1 || true
+  fm_pending_reply_delivery_attempt_unresolved "$state" "$corr" \
+    || fail "a young unconfirmed attempt must still guard against a duplicate send"
+  # Ten minutes on, with no inbox record carrying the correlation, it is retryable.
+  export FM_PENDING_REPLY_NOW=1700
+  fm_pending_reply_reconcile_delivery "$state" "$corr" >/dev/null 2>&1 || true
+  fm_pending_reply_delivery_attempt_unresolved "$state" "$corr" \
+    && fail "a stale attempt with nothing in the inbox must not block every resend"
+  [ ! -e "$marker" ] || fail "the stale attempt marker is cleared"
+  [ "$(phase_of "$state" "$corr")" = awaiting_report ] || fail "the request is waiting for its report again"
+  fm_pending_reply_corr_reusable "$state" "$corr" runtime || fail "the same correlation can be resent"
+  [ "$(fm_pending_reply_get "$rec" escalated_epoch)" = 1100 ] || fail "the open blocker stays tracked so it is closed, not raised again"
+
+  # The same interruption after the record DID reach the inbox counts as delivered.
+  corr=$(fm_pending_reply_create "$home" "$state" "runtime" "New routed work is in your backlog.")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  export FM_PENDING_REPLY_NOW=2000
+  fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted 2000 || fail "setup: attempt marker"
+  mkdir -p "$state/runtime.inbox/handled"
+  printf 'schema=fm-task-inbox.v1\n--\ncorr=%s New routed work is in your backlog.\n' "$corr" > "$state/runtime.inbox/handled/1.msg"
+  export FM_PENDING_REPLY_NOW=2700
+  fm_pending_reply_reconcile_delivery "$state" "$corr" >/dev/null 2>&1 || true
+  [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 2000 ] || fail "a stale attempt found in the inbox is marked delivered at its attempt time"
+  unset FM_PENDING_REPLY_NOW
+  pass "a stale unconfirmed local send is settled from the inbox and never blocks later resends"
+}
+
+# shellcheck disable=SC2030 # Environment overrides intentionally stay in this test's subshell.
+test_local_correlated_resend_is_idempotent() (
+  local home state fb log corr rec inbox_record location count msg
+  msg='New routed work is in your backlog.'
+  for location in root handled; do
+    home=$(setup_parent "correlated-resend-$location")
+    state="$home/state"
+    fb=$(make_stubs "$home"); log="$home/send.log"
+    fm_test_stream_secondmate_meta "$state/runtime.meta" "$home/sm" alpha echo "$log"
+    export FM_PENDING_REPLY_NOW=1000
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "initial send failed"
+    corr=$(fm_pending_reply_extract_corr "$(latest_record_body "$home" runtime)")
+    rec=$(fm_pending_reply_path "$state" "$corr")
+    inbox_record=$(find "$state/runtime.inbox" -maxdepth 1 -name '*.msg')
+    [ -n "$inbox_record" ] || fail "initial send did not enqueue"
+    if [ "$location" = handled ]; then
+      mv "$inbox_record" "$state/runtime.inbox/handled/" || fail "acknowledgement failed"
+    fi
+    fm_pending_reply_set "$rec" delivered_epoch ''
+    fm_pending_reply_write_delivery_confirmation "$state" "$corr" attempted 1000
+    export FM_PENDING_REPLY_NOW=1700 FM_PENDING_REPLY_EXISTING_CORR="$corr"
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "stale local resend failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 1 ] || fail "correlated resend duplicated the $location request"
+    [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 1000 ] \
+      || fail "resend lost the original delivery time"
+    fm_pending_reply_mark_turn_completed "$state" "$corr" request
+    (
+      export PATH="$fb:$PATH" FM_HOME="$home" FM_ROOT_OVERRIDE="$home" FM_SEND_LOG="$log"
+      unset FM_PENDING_REPLY_SEND_HOOK
+      fm_pending_reply_send_recovery "$state" "$corr"
+    ) || fail "intentional recovery send failed"
+    [ "$(phase_of "$state" "$corr")" = recovery_sent ] || fail "recovery did not finish"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 2 ] || fail "recovery must enqueue its own message"
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "resend after recovery failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 2 ] || fail "resend after recovery duplicated the $location request"
+    unset FM_PENDING_REPLY_EXISTING_CORR
+    run_send "$fb" "$home" "$log" runtime "$msg" || fail "new identical request failed"
+    count=$(find "$state/runtime.inbox" -name '*.msg' | wc -l | tr -d ' ')
+    [ "$count" = 3 ] || fail "a brand-new request must not collapse onto an older request"
+  done
+  pass "fm-send deduplicates correlated local resends without suppressing recovery or new requests"
+)
+
+# shellcheck disable=SC2030,SC2031 # This isolated test sets its own clock independently.
+test_stale_attempt_follows_concurrent_ack() (
+  local home state corr rec inbox_record marker
+  home=$(setup_parent stale-ack-race)
+  state="$home/state"
+  export FM_PENDING_REPLY_NOW=1000
+  corr=$(fm_pending_reply_create "$home" "$state" runtime "New routed work is in your backlog.")
+  rec=$(fm_pending_reply_path "$state" "$corr")
+  fm_pending_reply_prepare_delivery "$state" "$corr" inbox || fail "prepare attempt failed"
+  marker=$(fm_pending_reply_delivery_confirmation_path "$state" "$corr")
+  mkdir -p "$state/runtime.inbox/handled"
+  inbox_record="$state/runtime.inbox/001.msg"
+  printf 'schema=fm-task-inbox.v1\n--\ncorr=%s New routed work is in your backlog.\n' "$corr" > "$inbox_record"
+  grep() {
+    local candidate=${!#}
+    if [ "$candidate" = "$inbox_record" ] && [ -f "$candidate" ]; then
+      mv "$candidate" "${candidate%/*}/handled/" || return 1
+    fi
+    command grep "$@"
+  }
+  export FM_PENDING_REPLY_NOW=1700
+  fm_pending_reply_reconcile_delivery "$state" "$corr" || fail "reconciliation failed"
+  [ -f "$state/runtime.inbox/handled/001.msg" ] || fail "the concurrent acknowledgement did not run"
+  [ "$(fm_pending_reply_get "$rec" delivered_epoch)" = 1000 ] \
+    || fail "an acknowledgement racing the scan must still establish delivery"
+  [ ! -e "$marker" ] || fail "settled delivery retained its attempt marker"
+  pass "stale-attempt reconciliation follows an acknowledgement racing its inbox scan"
+)
+
 test_normal_correlated_reply_resolves_once() {
   local home state corr status rec
   home=$(setup_parent resolve-once)
   state="$home/state"
+  # shellcheck disable=SC2031 # This test resets its clock rather than inheriting subshell changes.
   export FM_PENDING_REPLY_NOW=1000
   corr=$(fm_pending_reply_create "$home" "$state" "hibit" "audit the ledger")
   fm_pending_reply_mark_delivered "$state" "$corr"
@@ -1126,6 +1242,7 @@ test_correlations_reuse_only_for_matching_open_task() {
   run_send "$fb" "$home" "$log" domain "first request" || fail "first marked send failed"
   got=$(latest_record_body "$home" domain)
   corr1=$(fm_pending_reply_extract_corr "$got")
+  # shellcheck disable=SC2031 # This test selects its own correlation independently of earlier subshells.
   export FM_PENDING_REPLY_EXISTING_CORR=$corr1
   if run_send "$fb" "$home" "$log" other "forwarded request"; then
     fail "an explicit cross-task correlation must be refused"
@@ -1616,6 +1733,9 @@ test_escalated_undelivered_correlation_stays_retryable() {
 # --- run --------------------------------------------------------------------
 
 test_normal_correlated_reply_resolves_once
+test_stale_local_attempt_never_blocks_resends
+test_local_correlated_resend_is_idempotent
+test_stale_attempt_follows_concurrent_ack
 test_completed_turn_no_report_triggers_one_recovery
 test_recovery_attempt_is_never_reinjected
 test_recovery_reply_resolves_original

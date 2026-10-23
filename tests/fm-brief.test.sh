@@ -841,6 +841,37 @@ test_ship_brief_carries_cross_worker_awareness() {
   pass "fm-brief.sh: ship briefs carry the cross-worker awareness contract, scouts and charters do not"
 }
 
+test_every_agent_is_told_to_act_within_scope() {
+  local home="$TMP_ROOT/act-scope" kind brief role
+  for kind in no-mistakes direct-PR local-only scout; do
+    if [ "$kind" = scout ]; then
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" proj --scout >/dev/null || fail "scout scaffold failed"
+    else
+      FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$kind" proj --mode "$kind" >/dev/null || fail "$kind scaffold failed"
+    fi
+    brief="$home/data/$kind/brief.md"
+    assert_grep 'try the obvious fix' "$brief" "$kind brief must ask for the obvious fix before a blocker"
+    assert_grep 'If the daemon is not running, start it' "$brief" "$kind brief must let the worker start a stopped daemon"
+    assert_no_grep 'same obstacle twice' "$brief" "$kind brief must not stop at a repeated obstacle"
+  done
+  role=$(. "$ROOT/bin/fm-dod-lib.sh"; fm_brief_worker_role "$home/state" w1)
+  assert_contains "$role" '# Act within your scope' "every launched worker gets the act-within-scope contract"
+  assert_contains "$role" '"merge when green" includes rebasing, fixing CI, rerunning checks and fixing review findings' "granted authority covers its routine steps"
+  assert_contains "$role" 'deploying or promoting to production' "the hard stops stay explicit"
+  assert_contains "$role" 'A blocker is real only after you tried the obvious fix' "blockers must be real"
+  assert_contains "$role" "read the project's own guidance" "a credential or access blocker is checked against the project's own guidance first"
+  assert_contains "$role" 'INTERNAL.md' "the project's internal docs are named as a place to look"
+  assert_contains "$role" 'say what you checked and tried' "a blocker names what was checked"
+  assert_contains "$role" 'is not an exposure: redact it and move on, with no card and no report' "a local token from our own account is not an incident"
+  assert_contains "$role" 'never a suggestion to ask the vendor' "a real exposure comes with a rotation step"
+  assert_contains "$role" 'after 30 minutes on it, tell your mate' "side investigations are time-boxed"
+  assert_contains "$role" "becomes the captain's only when no documented path exists" "an access blocker reaches the captain only without a documented path"
+  FM_HOME="$home" FM_SECONDMATE_CHARTER='Supervise assigned work.' \
+    "$ROOT/bin/fm-brief.sh" mate --secondmate --no-projects >/dev/null || fail "secondmate scaffold failed"
+  assert_grep '# Act within your scope' "$home/data/mate/brief.md" "a new second mate's charter carries the act-within-scope contract"
+  pass "fm-brief: workers and second mates act within scope, keep the hard stops, and report only real blockers"
+}
+
 test_worker_role_scope() {
   local kind home brief
   home="$TMP_ROOT/worker-role"
@@ -864,6 +895,7 @@ test_worker_role_scope() {
 }
 
 test_worker_role_scope
+test_every_agent_is_told_to_act_within_scope
 test_script_parses
 test_stock_shell_generates_briefs
 test_help_includes_entire_header

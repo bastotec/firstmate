@@ -345,6 +345,42 @@ test_authority_follows_the_registry() {
   pass "fm-autoland: registry-backed authority needs +yolo at tick time"
 }
 
+test_merge_policy_decides_authority() {
+  local home node out
+  home=$(make_home policy '- proj [no-mistakes] - a project (added 2026-01-01)')
+  write_config "$home" '{"repos":[{"repo":"o/r","project":"proj","attestation":true}]}'
+  node=$(pr_node "$HEAD_A")
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  printf '%s\n' '{"owners":{"o":"auto"}}' > "$home/config/merge-policy.json"
+  out=$(tick "$home")
+  assert_contains "$out" "merged https://github.com/o/r/pull/7" "an auto owner policy did not grant merge authority"
+
+  home=$(make_home policy-ask)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  printf '%s\n' '{"repos":{"O/R":{"policy":"ask"}}}' > "$home/config/merge-policy.json"
+  out=$(tick "$home")
+  [ "$(merges "$home")" = 0 ] || fail "an ask repository was merged despite its cited authority"
+
+  home=$(make_home policy-never-default)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  printf '%s\n' '{"default":"never"}' > "$home/config/merge-policy.json"
+  out=$(tick "$home")
+  [ "$(merges "$home")" = 0 ] || fail "a never default was merged"
+
+  home=$(make_home policy-default-keeps-ruling)
+  write_config "$home" "$CONFIG_AUTH"
+  write_gql "$home" "$MAIN_1" "$node"
+  write_live "$home" "$node"
+  out=$(tick "$home")
+  assert_contains "$out" "merged https://github.com/o/r/pull/7" "the ask default revoked a cited per-repository ruling"
+  pass "fm-autoland: the captain's merge policy decides authority, and its bare default keeps earlier rulings"
+}
+
 test_other_base_and_other_repo_are_ignored() {
   local home out
   home=$(make_home ignored)
@@ -359,7 +395,7 @@ owned_bin() {
   local tmpbin="$1/bin" lib
   mkdir -p "$tmpbin"
   cp "$AUTOLAND" "$tmpbin/"
-  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh; do
+  for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh fm-project-mode.sh fm-fleet-sync.sh fm-wake-lib.sh fm-machine-rules.sh fm-merge-policy.sh; do
     ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
   cat > "$tmpbin/fm-pr-merge.sh" <<'SH'
@@ -702,6 +738,59 @@ test_deploy_runs_after_merge_and_reports() {
   pass "fm-autoland: a new default-branch head deploys once, records the commit, and reports"
 }
 
+test_skipped_hook_after_clone_refresh() {
+  local home remote target previous out rc i
+  for previous in none "$MAIN_1"; do
+    home=$(make_home "skipped-$previous")
+    remote="$home/source"
+    git init -q -b main "$remote"
+    git -C "$remote" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -q --allow-empty -m initial
+    mkdir -p "$home/projects"
+    git clone -q "$remote" "$home/projects/proj"
+    git -C "$remote" -c user.name=fmtest -c user.email=fmtest@example.invalid commit -q --allow-empty -m update
+    target=$(git -C "$remote" rev-parse HEAD)
+    write_config "$home" '{"repos":[{"repo":"o/r","project":"proj","hook":"svc"}]}'
+    write_hook "$home" svc 78
+    mkdir -p "$home/state/autoland"
+    if [ "$previous" != none ]; then
+      printf '%s\n' "$previous" > "$home/state/autoland/svc.deployed"
+    fi
+    rc=0
+    FM_HOME="$home" "$AUTOLAND" deploy-run svc "$target" > "$home/deploy.out" 2>&1 || rc=$?
+    expect_code 78 "$rc" "skipped hook classification"
+    [ "$(git -C "$home/projects/proj" rev-parse HEAD)" = "$target" ] || fail "clone refresh did not fast-forward"
+    [ "$(cut -f1 "$home/state/autoland/svc.result")" = skipped ] || fail "no-op hook was not recorded as skipped"
+    [ "$(cut -f2 "$home/state/autoland/svc.result")" = "$target" ] || fail "skipped target not recorded"
+    if [ "$previous" = none ]; then
+      [ ! -e "$home/state/autoland/svc.deployed" ] || fail "clone refresh alone was recorded as deployment"
+    else
+      [ "$(cat "$home/state/autoland/svc.deployed")" = "$previous" ] || fail "skipped hook advanced the deployed revision"
+    fi
+    [ ! -e "$home/state/autoland/svc.lock" ] || fail "skipped hook retained its lock"
+    write_gql "$home" "$target"
+    out=$(tick "$home")
+    [ -z "$out" ] || fail "skipped hook emitted a notification: $out"
+    out=$(tick "$home")
+    [ -z "$out" ] || fail "skipped hook emitted a later notification: $out"
+    [ "$(wc -l < "$home/hook-svc.runs" | tr -d ' ')" = 1 ] || fail "skipped hook retried the same head automatically"
+    out=$(FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_HEAD_OID="$target" PATH="$FAKEBIN:$PATH" \
+      "$AUTOLAND" deploy svc 2>&1) || fail "foreground skipped hook was treated as failure: $out"
+    assert_contains "$out" "svc skipped ${target:0:7}" "foreground skipped result"
+    [ "$(wc -l < "$home/hook-svc.runs" | tr -d ' ')" = 2 ] || fail "explicit retry did not run the skipped hook"
+    write_gql "$home" "$MAIN_2"
+    tick "$home" >/dev/null
+    # Wait for the new target, not the previous skipped result.
+    i=0
+    while [ "$(cut -f2 "$home/state/autoland/svc.result")" != "$MAIN_2" ] && [ "$i" -lt 200 ]; do
+      sleep 0.1
+      i=$((i + 1))
+    done
+    [ "$(cut -f2 "$home/state/autoland/svc.result")" = "$MAIN_2" ] || fail "a new head did not retry the skipped hook"
+    wait_result "$home" svc skipped || fail "new head did not finish"
+  done
+  pass "fm-autoland: clone refresh plus a skipped hook never proves deployment, with bounded retries"
+}
+
 test_detached_hook_survives_check_process_group_termination() {
   local home check_pid runner_pid check_group runner_group rc=0
   home=$(make_home detached-runner)
@@ -989,6 +1078,37 @@ test_failed_and_deferred_hooks() {
   pass "fm-autoland: a failed hook reports once without retrying; a deferred one retries"
 }
 
+test_foreground_hook_outcomes_preserve_deployment_history() {
+  local home hook_rc status expected_rc expected_deployed out rc
+  for hook_rc in 0 78 75 3; do
+    case "$hook_rc" in
+      0) status=deployed; expected_rc=0; expected_deployed=$MAIN_2 ;;
+      78) status=skipped; expected_rc=0; expected_deployed=$MAIN_1 ;;
+      75) status=deferred; expected_rc=0; expected_deployed=$MAIN_1 ;;
+      3) status=failed; expected_rc=1; expected_deployed=$MAIN_1 ;;
+    esac
+    home=$(make_home "foreground-$status")
+    write_config "$home" '{"repos":[{"repo":"o/r","authority":"r","hook":"svc"}]}'
+    write_hook "$home" svc "$hook_rc"
+    mkdir -p "$home/state/autoland"
+    printf '%s\n' "$MAIN_1" > "$home/state/autoland/svc.deployed"
+    rc=0
+    out=$(FM_HOME="$home" FM_TEST_GH_LOG="$home/gh.log" FM_TEST_HEAD_OID="$MAIN_2" PATH="$FAKEBIN:$PATH" \
+      "$AUTOLAND" deploy svc 2>&1) || rc=$?
+    expect_code "$expected_rc" "$rc" "foreground $status exit"
+    assert_contains "$out" "svc $status bbbbbbb" "foreground $status result"
+    [ "$(cut -f1 "$home/state/autoland/svc.result")" = "$status" ] || fail "$status result not persisted"
+    [ "$(cut -f2 "$home/state/autoland/svc.result")" = "$MAIN_2" ] || fail "$status target not persisted"
+    [ "$(cat "$home/state/autoland/svc.deployed")" = "$expected_deployed" ] || fail "$status corrupted deployment history"
+    [ ! -e "$home/state/autoland/svc.lock" ] || fail "$status retained its lock"
+    write_gql "$home" "$MAIN_2"
+    out=$(tick "$home" "$AUTOLAND" FM_AUTOLAND_DEFER_RETRY=99999)
+    [ -z "$out" ] || fail "foreground $status was re-reported: $out"
+    [ "$(wc -l < "$home/hook-svc.runs" | tr -d ' ')" = 1 ] || fail "foreground $status retried before due"
+  done
+  pass "fm-autoland: foreground outcomes preserve deployment history and suppress repeat notifications"
+}
+
 test_unsafe_hook_and_foreground_deploy() {
   local home out rc=0
   home=$(make_home unsafe)
@@ -1044,6 +1164,7 @@ test_blocking_reasons_are_named
 test_malformed_attestations_do_not_interrupt_the_batch
 test_refused_merge_is_reported
 test_authority_follows_the_registry
+test_merge_policy_decides_authority
 test_other_base_and_other_repo_are_ignored
 test_task_owned_pr_uses_fm_pr_merge
 test_machine_merge_rule_applies_to_both_paths
@@ -1058,6 +1179,7 @@ test_rotation_gives_each_pr_a_merge_turn
 test_notification_timestamps_use_the_real_clock
 test_merges_are_bounded_and_notifications_follow_output
 test_deploy_runs_after_merge_and_reports
+test_skipped_hook_after_clone_refresh
 test_detached_hook_survives_check_process_group_termination
 test_hook_timeout_fails_without_recording_deployment
 test_fleet_sync_timeout_is_a_continuing_warning
@@ -1066,5 +1188,6 @@ test_hook_lock_release_preserves_another_owner
 test_finished_runner_result_survives_reconciliation
 test_firstmate_hook_uses_separate_code_root
 test_failed_and_deferred_hooks
+test_foreground_hook_outcomes_preserve_deployment_history
 test_unsafe_hook_and_foreground_deploy
 test_watcher_runs_autoland_between_full_sweeps

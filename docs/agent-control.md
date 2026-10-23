@@ -32,7 +32,8 @@ The primary runs under the Deck chat host, [`bin/fm-deck-chat.sh`](../bin/fm-dec
 
 ## Verbs
 
-The verb table and transactional sections below describe local task records; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the primary's separate routing for remotely placed secondmates.
+The verb table and transactional sections below describe local endpoint-backed task records; [remote lifecycle control](remote-secondmates.md#lifecycle-control) owns the primary's separate routing for remotely placed secondmates.
+For persistent specialist workers, the [`fm-specialist.sh` header](../bin/fm-specialist.sh) owns the direct-job semantics of shared messaging and control commands.
 
 | Verb | Effect | Postcondition |
 | --- | --- | --- |
@@ -86,12 +87,17 @@ The steps below describe `relaunch`; [missing-terminal recovery](#recovering-a-m
    Both recovery verbs use the same predicate before creating a terminal.
 3. **Safe checkpoint.**
    The recorded worktree must exist and be a worktree root; its head and dirty state are recorded.
+   The [`fm-control.sh` header](../bin/fm-control.sh) owns the worktree-owner claim guard shared by relaunch and missing-terminal recovery.
    For a `kind=secondmate` task, the home's identity marker must match and its child records must be readable, so a relaunch can never strand child work behind an unreadable home.
+   A child-state traversal failure reports the state path, `find` exit status, and underlying diagnostic (or its absence) before any stop; a readable directory alone doesn't satisfy the checkpoint.
    A secondmate's own crewmates run in their own endpoints and outlive its relaunch; the relaunched secondmate reconciles them from its home's durable records at startup.
 4. **Record the note.**
    A ship or scout relaunch requires `--note`, because the replacement inherits the local copy but none of the conversation; the note is appended to the instructions it reads.
    A secondmate relaunch does not require one and never rewrites its standing charter.
-5. **Stop the old agent** through the `exit` verb, with its postcondition.
+5. **Stop the old agent** through the `exit` path, with its postcondition.
+   After lifecycle input is delivered, relaunch requests cooperative stop through the [`fm-deck-stop.py` boundary](../bin/fm-deck-stop.py) before waiting for the recorded endpoint to report the agent gone.
+   Delivery alone is not stop proof: both proofs must pass within their bounded waits or replacement is refused without forced termination.
+   The [`fm-control.sh` header](../bin/fm-control.sh) owns the longer relaunch stop bounds and the separate plain-exit bound.
 6. **Launch the replacement** through its single owner, `bin/fm-spawn.sh --relaunch`, which reuses the recorded worktree and adopts the recorded endpoint, clears the previous harness's per-task wiring, arms a fresh busy generation, rechecks the same backlog recovery eligibility before publication and at the launch commit, and leaves an eligible In-flight row untouched.
 
 Switching harness is therefore one ordinary relaunch rather than a separate mechanism.
@@ -109,7 +115,7 @@ It differs from the steps above in exactly three places.
   A named replacement is a deliberate choice, never a config re-read, so the same flag never silently picks up a changed secondmate pin.
   A ship or scout still requires `--note`/`--note-file` for the same reason a relaunch does; the automatic-admission flag is owned by the [`fm-control.sh` header](../bin/fm-control.sh).
   A held backlog row, a missing local copy, or an ownership conflict refuses exactly as it does for an ordinary recovery, replacement profile or not.
-- Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must be present and - for a Treehouse pool slot - still claimed by this task.
+- Two extra preconditions around the checkpoint: the endpoint must read the positively `missing` state, and the recorded local copy must pass the shared checkpoint and ownership guard above.
   Each of those refuses rather than cleaning, reallocating, or repairing anything; no worktree and no pool slot is ever created here.
   Uncommitted changes in that copy are not a precondition at all.
   A task worth recovering is mid-work by definition, so unlanded changes are its normal state, and recovery recreates the terminal beside that work without cleaning, resetting, or stashing any of it.
@@ -149,6 +155,7 @@ It differs from the steps above in exactly three places.
   On stream a silent agent reads `unreadable` rather than `dead`, so a partition refuses here instead of proving a stop that never happened.
 - `recover-missing` brings a terminal back on stream as a NEW endpoint and rebinds the record to it.
   [Stream's lifecycle guide](stream-backend.md#secondmate-lifecycle) owns its new-endpoint recovery and local-agent ownership guard; [Failure and rollback](#failure-and-rollback) above owns failed rebind and handover handling.
+- `relaunch`, `recover-missing`, and `reincarnate` also require admission under the parent approval-exclusion contract owned by [`fm-approval-wait.sh`'s header](../bin/fm-approval-wait.sh).
 - An ambiguous or unreadable endpoint state refuses.
   Only a positively classified state acts.
 - `relaunch` inherits the [exit composer gate](#verbs) by stopping the old agent through `exit`.

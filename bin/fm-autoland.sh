@@ -45,19 +45,15 @@
 # Each complete merge operation is also bounded to
 # the time remaining before FM_CHECK_TIMEOUT minus three seconds.
 #
-# Deploying. For a hooked entry whose default-branch head differs from the
-# commit recorded in state/autoland/<hook>.deployed, the tick starts a detached
-# runner (its own session, so the watcher's per-check process-group kill cannot
-# reach it). That covers merges made here, by a person, or by anyone else. The
+# Deploying. A tick starts a detached runner when a hooked entry is due under
+# the post-merge hook contract in docs/configuration.md "Auto-land". The runner
+# has its own session, so the watcher's per-check process-group kill cannot
+# reach it. That covers merges made here, by a person, or by anyone else. The
 # runner refreshes the project's clone through bin/fm-fleet-sync.sh when this
 # home has one, then runs config/post-merge/<hook>.sh <oid> under
-# FM_AUTOLAND_HOOK_TIMEOUT (default 1800). Exit 0 records the commit as
-# deployed, exit 75 records a deferral that later ticks retry every
-# FM_AUTOLAND_DEFER_RETRY seconds (default 300), and anything else records a
-# failure that is reported once and not retried until the head moves or an
-# operator runs `deploy`. Output and summary handling follow the hook contract
-# in docs/configuration.md; one runner per hook at a time is enforced through
-# state/autoland/<hook>.lock.
+# FM_AUTOLAND_HOOK_TIMEOUT (default 1800). Result classification, notification,
+# retry, output, and summary handling follow that contract; one runner per hook
+# at a time is enforced through state/autoland/<hook>.lock.
 set -u
 export LC_ALL=C
 
@@ -175,9 +171,16 @@ config_entries() {  # prints repo US project US authority US method US attestati
     ((.attestation // false) | tostring), (.max_risk // "low"), (.hook // "")] | join("\u001f")' "$CONFIG"
 }
 
-# 0 when the entry carries standing merge authority right now.
-entry_authorized() {  # <project> <authority>
-  local project=$1 authority=$2 posture
+# 0 when the entry carries standing merge authority under docs/configuration.md
+# "Auto-land". Keep the resolved policy for its attestation requirement.
+entry_authorized() {  # <repo> <project> <authority>
+  local repo=$1 project=$2 authority=$3 posture
+  ENTRY_POLICY=$("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null) || return 1
+  case "$ENTRY_POLICY" in
+    'auto default'|'ask default') ;;
+    auto\ *) return 0 ;;
+    *) return 1 ;;
+  esac
   [ -n "$authority" ] && return 0
   [ -n "$project" ] || return 1
   posture=$(FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-project-mode.sh" "$project" 2>/dev/null) || return 1
@@ -185,7 +188,10 @@ entry_authorized() {  # <project> <authority>
 }
 
 entry_attestation() {
-  local project=$1 configured=$2 posture
+  local project=$1 configured=$2 policy=$3 posture
+  case "$policy" in
+    'auto repo'|auto\ owner\ *) configured=true ;;
+  esac
   if [ "$configured" = true ]; then
     printf 'true\n'
     return
@@ -242,21 +248,7 @@ search_string() {  # <entries-file>
 # landing decision reads. The attestation and risk come from the PR body that
 # no-mistakes writes.
 # shellcheck disable=SC2016  # jq program text.
-PR_JQ='
-  def attest($head):
-    try (
-    ([(.body // "") | scan("<!-- no-mistakes-pipeline-attestation:v1 (\\{.*?\\}) -->")] | last) as $m
-    | if $m == null then "missing"
-      else ($m[0] | fromjson) as $j
-      | if ($j | type) != "object" then "unreadable"
-        elif ($j.head_sha // "") != $head then "stale:" + (($j.head_sha // "none")[0:7])
-        else ([$j.steps[]? | {(.step): .status}] | add // {}) as $s
-        | if ($s.review // "") != "completed" then "incomplete:review " + ($s.review // "missing")
-          elif (($s.test // "") | IN("completed", "skipped") | not) then "incomplete:test " + ($s.test // "missing")
-          elif ($s.document // "") != "completed" then "incomplete:document " + ($s.document // "missing")
-          else "ok" end
-        end
-      end) catch "unreadable";
+PR_JQ="$(fm_pr_attestation_jq)"'
   def risk:
     (((.body // "") | capture("## Risk Assessment[ \t]*\r?\n[ \t\r\n]*(?<r>[^\n]*)")? | .r) // null) as $r
     | if $r == null then "none"
@@ -392,6 +384,7 @@ merge_pr() {  # <url> <head> <method> <attestation> <max_risk> <base>
 
 merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
   local url=$1 head=$2 method=$3 need_attest=$4 max_risk=$5 base=$6 out live rec state queue owned=false
+  local repo entry project authority configured
   MERGE_ERROR=
   if ! live=$(gh pr view "$url" \
       --json url,state,isDraft,mergeable,mergeStateStatus,headRefOid,baseRefName,body,labels,statusCheckRollup 2>/dev/null); then
@@ -419,15 +412,33 @@ merge_attempt() {  # <url> <head> <method> <attestation> <max_risk> <base>
     return 1
   fi
   if task_for_pr "$url"; then
-    if ! out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
+    if ! out=$(FM_HOME="$FM_HOME" FM_PR_MERGE_AUTOLAND=1 FM_PR_MERGE_EXPECT_HEAD="$head" FM_PR_MERGE_EXPECT_BASE="$base" "$SCRIPT_DIR/fm-pr-merge.sh" "$TASK_PR_ID" "$TASK_PR_URL" -- "--$method" 2>&1); then
       MERGE_ERROR=$(printf '%s\n' "$out" | grep -m1 -E '^error:|refus' | sed 's/^error: //')
       [ -n "$MERGE_ERROR" ] || MERGE_ERROR="bin/fm-pr-merge.sh refused it"
       return 1
     fi
     owned=true
-  elif ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
-    MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
-    return 1
+  else
+    fm_pr_url_parse "$url" && [ "$FM_PR_PROVIDER" = github ] || return 1
+    repo="$FM_PR_OWNER/$FM_PR_REPO"
+    entry=$(config_entries | awk -F "$US" -v r="$repo" 'tolower($1) == tolower(r)')
+    IFS=$US read -r _ project authority _ configured _ _ <<EOF
+$entry
+EOF
+    if [ -z "$entry" ] || ! entry_authorized "$repo" "$project" "$authority"; then
+      MERGE_ERROR="its current merge policy no longer permits autoland"
+      return 1
+    fi
+    need_attest=$(entry_attestation "$project" "$configured" "$ENTRY_POLICY")
+    decide "$rec" "$need_attest" "$max_risk"
+    if [ "$VERDICT" != merge ]; then
+      MERGE_ERROR=${REASON:-"its live checks are no longer all green"}
+      return 1
+    fi
+    if ! out=$(gh pr merge "$url" "--$method" --match-head-commit "$head" 2>&1); then
+      MERGE_ERROR="gh refused the merge: $(printf '%s\n' "$out" | head -n 1)"
+      return 1
+    fi
   fi
   state=$(gh pr view "$url" --json state -q .state 2>/dev/null || true)
   [ "$state" != MERGED ] || return 0
@@ -541,7 +552,7 @@ entry_for_hook() {  # <hook>; sets E_REPO E_PROJECT
 }
 
 # Run one hook for one commit; the caller already decided it is due.
-# Returns the hook's classification: 0 deployed, 75 deferred, 3 busy, 1 failed.
+# Returns the hook's classification: 0 deployed, 78 skipped, 75 deferred, 3 busy, 1 failed.
 run_hook() {  # <hook> <oid> <approved 0|1>
   local hook=$1 oid=$2 approved=$3 file log rc summary deployed sync_rc
   mkdir -p "$AL" || return 1
@@ -579,6 +590,9 @@ run_hook() {  # <hook> <oid> <approved 0|1>
     0)
       printf '%s\n' "$oid" > "$AL/$hook.deployed.tmp" && mv -f -- "$AL/$hook.deployed.tmp" "$AL/$hook.deployed"
       result_write "$hook" deployed "$oid" "${summary:-done}"
+      ;;
+    78)
+      result_write "$hook" skipped "$oid" "${summary:-nothing to deploy}"
       ;;
     75)
       result_write "$hook" deferred "$oid" "${summary:-deferred}"
@@ -631,7 +645,7 @@ tick_deploys() {  # <entries-file> <response-file>
     lock_alive "$hook" && continue
     if result_read "$hook" && [ "$R_OID" = "$oid" ]; then
       case "$R_STATUS" in
-        failed) continue ;;
+        failed|skipped) continue ;;
         deferred) [ $(($(date +%s) - R_EPOCH)) -ge "$DEFER_RETRY" ] || continue ;;
       esac
     fi
@@ -698,8 +712,8 @@ tick() {  # <entries-file> <response-file>
 $entry
 EOF
     [ "$(printf '%s' "$rec" | jq -r '.base == .default')" = true ] || continue
-    entry_authorized "$project" "$authority" || continue
-    attest=$(entry_attestation "$project" "$attest")
+    entry_authorized "$repo" "$project" "$authority" || continue
+    attest=$(entry_attestation "$project" "$attest" "$ENTRY_POLICY")
     decide "$rec" "$attest" "$max_risk"
     case "$VERDICT" in
       hold)
@@ -770,7 +784,7 @@ action_deploy() {  # <hook> [--approved]
     failed) notified_record "deploy|$hook|$R_OID|failed|$R_EPOCH" || true ;;
     *) notified_record "deploy|$hook|$R_OID|$R_STATUS" || true ;;
   esac
-  [ "$rc" -eq 0 ] || [ "$rc" -eq 75 ]
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 75 ] || [ "$rc" -eq 78 ]
 }
 
 action_status() {
@@ -780,8 +794,9 @@ action_status() {
     printf 'config: %s\n' "${CONFIG_ERROR:-unreadable}"
   else
     while IFS=$US read -r repo project authority method attest max_risk hook; do
-      if entry_authorized "$project" "$authority"; then auth=merges; else auth="no merge authority (project $project is not +yolo)"; fi
-      attest=$(entry_attestation "$project" "$attest")
+      if entry_authorized "$repo" "$project" "$authority"; then auth=merges
+      else auth="no merge authority (merge policy: $("$SCRIPT_DIR/fm-merge-policy.sh" get "$repo" 2>/dev/null || echo unreadable); project ${project:-none} is not +yolo)"; fi
+      attest=$(entry_attestation "$project" "$attest" "$ENTRY_POLICY")
       printf '%s: %s; method=%s attestation=%s max_risk=%s hook=%s\n' \
         "$repo" "$auth" "$method" "$attest" "$max_risk" "${hook:-none}"
       if [ -n "$hook" ]; then

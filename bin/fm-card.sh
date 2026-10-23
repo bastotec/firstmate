@@ -10,7 +10,7 @@
 # opens or closes one, and bin/fm-captain-hold.sh owns every hold and close.
 #
 # Usage:
-#   fm-card.sh validate --file <card.json>
+#   fm-card.sh validate --file <card.json> [--task <task-id>]
 #   fm-card.sh write <task-id> --file <card.json>
 #   fm-card.sh show <task-id>
 #   fm-card.sh remove <task-id>
@@ -23,8 +23,26 @@
 #   fm-card.sh restore <task-id>
 #
 # Input JSON for write is exactly one object carrying project, title,
-# situation, options and recommended; the script adds version, task, draft,
-# created and updated.
+# situation, options and recommended, plus optional urgent (below); the script
+# adds version, task, draft, created and updated.
+# Plain words: the title, situation and option labels are for a person acting
+# without context, so they refuse internal jargon: a token shaped like a task
+# slug (three or more lowercase hyphen-joined parts, such as
+# "pr-1806-orphan-choice-fix", besides common phrases like "end-to-end"), the
+# card's own task id when it is not a plain word, a snake_case name, a commit hash, or letters run together
+# with digits ("PR1806", "Direction7"). Ordinary product names IPv4, IPv6,
+# OAuth2, H264, MP3, MP4, S3, EC2, UTF8, x86, x64, 2FA and 4K are allowed.
+# Option instructions are for the first mate and are exempt. Drafts replace
+# jargon tokens in titles and situations with "this task". `show` still accepts
+# cards stored before the wording check; it does not apply that check on reads.
+# One decision per card: the title asks at most one question and the
+# situation at most one, and each option label is a short phrase of at most 12 words (the
+# details belong in its instruction). Configuration-style tokens ("repeats=1")
+# and hyphenated tokens with an all-caps part of two or more letters
+# ("POST-to-observation") are jargon too. A card is normal priority unless it carries
+# "urgent": {"because": <reason>}, and the only reasons are production-down,
+# customer-breakage, money and secret-exposure; the holding mate's urgency
+# policy lives in .agents/skills/captain-hold-lifecycle/SKILL.md.
 # Limits: title <= 120 chars; situation <= 280 chars and <= 2 lines; 1-9
 # options keyed "1".."9" in order; label <= 40 chars; instruction <= 1000
 # chars; recommended names one option; no control characters except newlines
@@ -62,8 +80,13 @@
 # restored), task, kind (orphan or stale), why (evidence or restore note),
 # reason (prior hold reason), and card (prior card object or null).
 # `restore` undoes the newest clear of a task only while it is still Done with
-# newest resolution mode stale-cleared: it reopens and re-holds with the prior
-# reason and full card, or a draft when no full card was saved.
+# newest resolution mode stale-cleared. Before reopening, it validates a saved
+# full card's structure, including optional urgency; invalid structure refuses
+# without changing the task. It reopens and re-holds with the prior reason
+# and full card, preserving urgency, when its wording
+# passes the current check. Older wording becomes a plain draft from the saved
+# title and situation, without the old options; no saved full card also yields
+# a draft.
 # It refuses after a newer captain answer, after other work has reopened the
 # task, when already held again, after a restore, or for an orphan card.
 # Restore starts a new hold lifecycle and does not restore a deferral date.
@@ -100,10 +123,30 @@ require_slug() {  # <task-id>
 
 card_path() { printf '%s/%s.json\n' "$CARDS" "$1"; }
 
+# shellcheck disable=SC2016 # jq, not the shell, expands these variables.
+PLAIN_WORDS_JQ='
+  def plainok: ["end-to-end","up-to-date","out-of-date","day-to-day","step-by-step","face-to-face","one-on-one","state-of-the-art","word-for-word","back-to-back"];
+  def products: ["IPv4","IPv6","OAuth2","H264","MP3","MP4","S3","EC2","UTF8","x86","x64","2FA","4K"];
+  def jargontoken: . as $t
+    | ($task != "" and ($task|test("[-_0-9]")) and ($t|ascii_downcase) == ($task|ascii_downcase))
+      or (($t|test("^[a-z0-9]+(-[a-z0-9]+){2,}$")) and ((plainok|index($t)) == null))
+      or ($t|test("^[a-z]+(_[a-z0-9]+)+$"))
+      or (($t|test("^[0-9a-f]{7,}$")) and ($t|test("[a-f]")) and ($t|test("[0-9]")))
+      or (($t|test("[A-Za-z][0-9]|[0-9][A-Za-z]")) and ((products|index($t)) == null))
+      or ($t|test("^[A-Z]{2,}-|-[A-Z]{2,}(-|$)"));
+  def jargon: ([scan("[A-Za-z_][A-Za-z0-9_.-]*=[^[:space:]]*")] + [scan("[A-Za-z0-9_-]+") | select(jargontoken)]) | first;
+  def plainwords: gsub("(?<token>[A-Za-z_][A-Za-z0-9_.-]*=[^[:space:]]*)"; "this setting")
+    | gsub("(?<token>[A-Za-z0-9_-]+)"; .token | if jargontoken then "this task" else . end);
+  def urgentok: ["production-down","customer-breakage","money","secret-exposure"];
+  def words: [splits("[[:space:]]+") | select(length > 0)] | length;
+'
+
 # Prints the first validation error as "<field>: <why>", or nothing when valid.
 # Works on the input shape and on stored full cards alike.
-card_error() {  # <path>
-  jq -rs '
+# The plain-words check applies to new cards only (pass "plain" as the third
+# argument), so a card stored before it existed still shows.
+card_error() {  # <path> [task-id] [plain]
+  jq -rs --arg task "${2:-}" --arg plain "${3:-}" "$PLAIN_WORDS_JQ"'
     def ctl: test("[\u0000-\u0009\u000b-\u001f\u007f]");
     def oneline: test("[\u0000-\u001f\u007f]");
     if length != 1 then "card: exactly one JSON object required"
@@ -117,18 +160,25 @@ card_error() {  # <path>
     elif ([.options[]|select((.label|type) != "string" or (.label|length) == 0 or (.label|length) > 40 or (.label|oneline))]|length) > 0 then "options: each label is one line of at most 40 characters"
     elif ([.options[]|select((.instruction|type) != "string" or (.instruction|length) == 0 or (.instruction|length) > 1000 or (.instruction|ctl))]|length) > 0 then "options: each instruction is at most 1000 characters"
     elif (.recommended|type) != "string" or (.recommended as $r | [.options[].key] | index($r)) == null then "recommended: must name one option key"
+    elif $plain == "plain" and (.title|jargon) != null then "title: use plain words a person can act on, not \"\(.title|jargon)\""
+    elif $plain == "plain" and (.situation|jargon) != null then "situation: use plain words a person can act on, not \"\(.situation|jargon)\""
+    elif $plain == "plain" and ([.options[].label|jargon|select(. != null)]|first) != null then "options: use plain words in each label, not \"\([.options[].label|jargon|select(. != null)]|first)\""
+    elif $plain == "plain" and ([.options[].label|select(words > 12)]|length) > 0 then "options: keep each label to a short phrase of at most 12 words; the details go in its instruction"
+    elif $plain == "plain" and (((.title|[scan("[?]")]|length) > 1) or ((.situation|[scan("[?]")]|length) > 1)) then "card: ask one question per card; split unrelated decisions into separate cards"
+    elif has("urgent") and (.urgent|type) != "object" then "urgent: an object {\"because\": ...} or absent"
+    elif has("urgent") and ((.urgent.because|type) != "string" or ((.urgent.because as $b | urgentok|index($b)) == null)) then "urgent: only production-down, customer-breakage, money or secret-exposure make a card urgent; anything else is normal priority"
     else empty end end
   ' "$1" 2>/dev/null || printf 'card: not valid JSON\n'
 }
 
 cmd_validate() {
-  local file='' err
+  local file='' err task=''
   while [ "$#" -gt 0 ]; do
-    case "$1" in --file) shift; file=${1:-} ;; *) usage >&2; exit 2 ;; esac
+    case "$1" in --file) shift; file=${1:-} ;; --task) shift; task=${1:-} ;; *) usage >&2; exit 2 ;; esac
     shift
   done
   [ -f "$file" ] || die "--file must name a readable card file"
-  err=$(card_error "$file")
+  err=$(card_error "$file" "$task" plain)
   [ -z "$err" ] || die "invalid card: $err"
 }
 
@@ -159,13 +209,14 @@ cmd_write() {
     case "$1" in --file) shift; file=${1:-} ;; *) usage >&2; exit 2 ;; esac
     shift
   done
-  cmd_validate --file "$file"
+  cmd_validate --file "$file" --task "$id"
   ts=$(now)
   created=$(existing_created "$id")
   [ -n "$created" ] || created=$ts
   jq -c --arg task "$id" --arg created "$created" --arg updated "$ts" '
     {version: 1, task: $task, project, title, situation, options, recommended,
-     draft: false, created: $created, updated: $updated}' "$file" | store_card "$id"
+     draft: false, created: $created, updated: $updated}
+     + (if has("urgent") then {urgent} else {} end)' "$file" | store_card "$id"
 }
 
 cmd_show() {
@@ -228,9 +279,9 @@ cmd_draft() {
   fi
   ts=$(now)
   jq -cn --arg task "$id" --arg project "$project" --arg title "$title" \
-    --argjson situation "$(clip_situation "$situation")" --arg ts "$ts" '
-    {version: 1, task: $task, project: $project, title: ($title | .[0:120]),
-     situation: $situation, options: [], recommended: null, draft: true,
+    --argjson situation "$(clip_situation "$situation")" --arg ts "$ts" "$PLAIN_WORDS_JQ"'
+    {version: 1, task: $task, project: $project, title: ($title | plainwords | .[0:120] | plainwords | .[0:120]),
+     situation: ($situation | plainwords | .[0:280] | plainwords | .[0:280]), options: [], recommended: null, draft: true,
      created: $ts, updated: $ts}' | store_card "$id"
 }
 
@@ -403,7 +454,7 @@ cmd_clear() {
 }
 
 cmd_restore() {
-  local id=${1:-} line reason card input show mode
+  local id=${1:-} line reason card input='' show mode err
   require_slug "$id"
   [ -f "$CLEAR_LOG" ] || die "nothing was cleared"
   line=$(jq -c --arg id "$id" 'select(.task == $id)' "$CLEAR_LOG" | tail -n 1)
@@ -419,10 +470,25 @@ cmd_restore() {
   mode=$(shown_value "$show" body | sed -n 's/^Resolution mode: //p' | head -1)
   [ "$mode" = stale-cleared ] || die "$id was resolved again after the clear; refusing to undo that"
   card=$(printf '%s' "$line" | jq -c .card)
-  tasks reopen "$id" >/dev/null || die "could not reopen $id"
   if [ "$card" != null ] && [ "$(printf '%s' "$card" | jq -r .draft)" = false ]; then
     input=$(umask 077; mktemp "${TMPDIR:-/tmp}/fm-card-restore.XXXXXX") || die "cannot stage the card"
-    printf '%s' "$card" | jq '{project, title, situation, options, recommended}' > "$input"
+    printf '%s' "$card" | jq '{project, title, situation, options, recommended} + (if has("urgent") then {urgent} else {} end)' > "$input"
+    err=$(card_error "$input" "$id")
+    if [ -n "$err" ]; then
+      rm -f -- "$input"
+      die "invalid saved card: $err"
+    fi
+    err=$(card_error "$input" "$id" plain)
+    if [ -n "$err" ]; then
+      rm -f -- "$input"
+      input=''
+    fi
+  fi
+  if ! tasks reopen "$id" >/dev/null; then
+    [ -z "$input" ] || rm -f -- "$input"
+    die "could not reopen $id"
+  fi
+  if [ -n "$input" ]; then
     if ! hold_tool hold "$id" --reason "$reason" --card-file "$input" >/dev/null; then
       rm -f -- "$input"
       die "could not re-hold $id"
@@ -430,6 +496,11 @@ cmd_restore() {
     rm -f -- "$input"
   else
     hold_tool hold "$id" --reason "$reason" >/dev/null || die "could not re-hold $id"
+    if [ "$card" != null ]; then
+      cmd_draft "$id" --project "$(printf '%s' "$card" | jq -r .project)" \
+        --title "$(printf '%s' "$card" | jq -r .title)" \
+        --situation "$(printf '%s' "$card" | jq -r .situation)" >/dev/null
+    fi
   fi
   log_line restored "$id" "$(printf '%s' "$line" | jq -r .kind)" "restored on request" "$reason" "$card"
   printf 'restored: %s\n' "$id"

@@ -131,7 +131,8 @@ CAPS
 }
 
 # Cancellation makes an undersized cap costlier: a falsely tripped job now also
-# discards a run nobody replaced. These bounds were measured, not guessed.
+# discards a run nobody replaced. .github/workflows/ci.yml owns the cap
+# rationale and evidence limits.
 test_measured_lanes_keep_their_authorized_bounds() {
   local job expected actual
   while read -r job expected; do
@@ -141,7 +142,7 @@ test_measured_lanes_keep_their_authorized_bounds() {
       || fail "$job timeout must stay $expected minutes, got $actual"
   done <<'CAPS'
 tests-portable-parallel 15
-tests-portable-serial 20
+tests-portable-serial 30
 macos-stock-bash 15
 CAPS
   pass "the measured lane bounds match their authorized caps"

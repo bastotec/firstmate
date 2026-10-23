@@ -601,6 +601,43 @@ fi
 was_closed "$ELOCKED" && fail "an endpoint with a competing lifecycle owner was closed"
 pass "final checks refuse a new turn, new message and competing lifecycle lock"
 
+# Parent approval exclusions protect record-less endpoints as well.
+# The late case injects an already-declared fixture record during the worktree
+# probe to exercise the final check independently of ordinary lock admission.
+for timing in early late; do
+  task="approval-$timing"
+  eid=$(new_eid)
+  add_endpoint "$eid" "fm-$task" "$PROJECT" "$CLEAN_WT" /bin/zsh
+  deck_record "$HOME_A" "$task" "$eid" false
+  fm_write_meta "$HOME_A/state/$task.meta" "kind=ship" "backend=stream"
+  printf 'No recovery until parent approval release.\n' > "$HOME_A/prohibition"
+  printf 'blocked [key=parent-approval]: Explicit parent release required\n' > "$HOME_A/state/$task.status"
+  FM_HOME="$HOME_A" "$ROOT/bin/fm-approval-wait.sh" declare "$task" --key parent-approval \
+    --expected-record "$(cat "$HOME_A/state/$task.meta")" --instruction-file "$HOME_A/prohibition" \
+    || fail 'approval declaration failed'
+  rm "$HOME_A/state/$task.meta"
+  if [ "$timing" = late ]; then
+    mv "$HOME_A/state/$task.approval-wait" "$HOME_A/saved-approval"
+    endpoint_option "$eid" cwd_hook mv "$HOME_A/saved-approval" "$HOME_A/state/$task.approval-wait"
+  fi
+  rc=0
+  out=$(orphan "$HOME_A" --orphan "$task" 2>&1) || rc=$?
+  expect_code 1 "$rc" "$timing approval exclusion"
+  assert_contains "$out" 'parent approval release' 'the refusal identifies the approval exclusion'
+  was_closed "$eid" && fail 'an approval-wait endpoint was closed'
+  printf 'resolved [key=unrelated]: Idle question settled\n' >> "$HOME_A/state/$task.status"
+  rc=0
+  orphan "$HOME_A" --orphan "$task" >/dev/null 2>&1 || rc=$?
+  expect_code 1 "$rc" 'an unrelated resolution'
+  digest=$(jq -r .instruction_sha256 "$HOME_A/state/$task.approval-wait")
+  printf 'Parent explicitly releases the approval exclusion.\n' > "$HOME_A/release"
+  FM_HOME="$HOME_A" "$ROOT/bin/fm-approval-wait.sh" release "$task" \
+    --instruction-sha256 "$digest" --release-file "$HOME_A/release" || fail 'explicit release failed'
+  out=$(orphan "$HOME_A" --orphan "$task" 2>&1) || fail "released endpoint refused: $out"
+  was_closed "$eid" || fail 'explicit release did not restore endpoint cleanup'
+done
+pass 'recordless endpoint close honors early and late approval exclusions until explicit release'
+
 # --- 6. a task that still has a record is not a leftover --------------------
 E6=$(new_eid)
 add_endpoint "$E6" fm-recorded "$PROJECT" "$CLEAN_WT" /bin/zsh

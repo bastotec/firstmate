@@ -344,7 +344,7 @@ family_for_basename() {
     fm-watch-triage-resurface.test.sh|fm-watch-triage-events.test.sh|\
     fm-external-wait.test.sh|fm-task-inbox.test.sh|\
     fm-watcher-lock.test.sh|fm-inactive-reconcile.test.sh|\
-    fm-watch-parent-channel-echo.test.sh)
+    fm-watch-parent-channel-echo.test.sh|fm-watch-quiet-reply.test.sh)
       printf '%s\n' watcher-wake-lock
       ;;
     fm-backlog-handoff.test.sh|fm-on.test.sh|fm-remote-backlog-handoff.test.sh|\
@@ -651,6 +651,8 @@ portable_serial_weight_hints() {
 # (2026-10-13); every serial shard passed in that run.
 # fm-watch-parent-channel-echo was measured in green serial shard 8 of run
 # 38444133335 (2026-10-13), with three family-phase workers.
+# fm-watch-quiet-reply is a local measurement (49.6 s on macOS, 2026-10-21)
+# until a green CI run's timing artifact replaces it.
 # fm-gate-record is a local measurement (10.5 s on macOS, 2026-10-16) until a
 # green CI run's timing artifact replaces it.
 # fm-approval was measured in green serial shard 4 of run 38683021067
@@ -661,6 +663,20 @@ portable_serial_weight_hints() {
 # (2026-10-16).
 # fm-parked-run-watch was measured in green serial shard 7 of run 38932286914
 # (2026-10-16), with three family-phase workers.
+# fm-evidence-only-withdrawal was measured in green serial shard 7 of run
+# 39078511171 (2026-10-17).
+# fm-card and fm-control-stopped-relaunch completed successfully in run
+# 39157209916 (2026-10-18), serial shards 8 and 3; other scripts failed.
+# fm-lifecycle was measured in green serial shard 9 of run 39168927563
+# (2026-10-18); that run failed other checks.
+# fm-approval-wait and fm-idle-sweep-retry-admission were measured in green
+# serial shards 1 and 9 of run 39277793508 (2026-10-19); other checks failed.
+# fm-merge-policy was measured in green serial shard 4 of run 39447361618
+# (2026-10-20); all serial shards passed, but other checks failed.
+# fm-ci-stall was measured in green serial shard 2 of run 39633625991
+# (2026-10-21); all serial shards passed, but other checks failed.
+# fm-worker-keepalive and fm-spawn-serial are local measurements (15.9 s and
+# 10.4 s on macOS, 2026-10-22) until a green CI run's timing artifact replaces them.
 # The five tests/fm-watch-triage*.test.sh suites were one 694233 ms script
 # before run 37413095868; their hints start from each suite's share of that,
 # from the per-case output timestamps of run 37401433503's serial shard 1.
@@ -668,6 +684,7 @@ tests/fm-afk-contract.test.sh 38462
 tests/fm-afk-inject-e2e.test.sh 34977
 tests/fm-afk-launch.test.sh 38816
 tests/fm-afk-return.test.sh 38827
+tests/fm-approval-wait.test.sh 830
 tests/fm-approval.test.sh 8213
 tests/fm-ask-triage.test.sh 14351
 tests/fm-ask-user-authority.test.sh 386
@@ -686,12 +703,15 @@ tests/fm-bootstrap-network-parallel.test.sh 17328
 tests/fm-bootstrap.test.sh 119612
 tests/fm-busy-adapter-wiring.test.sh 50547
 tests/fm-busy-state.test.sh 3394
+tests/fm-card.test.sh 169480
 tests/fm-check-unregister.test.sh 494
+tests/fm-ci-stall.test.sh 7742
 tests/fm-ci-workflow.test.sh 3891
 tests/fm-classify-corr-token.test.sh 65224
 tests/fm-classify-decision-key.test.sh 1664
 tests/fm-control-recover-missing.test.sh 37080
 tests/fm-control-relaunch.test.sh 103083
+tests/fm-control-stopped-relaunch.test.sh 14329
 tests/fm-control.test.sh 45346
 tests/fm-daemon.test.sh 36415
 tests/fm-deck-chat.test.sh 300241
@@ -699,6 +719,7 @@ tests/fm-deck-harness.test.sh 128442
 tests/fm-deck-host-live-e2e.test.sh 105
 tests/fm-documentation-audiences.test.sh 1066
 tests/fm-endpoint-rebind-lib.test.sh 1200
+tests/fm-evidence-only-withdrawal.test.sh 32254
 tests/fm-extension-binding.test.sh 14559
 tests/fm-external-wait.test.sh 10095
 tests/fm-fleet-snapshot-view.test.sh 16642
@@ -711,7 +732,9 @@ tests/fm-guard-stale-banner.test.sh 40921
 tests/fm-harness-adapter-references.test.sh 84
 tests/fm-harness-precedence.test.sh 5239
 tests/fm-home-summary-refresh.test.sh 37203
+tests/fm-idle-sweep-retry-admission.test.sh 21235
 tests/fm-inactive-reconcile.test.sh 49894
+tests/fm-lifecycle.test.sh 2696
 tests/fm-line-cap-lib.test.sh 111
 tests/fm-lint-workflows.test.sh 1203
 tests/fm-live-gate.test.sh 2469
@@ -719,6 +742,7 @@ tests/fm-mail-check.test.sh 8405
 tests/fm-mail.test.sh 11718
 tests/fm-machine.test.sh 22210
 tests/fm-mate-mail.test.sh 26523
+tests/fm-merge-policy.test.sh 17533
 tests/fm-model-chain.test.sh 30090
 tests/fm-nm-test-contract.test.sh 1135
 tests/fm-no-mistakes-required.test.sh 5288
@@ -765,6 +789,7 @@ tests/fm-session-start.test.sh 208795
 tests/fm-shared-captain-inheritance.test.sh 5758
 tests/fm-spawn-dispatch-profile.test.sh 167032
 tests/fm-spawn-pool-base-freshen.test.sh 85868
+tests/fm-spawn-serial.test.sh 10400
 tests/fm-spawn-worktree-settle.test.sh 11165
 tests/fm-startup-memory-budget.test.sh 17405
 tests/fm-startup-network.test.sh 66915
@@ -806,6 +831,7 @@ tests/fm-wake-gate.test.sh 17081
 tests/fm-wake-queue.test.sh 206368
 tests/fm-watch-arm.test.sh 107952
 tests/fm-watch-parent-channel-echo.test.sh 10154
+tests/fm-watch-quiet-reply.test.sh 49574
 tests/fm-watch-recovery-loop.test.sh 64315
 tests/fm-watch-triage-declared-wait.test.sh 176541
 tests/fm-watch-triage-events.test.sh 129600
@@ -813,6 +839,7 @@ tests/fm-watch-triage-resurface.test.sh 183015
 tests/fm-watch-triage-stale.test.sh 130808
 tests/fm-watch-triage.test.sh 135600
 tests/fm-watcher-lock.test.sh 65613
+tests/fm-worker-keepalive.test.sh 15900
 EOF
 }
 

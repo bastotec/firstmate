@@ -264,6 +264,7 @@ Steering, peek, crew-state, the parent channel, and liveness run through host ve
 The host repeats validation against the receiving secondmate home's policy and its gateway, and the primary records the route only after host success; the [`fm-control.sh` header](../bin/fm-control.sh) owns switch results and fallback.
 Before relaunch reaches host lifecycle control, the primary checks readiness with the same check/repair/recheck sequence as launch; a remaining gap or SSH exit 255 refuses without stopping the mate.
 An ordinary primary `fm-control.sh` relaunch keeps the recorded profile unless flags replace it, resets unnamed model and effort axes when the harness changes, and rewrites the parent's binding and resolved harness, model, and effort from the host's route after success.
+The [`fm-remote-control-lib.sh` header](../bin/fm-remote-control-lib.sh) owns note forwarding and the warned retry without a note for older hosts.
 If that route read or parent publication fails after host success, the primary reports failure with the old parent binding retained; reconcile on the same host rather than assuming no replacement launched.
 `recover-missing` for a remote mate launches a gone endpoint again through the normal spawn route (readiness, convergence, host launch, rebind), but only after a fresh `missing` reading from the host, and the host's launch refuses while a stream agent matching both that mate's label and parent-route status path still runs there, because a restarted hub forgets endpoints until their agents re-register.
 Remote recovery resolves the primary home's currently configured secondmate profile through the normal spawn route, rather than preserving the recorded profile, and refuses replacement-profile flags; use `relaunch` to select a replacement harness, model, or effort ([`fm-remote-control-lib.sh`](../bin/fm-remote-control-lib.sh) owns the route's mechanics).
@@ -294,7 +295,8 @@ The [`fm-send.sh` header](../bin/fm-send.sh) owns the exact delivery-status cont
 For an inbox-write failure, read the remote leg's step-and-path diagnostic above the final send-failure summary.
 A routed request is delivered as a durable record in the remote home's steering inbox plus a best-effort doorbell, never by typing the payload into the pane; exit 0 means the record durably exists.
 Every remote transport attempt is bounded by `FM_SEND_REMOTE_BUDGET`; that header owns the setting's default and validation contract.
-An unconfirmed SSH transport (exit 255) is retried identically once, while a budget expiry is not retried because completion is unknown; either outcome preserves this ordinary reply-bearing request's pending-reply expectation for the record that may have landed.
+`fm-send` itself retries an unconfirmed SSH transport (exit 255) identically once, but does not retry a budget expiry; either outcome preserves this ordinary reply-bearing request's pending-reply expectation for the record that may have landed.
+The [`fm-secondmate-restart.sh` header](../bin/fm-secondmate-restart.sh) owns the restart pass's remote-send budget and automatic correlation-preserving persist-request retry policy.
 If delivery remains unconfirmed, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command printed by `fm-send` is safe to run later because it preserves the request body and lets the remote enqueue deduplicate onto the same record; a plain rerun mints a different correlation and is not idempotent.
 When deduplication finds that the worker already moved the matching record into `handled/`, the resend exits successfully without ringing the doorbell again.
 The remote host runs no doorbell re-ring ladder of its own; a swallowed doorbell for an ordinary reply-bearing request surfaces through the parent's pending-reply recovery and escalation, whose recovery request rings the doorbell again when it is enqueued.
@@ -318,6 +320,7 @@ The relay never truncates or consumes the source log, and mates must append corr
 The [reply-log guard](../bin/fm-reply-log-guard.py) blocks common rewrite tool calls on Deck secondmate supervisor turns, but shell-text matching is best effort, not a security boundary.
 The mirror's bounded recovery handles rewrites that escape that guard: it replays a previously read log from the start, skips already-mirrored lines, and delivers changed or new lines still present in the log.
 A replayed report whose locally rewritten form is already mirrored needs no document fetch.
+An older pending capture can finish ingestion without rewinding later progress under the [adapter header's receipt-backed reconciliation rules](../bin/fm-procevent-remote-reply.sh).
 Other continuity breaks, or repeated rewrites beyond the recovery budget, escalate once and leave a durable stop that automatic startup or relaunch cannot lift.
 Inspect the break before deliberately lifting the stop; the [adapter header](../bin/fm-procevent-remote-reply.sh) owns recovery eligibility, the budget setting, and the operator command.
 Recovery cannot restore bytes lost from the remote log.

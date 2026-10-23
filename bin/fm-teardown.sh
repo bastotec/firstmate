@@ -35,13 +35,11 @@
 # lift the deferral (it authorizes discarding unlanded WORK, never the
 # captain's question), and bin/fm-captain-hold.sh answer stays the only act
 # that closes the call.
-# REFUSES if the worktree holds work that has not LANDED, because cleanup
-# hard-resets/removes the worktree and kills its processes. The committed-content
-# safety check accepts work reachable from any remote-tracking branch (including
-# a fork or gate remote), but that alone does not prove a recorded PR merged:
-# the separate completion-claim gate below must also pass. For a normal ship task
-# whose commits are not so reachable, the content check instead accepts a merged
-# PR whose GitHub-reported head contains the current local work, or content
+# REFUSES if the worktree holds work that has not LANDED, unless committed
+# work is preserved through --keep-commits below, because cleanup
+# hard-resets/removes the worktree and kills its processes. For a normal ship,
+# remote reachability alone is not landing evidence: both completion and committed
+# content require a merged PR whose head contains the current local work, or content
 # already present in the up-to-date default branch. This recognizes the common
 # squash-merge-then-delete-branch flow, where the branch's own commits live nowhere
 # on a remote yet the change is fully in main.
@@ -51,9 +49,11 @@
 # cherry, and merge-tree containment each fail to prove content landed without also
 # accepting unlanded edits to the same paths. Teardown still accepts a merged PR
 # whose head contains the current local work (ancestor or equivalent patch ids),
-# or a clean content-in-default tree match. Anything else refuses.
+# or a clean content-in-default tree match. Anything else needs preservation
+# through --keep-commits below or refuses.
 # The PR itself is resolved from the task's recorded pr= when present, else by
-# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row. For every
+# bin/fm-pr-lib.sh's fm_pr_task_url resolver for the backlog row, then from
+# --merged-pr when supplied. For every
 # non-secondmate task, a row read that errors or times out refuses non-forced
 # cleanup, including on manual-backend homes and when metadata already names
 # a PR. A confirmed NOT_FOUND or an absent configured markdown backlog permits
@@ -65,7 +65,10 @@
 # fetching its head via refs/pull/<n>/head when the branch itself was deleted.
 # Missing recorded PR evidence alone never causes a false refusal of landed work.
 # A gh lookup error during this merged-head discovery falls back to the
-# content-in-default check; if that is also inconclusive, teardown refuses.
+# content-in-default check; if that is also inconclusive, teardown refuses
+# before endpoint, worktree, metadata, or backlog cleanup, even for a terminal
+# failed ship with a Done backlog row. Regression coverage:
+# tests/fm-teardown.test.sh's test_no_pr_done_pushed_unmerged_refuses.
 # This fallback never substitutes for the recorded-PR completion-claim gate.
 # Uncommitted changes are never landed.
 # A recorded PR on any non-secondmate task also requires the completion-claim
@@ -75,9 +78,10 @@
 # (merged, superseded, or closed-unmerged for a forced PR confirmed open or
 # closed; an unreadable forge state records none), and a failure to record it
 # refuses cleanup.
-# local-only projects additionally accept work merged into the local default
-# branch (firstmate performs that merge after configured approval) as a fallback
-# for the common case where there is no remote at all.
+# local-only projects retain a separate preservation gate: clean work reachable
+# from any remote-tracking branch is accepted, or work merged into the local
+# default branch (firstmate performs that merge after configured approval) when
+# there is no remote copy. A recorded PR still requires its completion-claim gate.
 # Scout tasks (kind=scout in meta) carve out of the committed-content check:
 # their worktree is scratch and the report at data/<task-id>/report.md is the work
 # product. Teardown proceeds only once the report exists and the shared
@@ -160,7 +164,35 @@
 # leased home and state in place instead of hiding a still-held lease.
 # bin/fm-deck-worker.sh's SECOND MATE SESSION CONTINUITY header owns the
 # conversation binding retired with a secondmate and its forced descendants.
-# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record]
+# For caller admission, --expected-record <metadata> requires the exact
+# metadata snapshot under the task's control lock before any cleanup; exit 3
+# leaves a changed or vanished record for a fresh scan.
+# --if-still-stopped <status-bytes> requires --expected-record and applies
+# bin/fm-busy-lib.sh's activity admission check before preflights, before
+# backlog staging, before cleanup, and immediately before the endpoint kill.
+# It admits only a local ship (including an absent kind=) or scout whose
+# metadata and status byte count match, with no live semantic busy turn and a
+# fresh failed/blocked/paused/gone crew state. --expected-state done instead
+# requires a fresh done state at those same boundaries; it requires
+# --if-still-stopped and protects finished-worker cleanup from resumed activity.
+# Changed activity exits 3 rather than stopping a resumed worker.
+# Usage: fm-teardown.sh <task-id> [--force] [--legacy-record] [--keep-commits] [--merged-pr <url>] [--expected-record <metadata>] [--if-still-stopped <status-bytes> [--expected-state done]]
+#   --keep-commits handles the leftover local commits a squash merge leaves
+#   behind: when a ship task's PR is merged, its worktree has no uncommitted
+#   changes, and its committed work still is not proved landed, teardown first
+#   saves HEAD on a local branch kept/<id>-<UTC stamp> in the same repository,
+#   reusing an existing kept/<id>-* branch when it already points at HEAD,
+#   verifies that branch, prints "kept: <n> local commit(s) on branch <name>",
+#   and then cleans up. Nothing is discarded, so this is housekeeping, not a
+#   captain decision. Without a
+#   merged PR, with uncommitted changes, or for local-only work it refuses as
+#   before. --merged-pr supplies a PR/MR URL when none is recorded; its live
+#   merge state is verified through the forge before commits can be kept.
+#   With --keep-commits and no resolved URL, teardown tries GitHub discovery
+#   by branch before the completion gate; a caller that already knows the
+#   merged GitHub PR or GitLab MR URL should supply it with --merged-pr.
+#   Regression coverage: tests/fm-teardown.test.sh's keep-commits and
+#   finished-retirement cases; tests/fm-idle-sweep.test.sh's ledger-only MR cases.
 #   --force skips ordinary-task dirty and landed-work checks, skips scout report
 #   checks, and discards secondmate child work for kind=secondmate. Only use it
 #   when the captain has explicitly said to discard the work.
@@ -169,8 +201,8 @@
 #   agent-less (bin/fm-backend.sh's recovery-grade classifier), and without
 #   --force the worktree still passes the ordinary landed-work checks. The
 #   accepted legacy incarnation is stamped into the record before its close is
-#   recorded and named in the teardown line; the flag never relaxes the
-#   unlanded-work refusal, which --force alone can authorize. A legacy- stamp
+#   recorded and named in the teardown line; the flag never relaxes any
+#   work-protection gate. A legacy- stamp
 #   an abandoned attempt left behind never counts as a published incarnation:
 #   the record still reads as a legacy record, so the endpoint gate runs again
 #   and the retry still needs --legacy-record.
@@ -288,6 +320,8 @@ SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-control-lib.sh
 . "$SCRIPT_DIR/fm-control-lib.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-lock-lib.sh
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-classify-lib.sh
@@ -313,11 +347,43 @@ fi
 ID=$1
 FORCE=
 LEGACY_RECORD_GIVEN=0
+KEEP_COMMITS=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
+EXPECTED_STATE=stopped
+MERGED_PR_URL=
 shift
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --force) FORCE=--force ;;
     --legacy-record) LEGACY_RECORD_GIVEN=1 ;;
+    --keep-commits) KEEP_COMMITS=1 ;;
+    --expected-record)
+      shift
+      [ "$#" -gt 0 ] || exit 2
+      EXPECTED_RECORD=$1
+      EXPECTED_RECORD_SET=1
+      ;;
+    --expected-state)
+      shift
+      [ "$#" -gt 0 ] && [ "$1" = 'done' ] || exit 2
+      EXPECTED_STATE=$1
+      ;;
+    --if-still-stopped)
+      shift
+      [ "$#" -gt 0 ] || exit 2
+      case "$1" in ''|*[!0-9]*) exit 2 ;; esac
+      STOPPED_STATUS_SIZE=$1
+      ;;
+    --merged-pr)
+      shift
+      if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
+        echo "error: --merged-pr requires a supported PR/MR URL" >&2
+        exit 2
+      fi
+      MERGED_PR_URL=$1
+      ;;
     *)
       echo "error: invalid teardown request" >&2
       exit 2
@@ -325,6 +391,12 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+if [ "$EXPECTED_STATE" = 'done' ]; then
+  [ -n "$STOPPED_STATUS_SIZE" ] || exit 2
+fi
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$EXPECTED_RECORD_SET" = 1 ] || exit 2
+fi
 fm_backlog_directory_present "$STATE" "state directory" || {
   echo "error: teardown refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
@@ -403,6 +475,11 @@ fm_lock_try_acquire "$CONTROL_LOCK" || {
   exit 1
 }
 CONTROL_LOCK_HELD=1
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -419,6 +496,9 @@ fm_backlog_record_present "$META" "task record" "$STATE" || {
   echo "error: teardown refused after locking: $FM_BACKLOG_TRANSITION_ERROR" >&2
   exit 1
 }
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+fi
 TEARDOWN_META_KIND=$(fm_meta_get "$META" kind)
 [ -n "$TEARDOWN_META_KIND" ] || TEARDOWN_META_KIND=ship
 TEARDOWN_META_SPAWN_GEN=
@@ -1322,14 +1402,8 @@ $commits
 EOF
 }
 
-# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
-# resolved from metadata or the backlog row, else discovers the PR by branch
-# name, and asks GitHub for both state and head. Returns non-zero when the PR
-# is not merged, the current work is not contained in the PR head, no PR is
-# found, or any gh error occurs. The caller's content-check fallback proves
-# only content safety; it never replaces the completion-claim gate above.
-pr_is_merged() {
-  local branch=$1 target view state remainder head resolved_url current landed=0
+resolve_merged_pr() {
+  local branch=$1 target view state remainder head resolved_url
   if [ -n "$PR_URL" ]; then
     target=$PR_URL
   else
@@ -1348,20 +1422,28 @@ pr_is_merged() {
     *) return 1 ;;
   esac
   [ -n "$head" ] || return 1
-  ensure_commit_object "$target" "$head" || return 1
-  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
-  if git -C "$WT" merge-base --is-ancestor "$current" "$head" 2>/dev/null; then
-    landed=1
-  elif patches_are_in_pr_head "$WT" "$current" "$head" --remotes; then
-    landed=1
-  fi
-  [ "$landed" = 1 ] || return 1
   if [ -z "$PR_URL" ]; then
-    [ -n "$resolved_url" ] || return 1
+    fm_pr_url_parse "$resolved_url" || return 1
     PR_URL=$resolved_url
   fi
+  MERGED_PR_HEAD=$head
   PR_CLOSE_VERDICT=merged
   return 0
+}
+
+# Is the worktree's PR merged for local work contained in that PR? Uses PR_URL
+# resolved from metadata or the backlog row, else discovers the PR by branch
+# name, and asks GitHub for both state and head. Returns non-zero when the PR
+# is not merged, the current work is not contained in the PR head, no PR is
+# found, or any gh error occurs. The caller's content-check fallback proves
+# only content safety; it never replaces the completion-claim gate above.
+pr_is_merged() {
+  local current
+  resolve_merged_pr "$1" || return 1
+  ensure_commit_object "$PR_URL" "$MERGED_PR_HEAD" || return 1
+  current=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  git -C "$WT" merge-base --is-ancestor "$current" "$MERGED_PR_HEAD" 2>/dev/null \
+    || patches_are_in_pr_head "$WT" "$current" "$MERGED_PR_HEAD" "$MERGED_PR_HEAD"
 }
 
 # Is the branch's content already present in the up-to-date default branch? Fetches
@@ -1389,11 +1471,10 @@ content_in_default() {
   [ "$merged_tree" = "$default_tree" ]
 }
 
-# Has the worktree's committed work actually LANDED, though its commits are not
-# reachable from any remote-tracking branch? True when a merged PR proves the
-# current local work is contained in the PR head, OR the content is already in the
-# default branch (fallback, which also covers the no-PR and gh-error paths). False
-# only for genuinely unlanded work.
+# Has the worktree's committed work actually LANDED? True when a merged PR proves
+# the current local work is contained in the PR head, OR the content is already in
+# the default branch (fallback, which also covers the no-PR and gh-error paths).
+# Remote branch preservation is not proof of landing.
 work_is_landed() {
   local branch=$1
   pr_is_merged "$branch" && return 0
@@ -1858,6 +1939,24 @@ teardown_treehouse_return() {
   return 1
 }
 
+# --keep-commits preservation is owned by the header above.
+keep_unlanded_commits() {
+  local head name count
+  head=$(git -C "$WT" rev-parse --verify HEAD 2>/dev/null) || return 1
+  # The safety check runs again after the lock; the same head is kept once.
+  [ "${KEPT_HEAD:-}" != "$head" ] || return 0
+  name=$(git -C "$WT" for-each-ref --points-at="$head" --format='%(refname:short)' \
+    "refs/heads/kept/$ID-*" | head -1) || return 1
+  if [ -z "$name" ]; then
+    name="kept/$ID-$(date -u +%Y%m%dT%H%M%SZ)"
+    git -C "$WT" branch --no-track "$name" "$head" >/dev/null 2>&1 || return 1
+  fi
+  [ "$(git -C "$WT" rev-parse --verify "refs/heads/$name" 2>/dev/null)" = "$head" ] || return 1
+  count=$(git -C "$WT" rev-list --count HEAD --not --remotes 2>/dev/null || echo "?")
+  KEPT_HEAD=$head
+  echo "kept: $count local commit(s) on branch $name"
+}
+
 validate_worktree_teardown_safety() {
   local dirty_raw dirty unpushed_raw unpushed DEFAULT unmerged_raw unmerged branch
   [ -d "$WT" ] || return 0
@@ -1909,16 +2008,19 @@ validate_worktree_teardown_safety() {
     echo "uncommitted changes present" >&2
     echo "Commit them (or get the captain's explicit OK to discard, then --force)." >&2
     return 1
-  elif [ -n "$unpushed" ]; then
+  elif [ "$MODE" != local-only ]; then
     branch=${TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY:-}
     if [ -z "$branch" ]; then
       branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)
       TEARDOWN_WORKTREE_BRANCH_FOR_SAFETY=$branch
     fi
     if ! work_is_landed "$branch"; then
-      echo "REFUSED: worktree $WT has work not on any remote and not landed." >&2
-      printf 'unpushed commits:\n%s\n' "$unpushed" >&2
-      echo "Push the branch, land its PR, or get the captain's explicit OK to discard, then --force." >&2
+      if [ "$KEEP_COMMITS" = 1 ] && [ "${PR_CLOSE_VERDICT:-}" = merged ] && keep_unlanded_commits; then
+        return 0
+      fi
+      echo "REFUSED: worktree $WT has work not landed in the default branch or a merged PR head." >&2
+      [ -z "$unpushed" ] || printf 'unpushed commits:\n%s\n' "$unpushed" >&2
+      echo "Land the work, or get the captain's explicit OK to discard, then --force." >&2
       return 1
     fi
   fi
@@ -3308,6 +3410,12 @@ if [ "$KIND" != secondmate ]; then
     pr_task_row=
   fi
   [ -n "$PR_URL" ] || PR_URL=$(fm_pr_task_url "$pr_task_row" "$META")
+  [ -n "$PR_URL" ] || PR_URL=$MERGED_PR_URL
+fi
+if [ "$KEEP_COMMITS" = 1 ] && [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+    && [ -z "$PR_URL" ] && teardown_owns_worktree && [ -d "$WT" ]; then
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
+  resolve_merged_pr "$branch" || true
 fi
 if [ "$KIND" != secondmate ] && [ -n "$PR_URL" ]; then
   pr_task_body=$(fm_pr_task_body "$pr_task_row" 2>/dev/null) || pr_task_body=
@@ -3353,6 +3461,21 @@ if [ "$FORCE" != "--force" ] \
   fi
 fi
 
+# An ordinary ship with no recorded PR still needs positive landing evidence.
+# Keep record-only reassignment, local-only, scout, and force paths on their own
+# gates; a missing owned copy cannot prove an ordinary no-PR ship finished.
+if [ "$KIND" = ship ] && [ "$MODE" != local-only ] \
+    && [ "$FORCE" != "--force" ] && [ -z "$PR_URL" ] \
+    && [ -z "$FM_BACKEND_VALIDATED_REASSIGNED_TO" ] && teardown_owns_worktree; then
+  branch=$(git -C "$WT" rev-parse --abbrev-ref HEAD 2>/dev/null) || branch=
+  if [ -z "$branch" ] || ! work_is_landed "$branch"; then
+    echo "REFUSED: task $ID is not finished: no PR is recorded and its work is not proven landed." >&2
+    echo "Nothing was changed. Land the work before retrying teardown." >&2
+    [ -z "$branch" ] || work_gate_refusal_exit
+    exit 1
+  fi
+fi
+
 # Non-blocking: a delivered public loop is not a teardown refusal (guard-work
 # already passed), but tearing down a ship whose PR merged while a loop is still
 # open with nothing owed is the moment the drop is detectable.
@@ -3381,6 +3504,10 @@ if teardown_owns_worktree && [ -d "$WT" ] && [ "$FORCE" != "--force" ]; then
       work_gate_refusal_exit
     fi
   fi
+fi
+
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
 fi
 
 BACKLOG_CLOSED=0
@@ -3466,6 +3593,9 @@ else
 fi
 
 # Apply the pre-teardown cleanup sequence owned by the script header.
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+fi
 if [ "$KIND" != secondmate ] && teardown_owns_worktree; then
   conclude_task_no_mistakes_run "$WT"
 fi
@@ -3474,6 +3604,9 @@ if [ "$KIND" != secondmate ] && task_operator_retirement_pending; then
   TASK_ENDPOINT_RETIREMENT_PENDING=1
 fi
 if [ "$KIND" != secondmate ] && [ "$TASK_ENDPOINT_RETIREMENT_PENDING" = 0 ]; then
+  if [ -n "$STOPPED_STATUS_SIZE" ]; then
+    fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+  fi
   fm_backend_kill "$BACKEND" "$T" "" "fm-$ID" \
     && TASK_KILL_RC=0 || TASK_KILL_RC=$?
   require_task_endpoint_gone "$TASK_KILL_RC" || exit 1

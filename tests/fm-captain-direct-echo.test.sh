@@ -13,7 +13,9 @@
 #      suppressed= on stdout, nothing enqueued, a log line.
 #   4. --correction sends it anyway; an unrelated steer and a steer after the
 #      window are sent; a --resolve-key answer is never held back.
-#   5. --correction cannot accompany --from-captain.
+#   5. A steer delivering new findings is sent despite the guard: --result, or
+#      a report path it names (the 2026-10-21 airtyping case); --correction
+#      and --result cannot accompany --from-captain.
 #   6. A captain-direct pending reply never sends the repost request and
 #      resolves on its own after grace.
 #   7. A captain message waits out a task record a relaunch holds locked and
@@ -135,13 +137,56 @@ test_corrections_and_unrelated_steers_are_sent() {
   pass "captain-direct: corrections, unrelated steers, and late steers are sent"
 }
 
+expect_result_sent() {
+  local before
+  before=$(grep -c 'result-sent ' "$HOME_DIR/state/captain-direct.log" || true)
+  expect_sent "$@"
+  [ "$(grep -c 'result-sent ' "$HOME_DIR/state/captain-direct.log")" -eq "$((before + 1))" ] \
+    || fail "$1: a delivered result must add one result-sent entry"
+}
+
+test_results_are_sent() {
+  setup result
+  deliver_captain
+  # 2026-10-21: a scout task answered the captain's question; the parent's
+  # report to the mate named the corr and was held back for an hour.
+  expect_result_sent "a report path naming the corr" \
+    "Findings for the captain's direct question (corr=$CORR) are in data/airtyping-gapses-electrodes/report.md: SoftPulse Flat/Dome are wrist EMG candidates."
+  expect_result_sent "a report directly under data naming the corr" \
+    "Findings for corr=$CORR are in data/electrodes.md: SoftPulse electrodes are wrist EMG candidates."
+  expect_result_sent "an explicit --result" --result \
+    "Scout done for corr=$CORR: SoftPulse Flat/Dome are wrist EMG candidates, not finger sensors."
+  assert_contains "$(cat "$HOME_DIR/state/captain-direct.log")" "result-sent corr=$CORR task=domain" \
+    "a result past the guard must be logged"
+  expect_result_sent "an explicit --result without an echo match" --result \
+    "Scout finished: SoftPulse electrodes are wrist EMG candidates."
+  expect_result_sent "a nested report without an echo match" \
+    "Scout findings are in data/electrodes/scout/findings.md."
+  expect_result_sent "a report directly under data without an echo match" \
+    "Scout findings are in data/electrodes.md."
+  expect_suppressed "a re-steer that only mentions a report" \
+    "Follow up on corr=$CORR and write a report when done."
+  mv "$HOME_DIR/state/domain.inbox" "$HOME_DIR/state/domain.inbox.saved"
+  touch "$HOME_DIR/state/domain.inbox"
+  if run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --result "More findings for corr=$CORR"; then
+    fail "a result with an unwritable inbox must fail"
+  fi
+  [ "$(grep -c 'result-sent ' "$HOME_DIR/state/captain-direct.log")" -eq 6 ] \
+    || fail "a failed result send must not be logged as delivered"
+  pass "captain-direct: a parent send carrying new findings is never suppressed"
+}
+
 test_correction_refused_with_from_captain() {
   setup refuse
   if run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --correction --from-captain "hi"; then
     fail "--correction with --from-captain must be refused"
   fi
   [ "$(inbox_count)" = 0 ] || fail "a refused send must enqueue nothing"
-  pass "captain-direct: --correction cannot accompany --from-captain"
+  if run_send "$FB" "$HOME_DIR" "$LOG" "$OUT" domain --result --from-captain "hi"; then
+    fail "--result with --from-captain must be refused"
+  fi
+  [ "$(inbox_count)" = 0 ] || fail "a refused send must enqueue nothing"
+  pass "captain-direct: --correction and --result cannot accompany --from-captain"
 }
 
 test_pending_reply_never_reposts() {
@@ -491,6 +536,7 @@ test_a_standing_rule_he_gives_a_worker_is_remembered
 test_delivery_tells_first_mate_once
 test_echoes_are_suppressed
 test_corrections_and_unrelated_steers_are_sent
+test_results_are_sent
 test_correction_refused_with_from_captain
 test_pending_reply_never_reposts
 test_notification_failure_retry

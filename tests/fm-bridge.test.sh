@@ -380,6 +380,27 @@ test_lifecycle_control_is_supervision() {
   pass "fm-control.sh lifecycle calls need the supervision flow"
 }
 
+test_specialist_commands_require_their_flows() {
+  local h command flow rc out
+  h=$(home specialist)
+  for command in ask result status history; do
+    flow=reports
+    [ "$command" != ask ] || flow=messages
+    br "$h" set workload --allow maintenance >/dev/null || fail "set maintenance"
+    rc=0
+    out=$(on "$h" helper fm-specialist.sh "$command" amigo-tech 2>&1) || rc=$?
+    assert_equals 1 "$rc" "maintenance cannot authorize specialist $command"
+    assert_contains "$out" "$flow" "specialist refusal names its flow"
+    assert_absent "$h/ssh.log" "denied specialist command must not reach SSH"
+    br "$h" set workload --allow "$flow" >/dev/null || fail "set specialist flow"
+    on "$h" helper fm-specialist.sh "$command" amigo-tech >/dev/null || fail "allowed specialist $command did not reach SSH"
+    assert_equals 1 "$(wc -l < "$h/ssh.log" | tr -d ' ')" "only allowed specialist command crosses"
+    rm "$h/ssh.log"
+  done
+  pass "specialist asks require messages and result/status/history require reports"
+}
+
+test_specialist_commands_require_their_flows
 test_existing_bridges_are_seeded_and_shown_configured
 test_existing_safe_aliases_remain_configurable
 test_idle_summary_requires_reports_not_maintenance

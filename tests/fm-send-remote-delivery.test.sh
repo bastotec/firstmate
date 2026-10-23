@@ -723,7 +723,7 @@ test_remote_send_budget_bounds_busy_lane() {
 }
 
 test_local_secondmate_pending_keeps_expectation_armed() {
-  local dir fb home rc rec corr
+  local dir fb home rc rec corr marker
   dir="$TMP_ROOT/local-pending-expectation"; mkdir -p "$dir"
   fb=$(make_stubs "$dir")
   home=$(setup_home local-pending-expectation)
@@ -736,7 +736,7 @@ test_local_secondmate_pending_keeps_expectation_armed() {
   # secondmate target, so this pins the kept armed-expectation semantics there.
   rc=0
   env PATH="$fb:$PATH" \
-    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_SETTLE=0 \
+    FM_ROOT_OVERRIDE="$home" FM_HOME="$home" FM_SEND_SETTLE=0 FM_PENDING_REPLY_NOW=1000 \
     "$SEND" lsm "/audit the ledger" >/dev/null 2>&1 || rc=$?
   expect_code 3 "$rc" "an unconfirmed local secondmate submit must exit delivered-unconfirmed"
   rec=$(pending_record "$home")
@@ -746,6 +746,23 @@ test_local_secondmate_pending_keeps_expectation_armed() {
     || fail "the surviving expectation must stay armed, got $(fm_pending_reply_get "$rec" phase)"
   # Armed means resolvable: the mate's correlated report still closes it.
   corr=$(fm_pending_reply_get "$rec" corr_id)
+  marker=$(fm_pending_reply_delivery_confirmation_path "$home/state" "$corr")
+  [ "$(fm_pending_reply_get "$rec" delivery_plane)" = typed ] \
+    || fail "a slash invocation must record its typed delivery plane"
+  FM_PENDING_REPLY_NOW=1200 fm_pending_reply_reconcile_delivery "$home/state" "$corr" \
+    || fail "typed delivery must age into the unknown-delivery guard"
+  [ "$(fm_pending_reply_get "$rec" phase)" = delivery_unknown ] \
+    || fail "typed delivery did not become unknown after grace"
+  FM_PENDING_REPLY_NOW=1700 fm_pending_reply_reconcile_delivery "$home/state" "$corr" || true
+  [ "$(fm_pending_reply_get "$rec" phase)" = delivery_unknown ] \
+    || fail "inbox absence must not reset a stale typed attempt"
+  [ "$(cat "$marker")" = attempted=1000 ] || fail "stale typed attempt marker was cleared"
+  fm_pending_reply_set "$rec" delivery_plane '' || fail "legacy attempt fixture failed"
+  FM_PENDING_REPLY_NOW=1800 fm_pending_reply_reconcile_delivery "$home/state" "$corr" || true
+  [ "$(fm_pending_reply_get "$rec" phase)" = delivery_unknown ] \
+    || fail "a historical slash invocation must also retain its unknown-delivery guard"
+  fm_pending_reply_delivery_attempt_unresolved "$home/state" "$corr" \
+    || fail "a historical typed attempt must still refuse resends"
   printf 'done [corr=%s]: ledger clean\n' "$corr" > "$home/state/lsm.status"
   fm_pending_reply_try_resolve "$home/state" "$corr" \
     || fail "a correlated report must still resolve the preserved expectation"

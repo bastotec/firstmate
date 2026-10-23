@@ -2,14 +2,14 @@
 # fm-dream.sh - the fleet's nightly pass over its own day ("dreaming").
 #
 # Usage:
-#   fm-dream.sh run [--only collect|skills|triage|file|memory ...] [--dry-run]
+#   fm-dream.sh run [--only STEP ...] [--dry-run]
 #   fm-dream.sh status [--json]
 #   fm-dream.sh install-service     macOS launchd agent, nightly at 04:15
 #   fm-dream.sh uninstall-service
 #
 # bin/fm_dream.py owns the steps, their guards and budgets, the run log under
 # state/dream/, and the summary bin/fm_report.py shows; read its header first.
-# Dreaming never pushes to, or opens PRs on, harness repositories.
+# Its header also owns the instructions step's gated harness-PR exception.
 #
 # The launchd agent runs `run` once a night on the main home's machine. It is
 # not KeepAlive; a run that is still going when the next one starts is refused

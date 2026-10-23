@@ -76,7 +76,8 @@ test_raise_writes_card_hold_record_and_watch() {
   card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic) || fail "no card for the hold"
   assert_equals false "$(jq -r .draft <<<"$card")" "the card is a full card"
   assert_equals "Automattic needs you before I can create Inter Graal" "$(jq -r .title <<<"$card")" "card title names machine and action"
-  assert_contains "$(jq -r .situation <<<"$card")" "Blocked on you: 3 steps on Automattic - gh-auth, model-gateway, stream-hub." "card quotes the human items"
+  assert_contains "$(jq -r .situation <<<"$card")" "Blocked on you: 3 steps on Automattic; the re-check lists them." "card counts the human items in plain words"
+  assert_not_contains "$(jq -r .situation <<<"$card")" "model-gateway" "card keeps internal check names out of what the captain reads"
   assert_equals 1 "$(jq '.options | length' <<<"$card")" "card offers only the re-check"
   assert_equals "Done - re-check now" "$(jq -r '.options[0].label' <<<"$card")" "card labels the re-check"
   assert_contains "$(jq -r '.options[0].instruction' <<<"$card")" "Do NOT record this option through answer." "delivered instruction forbids recording an answer"
@@ -103,7 +104,7 @@ test_recheck_updates_then_resolves_itself() {
   run_in "$home" "$BLOCKER" ready Automattic --from "$home/two.txt" || rc=$?
   assert_equals 1 "$rc" "ready is false while steps remain"
   assert_contains "$(run_in "$home" "$ROOT/bin/fm-card.sh" show machine-automattic | jq -r .situation)" \
-    "2 steps on Automattic - model-gateway, stream-hub" "card follows the remaining steps"
+    "2 steps on Automattic; the re-check lists them" "card follows the remaining steps"
   sed 's/=human:/=present:/' "$home/check.txt" > "$home/pass.txt"
   run_in "$home" "$BLOCKER" ready Automattic --from "$home/pass.txt" || fail "ready is false with nothing human"
   out=$(run_in "$home" "$BLOCKER" resolve Automattic) || fail "resolve failed: $out"
@@ -353,7 +354,7 @@ test_raise_again_after_passing_recheck() {
     fi
     card=$(run_in "$home" "$ROOT/bin/fm-card.sh" show "$task") || fail "renewed card is missing"
     assert_equals false "$(jq -r .draft <<<"$card")" "renewed card is full"
-    assert_contains "$(jq -r .situation <<<"$card")" "doctor-stream-survival" "renewed card names the newly discovered prerequisite"
+    assert_contains "$(jq -r '.options[0].instruction' <<<"$card")" "doctor-stream-survival" "renewed card names the newly discovered prerequisite to the first mate"
     assert_present "$home/state/when/when-$task.spec" "renewed watch follows the recorded task"
     assert_absent "$home/state/when/when-$previous.spec" "previous watch is retired"
     run_in "$home" "$BLOCKER" raise Automattic --for "create Inter Graal" \
@@ -364,7 +365,7 @@ test_raise_again_after_passing_recheck() {
       rc=0
       run_in "$home" "$BLOCKER" ready Automattic --from "$home/update.txt" || rc=$?
       assert_equals 1 "$rc" "new prerequisite still blocks readiness"
-      assert_contains "$(run_in "$home" "$ROOT/bin/fm-card.sh" show "$task" | jq -r .situation)" \
+      assert_contains "$(run_in "$home" "$ROOT/bin/fm-card.sh" show "$task" | jq -r '.options[0].instruction')" \
         "doctor-stream-survival-extra" "ready refreshes the suffixed card"
       sed 's/=human:/=present:/' "$home/pass.txt" > "$home/complete.txt"
       run_in "$home" "$BLOCKER" ready Automattic --from "$home/complete.txt" || fail "renewed passing re-check failed"

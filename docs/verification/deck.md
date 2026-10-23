@@ -71,9 +71,14 @@ The finished-turn row renders its UTC completion time from `run_finished.finishe
 `bin/fm-deck-stop.py` owns the task-bound local driver stop proof used by both control-plane exit and the shared spawn-relaunch boundary; endpoint classification remains required independently.
 The portable regression runs the driver, Deck executable, and state beneath paths containing spaces and proves that TERM removes the active Deck process before the stop boundary returns.
 Its fake Deck uses Python's default TERM behavior, not Deck's cooperative-stop behavior: the fixture's active in-process tool is interrupted rather than allowed to complete, and no later tool starts.
-A second fixture ignores TERM and proves the bounded wait escalates the surviving isolated process group to KILL.
+The TERM-resistant fixture exercises both helper modes: the default mode escalates the surviving isolated process group to KILL, while cooperative mode refuses and leaves survivors alive.
+`test_cooperative_stop_accounts_for_inherited_driver_argv` runs an actual Bash command-substitution descendant with inherited launch arguments, checks that stop waits for it inside the owned group, preserves it on timeout, and refuses an unisolated driver before signalling.
+`tests/fm-control-relaunch.test.sh` keeps the recorded endpoint alive after interrupt and `/quit` delivery until the exact old driver group, including a late-forked child, has stopped; replacement must wait for both proofs.
+Its separate live-endpoint refusal case closes another task's endpoint and checks that replacement still refuses while preserving the instructions, metadata, and staged work.
 Physical-state-alias and stale-generation relaunch regressions, including the valueless `--secondmate` driver flag, are in `tests/fm-deck-harness.test.sh` and `tests/fm-control-relaunch.test.sh`.
 This driver-only path does not alter backend transport or endpoint classifiers.
+`tests/fm-deck-harness.test.sh` covers bounded watcher-tree shutdown after TERM, grace consumed by a slow step between TERM and the wait, an arm exiting before its descendants, and cooperative TERM arriving during `/quit` cleanup with both watcher and captain lane running.
+`tests/fm-watch-arm.test.sh` and `tests/fm-captain-lane.test.sh` cover a slow watcher's bounded stop and prompt TERM handling during lane waits; `tests/fm-control-relaunch.test.sh` covers replacement after a driver shutdown longer than the plain-exit bound.
 
 The separate `test_secondmate_stops_a_turn_inside_a_long_tool` fixture models Deck's cooperative SIGTERM while running real child processes under the secondmate driver.
 It asserts bounded exit for Ctrl+C and mid-turn `/quit`, cancellation after shell exec replacement, freeze-and-rescan handling of a late-fork race, and the hard fallback for a TERM-resistant model call even when the tool grace exceeds the kill bound.

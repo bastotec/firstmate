@@ -90,6 +90,25 @@ FM_PR_RETIRE_RECEIPT_HASH=
 FM_PR_RETIRE_RECEIPT_IDENTITY=
 FM_PR_POLL_RETIREMENT_REJECTED=
 
+fm_pr_attestation_jq() {
+  cat <<'JQ'
+  def attest($head):
+    try (
+    ([(.body // "") | scan("<!-- no-mistakes-pipeline-attestation:v1 (\\{.*?\\}) -->")] | last) as $m
+    | if $m == null then "missing"
+      else ($m[0] | fromjson) as $j
+      | if ($j | type) != "object" then "unreadable"
+        elif ($j.head_sha // "") != $head then "stale:" + (($j.head_sha // "none")[0:7])
+        else ([$j.steps[]? | {(.step): .status}] | add // {}) as $s
+        | if ($s.review // "") != "completed" then "incomplete:review " + ($s.review // "missing")
+          elif (($s.test // "") | IN("completed", "skipped") | not) then "incomplete:test " + ($s.test // "missing")
+          elif ($s.document // "") != "completed" then "incomplete:document " + ($s.document // "missing")
+          else "ok" end
+        end
+      end) catch "unreadable";
+JQ
+}
+
 fm_task_id_path_safe() {
   local id=${1-}
   local LC_ALL=C

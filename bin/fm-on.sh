@@ -136,6 +136,11 @@ case "$COMMAND" in
       sync|update) FLOW=maintenance ;;
       *) FLOW=supervision ;;
     esac ;;
+  fm-specialist.sh)
+    case "${1:-}" in
+      ask) FLOW=messages ;;
+      result|status|history) FLOW=reports ;;
+    esac ;;
   fm-retire-endpoint.sh|fm-control.sh) FLOW=supervision ;;
   fm-backlog-receive.sh) FLOW=placement ;;
   fm-idle-sweep.sh)

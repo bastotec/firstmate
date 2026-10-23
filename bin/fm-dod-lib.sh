@@ -38,6 +38,10 @@
 # conflicting role is superseded rather than duplicated.
 # fm_ship_rule_one owns the mode-specific first ship safety rule shared by an
 # ordinary ship brief and the durable contract written during scout promotion.
+# fm_act_within_scope_section owns the act-within-scope contract.
+# fm_brief_worker_role carries it into every ship/scout launch before stored
+# brief text, and bin/fm-brief.sh into every new secondmate charter; AGENTS.md
+# section 7 points here rather than restating it.
 # fm_concurrent_work_section owns the worker's half of the parallel-work contract
 # (AGENTS.md section 7): firstmate names concurrent work touching this task's
 # area, and this section is what tells the worker that the notice is awareness
@@ -61,10 +65,44 @@ Never run `fm-captain-hold.sh hold/answer/answers/stale-clear` or write a decisi
 A scout whose report leaves nothing for the captain may run `fm-captain-hold.sh complete <your-id> --none`.
 EOF
   printf "Your steering inbox is \`%s/%s.inbox\`; this exact path belongs to your current task even when it is outside the worktree or under the supervising firstmate home, so read and acknowledge its messages and do not reject it as another home's state.\n" "$state" "$task_id"
+  fm_act_within_scope_section
   cat <<'EOF'
 Never inspect or change any other home's endpoint namespace; this authorization is limited to the exact task paths named by this brief.
 When this task works on Firstmate itself, the repository root `AGENTS.md` (also imported by `CLAUDE.md`) is project content and the supervisor contract for the firstmate managing you: follow this brief instead of that supervisor contract.
 Project instructions still govern the work wherever they do not conflict with this worker identity, including `CONTRIBUTING.md` and `firstmate-coding-guidelines` for Firstmate changes.
+EOF
+}
+
+fm_act_within_scope_section() {
+  cat <<'EOF'
+# Act within your scope
+This section supersedes any older brief or steer that tells you to stop, hold, preserve evidence, wait for custody or a tooling owner, or leave a daemon or tool alone instead of trying the obvious fix; the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and `--yes` / `-y` ban are unchanged.
+Your default is to act: inside this task's scope, fix what is in your way yourself and keep going.
+- A refusal from the fleet's own tooling (a no-mistakes step or PR guard, a Firstmate script, a spawn, a PR text check): fix the input and retry, or do that step by hand. A guard that names what it objects to, such as an internal ID in generated PR text, is satisfied by removing it; once everything else in the pipeline passed, open the PR yourself with `gh pr create` and the corrected text.
+- A tool, daemon or service you need is missing or stopped: install it for your user or start it, retry, and report only if that fails. A no-mistakes daemon that is already running serves other work too, so never stop, restart or update it.
+- A merge conflict or a needed rebase on your own branch: resolve it.
+- A review finding inside your task's scope, or a failing test: investigate and fix it. While a no-mistakes run owns the branch, fix through its gate.
+- Flaky infrastructure (network, rate limits, slow CI): retry with backoff.
+- A CI check that failed without running is infrastructure, not a code failure, and never a decision: confirm with Firstmate's `bin/fm-ci-infra.sh classify <pr-url>` (its header owns the classification criteria), then fix it yourself. In a private repository move the failing workflow to `runs-on: [self-hosted, linux, workload]` (a virtualenv instead of `actions/setup-python`) and re-run; a public repository keeps hosted runners and is re-run. A new private repository you create starts on `[self-hosted, linux, workload]`.
+- A stale or dirty worktree or slot: clean it or take another.
+Authority you were given covers the routine steps it implies: "merge when green" includes rebasing, fixing CI, rerunning checks and fixing review findings.
+Before asking whether to merge a PR, read the captain's merge policy with Firstmate's `bin/fm-merge-policy.sh get <owner/repo>`: `auto` is his standing word to merge once the full no-mistakes pipeline has passed and CI is green, `ask` is his call, and `never` is never merged; production promotion always stays his.
+These need an explicit, current instruction that names the action, and nothing else does:
+- moving money, or entering credentials or secrets;
+- deploying or promoting to production;
+- deleting data that is not yours;
+- messages to people outside the fleet (PR comments to teammates, Slack, WhatsApp, email);
+- force-pushing a shared branch;
+- merging beyond the merge authority you were given;
+- anything a machine's own `~/.agents/AGENTS.md` forbids, such as the Automattic sandbox rules.
+Before you call anything a credential, access or tooling blocker, read the project's own guidance - its `.agents/skills/`, `AGENTS.md` and `INTERNAL.md` - and try the path it documents; a documented helper that uses access already on this machine is the normal route, not entering a secret.
+A blocker is real only after you tried the obvious fix and any documented path: say what you checked and tried and what failed.
+A hold, a custody or evidence report, or "no supported path" is never where a task ends, and a status update is not progress; `paused:` is only for an outside wait with an end time.
+A blocker that is not the captain's call goes to your mate, who solves it; a credential, access or tooling blocker becomes the captain's only when no documented path exists.
+A token that showed up in your own tool output or a local file, from your own authorized account (a GitHub `temp_clone_token`, a short-lived OAuth or IAP identity token you minted, a gcloud access token), is not an exposure: redact it and move on, with no card and no report.
+An exposure is a secret that left the machine - committed, pushed, posted, sent to an outside service, or shown in a shared channel - and it goes to your mate with the concrete rotation step, never a suggestion to ask the vendor's support.
+Time-box anything your task did not ask for: after 30 minutes on it, tell your mate what you found as `needs-decision` and stop.
+Write status lines as plain sentences a person understands at a glance.
 EOF
 }
 

@@ -12,16 +12,33 @@ specialist is a record, not an endpoint, and is intentionally persistent.
   state/specialists/<name>.json          the record (0600, atomic)
       {"version":1,"kind":"specialist","persistent":true,"name","subject",
        "home","session","memory","skills_dir","workdir","projects":[...],
-       "status":"idle"|"running"|"retired","created","jobs":N,
-       "current_job":{"id","pid","identity","started"}|null,
-       "last_job":{"id","brief","started","finished","outcome","result"}|null,
+       "status":"idle"|"running"|"suspended"|"retired","created","jobs":N,
+       "suspension":{"since","reason","by"}|null,
+       "stop_on_tool_failure":true|false (absent = false),
+       "model":"<route>" (absent = the Deck session's own model),
+       "last_suspension":{"since","reason","by","resumed","resumed_by"}?,
+       "current_job":{"id","pid","identity","started","events","from"?}|null,
+       "last_job":{"id","brief","started","finished","outcome","result","from"?,"message"?,"stopped"?}|null,
        "memory_summary"}
+      Suspension fields are absent until first used; since and resumed are epoch
+      seconds, and last_suspension retains the most recently resumed suspension.
   state/specialists/<name>/history.jsonl one line per finished job
-      {"job","brief","started","finished","outcome","result","exit"}
+      {"job","brief","started","finished","outcome","result","exit","from"?,"message"?,"stopped"?}
+      A captain ask sets "from": "captain" on current_job, last_job and history;
+      last_job and history also keep his exact words as "message".
+      When a tool failure is recorded, both keep a "stopped" note naming the
+      failed tool and output, truncated to 300 characters.
   state/specialists/<name>/jobs/<job>/   brief.md prompt.md events.ndjson
                                          result.md started memory-before.json runner.log
-  data/specialists/<name>/memory.md      its memory: read at every job start,
-                                         updated before every job may finish
+                                         message.md (captain asks only, exact message)
+                                         tool-failure.json (stopped jobs only)
+      tool-failure.json keeps {"tool","args","output","at"}: the tool name,
+      JSON-encoded arguments truncated to 400 characters, whitespace-normalized
+      output truncated to 600 characters, and an epoch-seconds timestamp.
+      The observer atomically publishes it without replacing an existing record,
+      so later failures cannot overwrite the first one.
+  data/specialists/<name>/memory.md      its memory: read at every job start;
+                                         completion checks owned by the CLI header
   data/specialists/<name>/skills/        linked at workdir/.agents/skills
 
 A task group is one parent's ephemeral fan-out: N members share a brief and
@@ -78,6 +95,7 @@ Regression entrypoints: tests/fm-specialist.test.sh and tests/fm-group.test.sh.
 from __future__ import annotations
 
 import argparse
+import calendar
 import contextlib
 import fcntl
 import hashlib
@@ -144,7 +162,8 @@ def write_json(path: Path, data: dict) -> None:
 
 def read_input_file(path: str, what: str) -> str:
     try:
-        return Path(path).read_text()
+        with open(path, newline="") as fh:
+            return fh.read()
     except OSError as e:
         die(f"cannot read the {what} file {path}: {e.strerror}")
 
@@ -199,6 +218,8 @@ def group_alive(pgid) -> bool:
         # the process table below decides.
         pass
     out = subprocess.run(["ps", "-A", "-o", "pgid=,stat="], capture_output=True, text=True)
+    if out.returncode:
+        return True
     for line in out.stdout.splitlines():
         parts = line.split()
         if len(parts) == 2 and parts[0] == str(pgid) and running_stat(parts[1]):
@@ -455,12 +476,24 @@ class Specialist:
             "result": str(result) if result.is_file() else None,
             "exit": exit_code,
         }
+        if cur.get("from"):
+            entry["from"] = cur["from"]
+        failure = read_tool_failure(jdir)
+        if failure:
+            entry["stopped"] = f"stopped at the first failed tool call ({failure.get('tool')}): {failure.get('output', '')}"[:300]
+        message = jdir / "message.md"
+        if message.is_file():
+            with message.open(newline="") as fh:
+                entry["message"] = fh.read()
         with open(self.history_path, "a") as fh:
             fh.write(json.dumps(entry, sort_keys=True) + "\n")
         rec["status"] = "idle"
         rec["current_job"] = None
         rec["last_job"] = {k: entry[k] for k in ("brief", "started", "finished", "outcome", "result")}
         rec["last_job"]["id"] = job
+        for key in ("from", "message", "stopped"):
+            if entry.get(key):
+                rec["last_job"][key] = entry[key]
         rec["last_job"]["summary"] = first_lines(read_text(result), 200)
         rec["jobs"] = int(rec.get("jobs", 0)) + 1
         rec["memory_summary"] = first_lines(read_text(Path(rec["memory"])))
@@ -528,7 +561,7 @@ def specialist_prompt(rec: dict, job: str, jdir: Path, brief: str) -> str:
     memory = Path(rec["memory"])
     projects = ", ".join(rec.get("projects") or []) or "none recorded"
     home_projects = Path(rec["home"]) / "projects"
-    return f"""You are {rec['name']}, a persistent firstmate specialist.
+    return f"""You are {rec['name']}, a persistent firstmate worker - a specialist in one subject.
 Your subject: {rec['subject']}
 Your owner is the firstmate home at {rec['home']}; it hands you jobs and reads your results.
 This conversation persists across jobs: earlier jobs above are your own past work.
@@ -551,6 +584,7 @@ MEMORY_FILE: {memory}
 1. Write your result for the owner to RESULT_FILE: the answer or findings first, then evidence.
 2. Update MEMORY_FILE in place: keep the "## Summary" section to a few lines about the subject, add durable facts you learned, prune what is wrong or stale. Keep it short; it is read at the start of every job.
 Your turn cannot finish until both files are written during this job.
+If this specialist stops at its first failed tool call, make no more tool calls and you may finish without writing RESULT_FILE or MEMORY_FILE, since firstmate records the failure.
 """
 
 
@@ -574,6 +608,8 @@ def specialist_hook(jdir: Path, memory: Path) -> str:
 
 def cmd_spec_check(args) -> None:
     jdir = Path(args.job_dir)
+    if read_tool_failure(jdir):
+        return
     result = jdir / "result.md"
     if not result.is_file() or not result.stat().st_size:
         die(f"Write your result to {result} before finishing.")
@@ -582,9 +618,12 @@ def cmd_spec_check(args) -> None:
 
 
 def cmd_spec_job(args) -> None:
+    run_spec_job(args, brief_text(args), None)
+
+
+def run_spec_job(args, brief: str, origin, on_prepare=None) -> None:
     h = home()
     sp = Specialist(h, args.name)
-    brief = brief_text(args)
     deck_bin()
     deck_env()
     rec = sp.reconcile()
@@ -592,6 +631,11 @@ def cmd_spec_job(args) -> None:
         rec = sp.record()
         if rec.get("status") == "retired":
             die(f"specialist {args.name!r} is retired", 3)
+        if rec.get("status") == "suspended":
+            sus = rec.get("suspension") or {}
+            since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(sus.get("since") or 0))
+            die(f"specialist {args.name!r} is suspended since {since}: {sus.get('reason', 'no reason recorded')}; "
+                "resume it with fm-specialist.sh resume first", 4)
         if rec.get("status") == "running":
             die(f"specialist {args.name!r} is already on job {rec['current_job']['id']}; wait for it", 3)
         job = time.strftime("j%Y%m%dT%H%M%S", time.gmtime()) + "-" + secrets.token_hex(2)
@@ -601,12 +645,17 @@ def cmd_spec_job(args) -> None:
         (jdir / "prompt.md").write_text(specialist_prompt(rec, job, jdir, brief))
         (jdir / "started").write_text(str(now()))
         (jdir / "memory-before.json").write_text(json.dumps(memory_metadata(Path(rec["memory"]))))
+        if on_prepare:
+            on_prepare(h, job)
         pid = detach(
             [sys.executable, str(Path(__file__).resolve()), "_spec-run", args.name, job, "--home", str(h)],
             jdir / "runner.log",
         )
         rec["status"] = "running"
-        cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid)}
+        cur = {"id": job, "pid": pid, "started": now(), "identity": process_identity(pid),
+               "events": str(jdir / "events.ndjson")}
+        if origin:
+            cur["from"] = origin
         rec["current_job"] = cur
         sp.save(rec)
     print(f"started job {job} for specialist {args.name}")
@@ -643,9 +692,20 @@ def cmd_spec_run(args) -> None:
             "--deadline-secs", str(int(os.environ.get("FM_CREW_DEADLINE_SECS", DEFAULT_DEADLINE))),
             "--hook", specialist_hook(jdir, memory),
         ]
+        if rec.get("model"):
+            argv += ["--model", rec["model"]]
+        if rec.get("stop_on_tool_failure"):
+            me = [sys.executable, str(Path(__file__).resolve())]
+            argv += ["--tool-concurrency", "1",
+                     "--hook", "post_tool_use=" + shlex.join(me + ["_spec-tool-observe", str(jdir)]),
+                     "--hook", "pre_tool_use=" + shlex.join(me + ["_spec-tool-gate", str(jdir)])]
         rc = run_deck(argv, workdir, jdir / "events.ndjson", jdir / "stderr.log",
                       deck_env(), jdir / "prompt.md").wait()
-        if rc == 0 and result.is_file() and result.stat().st_size > 0 and memory_updated(jdir, memory):
+        failure = read_tool_failure(jdir)
+        if failure:
+            if not (result.is_file() and result.stat().st_size > 0):
+                write_stopped_result(result, failure)
+        elif rc == 0 and result.is_file() and result.stat().st_size > 0 and memory_updated(jdir, memory):
             outcome = "done"
     except (Exception, SystemExit) as error:
         print(f"specialist job failed: {error}", file=sys.stderr)
@@ -657,15 +717,150 @@ def cmd_spec_run(args) -> None:
         sp._finish_locked(rec, args.job, outcome, rc)
 
 
+def session_model(session: str):
+    """The model the specialist's Deck session last ran, from Deck's own session file."""
+    root = Path(os.environ["DECK_STATE"]) if os.environ.get("DECK_STATE") else (
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "deck"
+    )
+    try:
+        data = json.loads((root / "sessions" / f"{session}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    return data.get("model") if isinstance(data, dict) else None
+
+
+def worker_view(rec: dict) -> dict:
+    """The record plus the worker-shaped fields a feed reads: a specialist is a
+    persistent worker that specializes in one subject."""
+    out = dict(rec)
+    out["persistent"] = True
+    out["harness"] = "deck"
+    out["model"] = rec.get("model") or session_model(rec.get("session", ""))
+    out["model_choice"] = rec.get("model")
+    out["effort"] = None
+    cur = rec.get("current_job")
+    if cur:
+        cur = dict(cur)
+        events = cur.get("events")
+        if not events and rec.get("home") and rec.get("name") and cur.get("id"):
+            events = str(Path(rec["home"]) / "state" / "specialists" / rec["name"] / "jobs" / cur["id"] / "events.ndjson")
+            cur["events"] = events
+        cur["last_activity"] = None
+        if events:
+            try:
+                cur["last_activity"] = int(Path(events).stat().st_mtime)
+            except OSError:
+                pass
+        out["current_job"] = cur
+    return out
+
+
+STATE_FOR_STATUS = {"running": "working", "idle": "idle", "suspended": "suspended", "retired": "retired"}
+
+
+def fleet_row(rec: dict) -> dict:
+    """One worker-shaped row for fleet views; reads only, never reconciles."""
+    view = worker_view(rec)
+    name = rec["name"]
+    status = rec.get("status", "idle")
+    sus = rec.get("suspension") or {}
+    last = rec.get("last_job") or {}
+    state = STATE_FOR_STATUS.get(status, status)
+    if status == "suspended":
+        detail = f"suspended: {sus.get('reason', '')}"
+    elif status == "running":
+        cur = rec.get("current_job") or {}
+        if Specialist(home(), name).runner_alive(cur):
+            detail = f"on job {cur.get('id')}"
+        else:
+            state = "stopped"
+            detail = "runner ended; the next specialist command reconciles this job"
+    else:
+        detail = last.get("summary") or "no job yet"
+    return {
+        "id": f"spec-{name}", "name": name, "kind": "specialist", "persistent": True, "subject": rec.get("subject"),
+        "harness": view["harness"], "model": view["model"], "model_choice": view["model_choice"],
+        "effort": view["effort"], "session": rec.get("session"), "status": status,
+        "current_state": {"state": state, "source": "specialist-record",
+                          "detail": detail[:300], "observed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+        "current_job": view.get("current_job"), "last_job": rec.get("last_job"),
+        "suspension": rec.get("suspension"), "stop_on_tool_failure": bool(rec.get("stop_on_tool_failure")),
+        "actions": {"watch": f"bin/fm-specialist.sh status {name}",
+                    "steer": f"bin/fm-specialist.sh job {name} --brief '<instruction>'",
+                    "captain_message": f"bin/fm-specialist.sh ask {name} --from-captain -- '<text>'",
+                    "model": f"bin/fm-specialist.sh model {name} <route|default>"},
+    }
+
+
+def cmd_spec_rows(args) -> None:
+    """Hidden: worker-shaped rows for every specialist record, read-only."""
+    root = home() / "state" / "specialists"
+    rows = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            rows.append(fleet_row(json.loads(path.read_text())))
+        except (OSError, ValueError, KeyError):
+            continue
+    print(json.dumps(rows, sort_keys=True))
+
+
+def cmd_spec_stop(args) -> None:
+    """Stop the running job and record it as interrupted."""
+    h = home()
+    sp = Specialist(h, args.name)
+    with locked(sp.lock_path):
+        rec = sp.record()
+        cur = rec.get("current_job")
+        if rec.get("status") != "running" or not cur:
+            die(f"specialist {args.name!r} is not on a job", 3)
+        pid = cur.get("pid")
+        if sp.runner_alive(cur):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGTERM)
+            if not wait_for(lambda: not group_alive(pid), 10):
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(pid, signal.SIGKILL)
+                if not wait_for(lambda: not group_alive(pid), 5):
+                    die(f"job {cur['id']} process group {pid} is still running; stop could not be confirmed", 1)
+        elif group_alive(pid):
+            die(f"job {cur['id']} runner ended; process group ownership could not be confirmed", 1)
+        sp._finish_locked(rec, cur["id"], "interrupted", None)
+    print(f"stopped job {cur['id']} for specialist {args.name} (interrupted)")
+
+
+def cmd_spec_model(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    route = args.route.strip()
+    if not route or any(c.isspace() for c in route):
+        die("give one model route, or default to clear the choice")
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") == "retired":
+            die(f"specialist {args.name!r} is retired", 3)
+        if route == "default":
+            rec.pop("model", None)
+        else:
+            rec["model"] = route
+        sp.save(rec)
+    shown = "the session's own model" if route == "default" else route
+    print(f"specialist {args.name}: next jobs run on {shown}")
+
+
 def cmd_spec_status(args) -> None:
     h = home()
     sp = Specialist(h, args.name)
     rec = sp.reconcile()
     if args.json:
-        print(json.dumps(rec, sort_keys=True))
+        print(json.dumps(worker_view(rec), sort_keys=True))
         return
     last = rec.get("last_job") or {}
     print(f"specialist {rec['name']} ({rec['status']}) - {rec['subject']}")
+    sus = rec.get("suspension") if rec.get("status") == "suspended" else None
+    if sus:
+        since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(sus.get("since") or 0))
+        print(f"  suspended since {since} by {sus.get('by', 'unknown')}: {sus.get('reason', '')}")
     print(f"  session: {rec['session']}  jobs: {rec.get('jobs', 0)}")
     if rec.get("current_job"):
         print(f"  on job: {rec['current_job']['id']}")
@@ -700,12 +895,190 @@ def cmd_spec_list(args) -> None:
             continue
         out.append(rec)
     if args.json:
-        print(json.dumps(out, sort_keys=True))
+        print(json.dumps([worker_view(r) for r in out], sort_keys=True))
         return
     for rec in out:
         last = (rec.get("last_job") or {}).get("finished")
         when = time.strftime("%Y-%m-%d", time.localtime(last)) if last else "never"
         print(f"{rec['name']}\t{rec['status']}\tjobs={rec.get('jobs', 0)}\tlast={when}\t{rec['subject']}")
+
+
+CAPTAIN_BRIEF = """Message from the captain, sent to you directly (not through your owning mate):
+
+{text}
+
+Answer him in your result file, in plain words, as you would report to your owner.
+Your standing bounds still apply: you produce knowledge, not project changes, and a
+read-only monitor stays read-only. If he asks for something outside your bounds,
+say so plainly instead of doing it.
+"""
+
+
+def cmd_spec_ask(args) -> None:
+    if not args.from_captain:
+        die("ask needs --from-captain: only a captain message is a supported direct route")
+    if args.text_file:
+        text = read_input_file(args.text_file, "message")
+    else:
+        text = " ".join(args.text)
+    if not text.strip():
+        die("the message is empty")
+
+    def tell_owner(h: Path, job: str) -> None:
+        msg = Specialist(h, args.name).job_dir(job) / "message.md"
+        msg.write_text(text)
+        excerpt = " ".join(text.split())[:200]
+        wake(h, f"specialist-captain:{args.name}:{job}",
+             f"check: the captain asked specialist {args.name} directly (job {job}): {excerpt} - "
+             "its result arrives as the usual specialist job notification")
+
+    run_spec_job(args, CAPTAIN_BRIEF.format(text=text), "captain", tell_owner)
+
+
+def cmd_spec_result(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    rec = sp.reconcile()
+    job = args.job or (rec.get("last_job") or {}).get("id")
+    if not job:
+        die(f"specialist {args.name!r} has no finished job", 1)
+    if (rec.get("current_job") or {}).get("id") == job:
+        die(f"job {job} is still running", 3)
+    result = sp.job_dir(job) / "result.md"
+    if not result.is_file():
+        die(f"job {job} wrote no result", 1)
+    sys.stdout.write(read_text(result))
+
+
+def parse_since(text: str | None) -> int:
+    if text is None:
+        return now()
+    try:
+        return int(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError:
+        die(f"--since must be a UTC time like 2026-10-17T10:40:02Z, got {text!r}")
+    return now()
+
+
+def cmd_spec_suspend(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    reason = " ".join(args.reason.split())
+    if not reason:
+        die("--reason must say why in plain words")
+    since = parse_since(args.since)
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") == "retired":
+            die(f"specialist {args.name!r} is retired", 3)
+        if rec.get("status") == "running":
+            die(f"specialist {args.name!r} is on job {rec['current_job']['id']}; suspend it after the job ends", 3)
+        rec["status"] = "suspended"
+        rec["suspension"] = {"since": since, "reason": reason, "by": args.by}
+        sp.save(rec)
+    print(f"suspended specialist {args.name}: {reason}")
+
+
+TOOL_FAILURE = "tool-failure.json"
+
+
+def read_tool_failure(jdir: Path):
+    try:
+        return json.loads((jdir / TOOL_FAILURE).read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def tool_call_failed(tool_name: str, output: str) -> bool:
+    """Deck renders a tool error as 'the tool failed...' and run_command as JSON."""
+    text = (output or "").strip()
+    if text.startswith("the tool failed"):
+        return True
+    if tool_name != "run_command":
+        return False
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    if isinstance(data, dict):
+        if data.get("timed_out") is True:
+            return True
+        code = data.get("exit_code", 0)
+        return code is None or code != 0
+    return False
+
+
+def write_stopped_result(result: Path, failure: dict) -> None:
+    result.write_text(
+        "# Stopped at the first failed tool call\n\n"
+        f"Tool: {failure.get('tool')}\n"
+        f"Call: {failure.get('args', '')}\n"
+        f"Output: {failure.get('output', '')}\n\n"
+        "This specialist stops at its first failed tool call, so no further tool ran in this job.\n")
+
+
+def cmd_spec_tool_observe(args) -> None:
+    """post_tool_use hook: record the job's first failed tool call."""
+    jdir = Path(args.job_dir)
+    try:
+        event = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return
+    if read_tool_failure(jdir) or not tool_call_failed(event.get("tool_name"), str(event.get("tool_output", ""))):
+        return
+    note = {"tool": event.get("tool_name"), "args": json.dumps(event.get("args"))[:400],
+            "output": " ".join(str(event.get("tool_output", "")).split())[:600], "at": now()}
+    tmp = jdir / f"{TOOL_FAILURE}.{secrets.token_hex(8)}.tmp"
+    try:
+        with tmp.open("x") as fh:
+            fh.write(json.dumps(note))
+        try:
+            os.link(tmp, jdir / TOOL_FAILURE)
+        except FileExistsError:
+            pass
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def cmd_spec_tool_gate(args) -> None:
+    """pre_tool_use hook: after a failed call, refuse every further tool call (exit 2)."""
+    failure = read_tool_failure(Path(args.job_dir))
+    if not failure:
+        return
+    print(f"A tool call already failed ({failure.get('tool')}: {failure.get('output', '')[:200]}). "
+          "This specialist stops at its first failed tool call: make no more tool calls. "
+          "Reply with one short paragraph on what failed and finish; firstmate records the result.",
+          file=sys.stderr)
+    sys.exit(2)
+
+
+def cmd_spec_configure(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") == "retired":
+            die(f"specialist {args.name!r} is retired", 3)
+        rec["stop_on_tool_failure"] = args.stop_on_tool_failure == "on"
+        sp.save(rec)
+    print(f"specialist {args.name}: stop at the first failed tool call {args.stop_on_tool_failure}")
+
+
+def cmd_spec_resume(args) -> None:
+    h = home()
+    sp = Specialist(h, args.name)
+    sp.reconcile()
+    with locked(sp.lock_path):
+        rec = sp.record()
+        if rec.get("status") != "suspended":
+            die(f"specialist {args.name!r} is not suspended (status {rec.get('status')})", 3)
+        rec["status"] = "idle"
+        rec["last_suspension"] = dict(rec.get("suspension") or {}, resumed=now(), resumed_by=args.by)
+        rec["suspension"] = None
+        sp.save(rec)
+    print(f"resumed specialist {args.name}")
 
 
 def cmd_spec_retire(args) -> None:
@@ -1099,7 +1472,7 @@ def cleanup_group(g: Group, reason: str) -> bool:
     if survivors:
         card = {
             "project": "firstmate",
-            "title": f"Task group {g.gid} left processes behind",
+            "title": "A task group left processes running after cleanup. Stop them or keep them?",
             "situation": first_lines(f"Cleanup could not stop member processes {survivors}. They may still be using the model."),
             "options": [
                 {"key": "1", "label": "Retry cleanup", "instruction": f"Run FM_HOME={shlex.quote(str(g.h))} bin/fm-group.sh cleanup {g.gid}."},
@@ -1249,6 +1622,56 @@ def main() -> None:
     s.add_argument("name")
     s.set_defaults(fn=cmd_spec_retire)
 
+    s = sub.add_parser("ask")
+    s.add_argument("name")
+    s.add_argument("--from-captain", action="store_true")
+    s.add_argument("--text-file")
+    s.add_argument("--wait", action="store_true")
+    s.add_argument("--wait-timeout", type=float, default=DEFAULT_DEADLINE + 60)
+    s.set_defaults(fn=cmd_spec_ask)
+
+    s = sub.add_parser("result")
+    s.add_argument("name")
+    s.add_argument("job", nargs="?")
+    s.set_defaults(fn=cmd_spec_result)
+
+    s = sub.add_parser("suspend")
+    s.add_argument("name")
+    s.add_argument("--reason", required=True)
+    s.add_argument("--since")
+    s.add_argument("--by", default="firstmate")
+    s.set_defaults(fn=cmd_spec_suspend)
+
+    s = sub.add_parser("stop")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_spec_stop)
+
+    s = sub.add_parser("_spec-rows")
+    s.set_defaults(fn=cmd_spec_rows)
+
+    s = sub.add_parser("model")
+    s.add_argument("name")
+    s.add_argument("route")
+    s.set_defaults(fn=cmd_spec_model)
+
+    s = sub.add_parser("configure")
+    s.add_argument("name")
+    s.add_argument("--stop-on-tool-failure", choices=["on", "off"], required=True)
+    s.set_defaults(fn=cmd_spec_configure)
+
+    s = sub.add_parser("_spec-tool-observe")
+    s.add_argument("job_dir")
+    s.set_defaults(fn=cmd_spec_tool_observe)
+
+    s = sub.add_parser("_spec-tool-gate")
+    s.add_argument("job_dir")
+    s.set_defaults(fn=cmd_spec_tool_gate)
+
+    s = sub.add_parser("resume")
+    s.add_argument("name")
+    s.add_argument("--by", default="firstmate")
+    s.set_defaults(fn=cmd_spec_resume)
+
     s = sub.add_parser("group-start")
     s.add_argument("gid")
     s.add_argument("--title")
@@ -1276,8 +1699,15 @@ def main() -> None:
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_group_list)
 
-    args = p.parse_args()
-    if args.cmd not in ("_spec-check", "_result-check", "group-status", "group-list"):
+    argv = sys.argv[1:]
+    text = []
+    if argv[:1] == ["ask"] and "--" in argv:
+        split = argv.index("--")
+        argv, text = argv[:split], argv[split + 1:]
+    args = p.parse_args(argv)
+    if args.cmd == "ask":
+        args.text = text
+    if args.cmd not in ("_spec-check", "_result-check", "_spec-rows", "group-status", "group-list"):
         refuse_gate()
     if args.cmd in ("_spec-run", "_group-run"):
         os.environ["FM_HOME"] = args.home

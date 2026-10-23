@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Steer a task by durable record: write the message into the task's steering
 # inbox and ring a constant doorbell line into its terminal, best-effort.
-# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction] [--] <text...>
+# Usage: fm-send.sh [--decision-answer] <target> [--resolve-key <key>]... [--fire-and-forget <delivery-id>] [--from-captain | --from-mate <sender> | --correction | --result] [--] <text...>
 #   --decision-answer requires an exact task id and keyed answer, resolves
 #   regular metadata under the supervision lease and metadata lock, and refuses
 #   harness-native text rather than leaving the durable inbox plane.
@@ -14,6 +14,9 @@
 #   "successful" send to the wrong endpoint is worse than a loud failure. An
 #   explicit target no record names must be a "<hub-tag>:<32-hex id>" on this
 #   home's configured stream hub, and must then verify live.
+# A spec-<name> selector with a specialist record in this home delegates to the
+# direct-job contract in bin/fm-specialist.sh's header, not either endpoint
+# plane below. It is resolved before endpoint task selectors.
 # The reserved `primary` selector, only when state/primary.meta is absent,
 # publishes plain text to a live Deck chat host instead of either task plane
 # below: fm-send.sh primary <text...> (no options or native-key handling).
@@ -175,13 +178,21 @@
 #
 # Captain-direct echo guard: bin/fm-captain-direct-lib.sh owns echo matching and
 # its fixed windows. A matching later ordinary firstmate steer from this home
-# to the same secondmate is not sent. fm-send prints
-# `suppressed=captain-direct-echo corr=<id>` on stdout and why on stderr, logs
-# it to state/captain-direct.log, and exits 0: this is a deliberate no-op, not a
-# refusal inviting a rephrased retry. --correction sends it anyway (logged),
-# for the one fix a later report from the mate shows is really needed; it cannot
-# accompany --from-captain. A --resolve-key answer is never held back, so
-# decision bookkeeping still closes.
+# to the same secondmate is not sent unless an exception below applies.
+# fm-send prints `suppressed=captain-direct-echo corr=<id>` on stdout and why on
+# stderr, logs it to state/captain-direct.log, and exits 0: a deliberate no-op,
+# not an invitation to rephrase the captain's words. If suppressed text delivers
+# new findings, resend with --result instead of abandoning the delivery.
+# --correction sends the one fix a later report from the mate shows is really
+# needed (logged); it cannot accompany --from-captain or --from-mate.
+# For new findings (a child's report or outcome), --result or a report path
+# recognized by fm_captain_direct_carries_result bypasses the guard even when
+# the message names the captain-direct corr. Mentioning "a report" without a
+# recognized path is not a result exception. --result needs no report path and
+# cannot accompany --from-captain or --from-mate. Successful result sends are
+# logged best-effort as result-sent in state/captain-direct.log, even without an
+# echo match; failed sends are not. A --resolve-key answer is never held back,
+# so decision bookkeeping still closes.
 #
 # From-mate tag: --from-mate <sender> --fire-and-forget <corr> delivers a peer
 # message between second mates on the first mate's behalf (bin/fm-mate-route.sh
@@ -204,12 +215,19 @@
 # send remains successful and watcher reconciliation owns the repair, and when
 # the commit and marker are BOTH lost the send still remains successful with a
 # reply-tracking-degraded warning naming the expectation an operator must
-# inspect (it can no longer reconcile or escalate on its own). Only a
+# inspect rather than assuming automatic reconciliation. Only a
 # failed enqueue discards the expectation. On the typed plane an unconfirmed submit (exit 3) keeps
 # it armed rather than dropping it, and only a proven send failure discards it.
-# Set FM_PENDING_REPLY_EXISTING_CORR=<id> when re-sending a recovery request
-# for an already-open expectation so a second record is not created. Direct
-# unmarked captain input never creates one. A marked secondmate instruction
+# Set FM_PENDING_REPLY_EXISTING_CORR=<id> to reuse an already-open expectation
+# for a resend or its recovery request instead of creating another expectation.
+# A local inbox resend deduplicates the same correlated request onto its
+# existing root or handled record, even after recovery begins. Only the exact
+# text from fm_pending_reply_recovery_message bypasses that deduplication so
+# recovery can enqueue its own message; a new request without a reused
+# correlation still gets a separate record. Before refusing an unresolved
+# delivery attempt, fm-send reconciles it under the stale-local-inbox rule
+# owned by bin/fm-pending-reply-lib.sh's header. Direct
+# unmarked captain input never creates an expectation. A marked secondmate instruction
 # sent with --fire-and-forget <16-hex-delivery-id> uses the same inbox transport
 # without creating a reply expectation; its delivery id makes uncertain retries
 # idempotent while allowing a later identical instruction to be distinct.
@@ -328,6 +346,32 @@ if [ ! -d "$STATE" ]; then
   exit 1
 fi
 
+# Specialist selectors delegate before endpoint routing; the CLI header owns
+# their direct-job contract.
+case "${1:-}" in
+  spec-*)
+    if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
+      fm_spec_name=${1#spec-}
+      shift
+      fm_spec_captain=0
+      fm_spec_text=()
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --from-captain) fm_spec_captain=1; shift ;;
+          --) shift; fm_spec_text+=("$@"); break ;;
+          -*) echo "error: $1 does not apply to specialist spec-$fm_spec_name" >&2; exit 2 ;;
+          *) fm_spec_text+=("$1"); shift ;;
+        esac
+      done
+      [ "${#fm_spec_text[@]}" -gt 0 ] || { echo "error: no message for specialist spec-$fm_spec_name" >&2; exit 2; }
+      if [ "$fm_spec_captain" = 1 ]; then
+        exec "$SCRIPT_DIR/fm-specialist.sh" ask "$fm_spec_name" --from-captain -- "${fm_spec_text[*]}"
+      fi
+      exec "$SCRIPT_DIR/fm-specialist.sh" job "$fm_spec_name" --brief "${fm_spec_text[*]}"
+    fi
+    ;;
+esac
+
 # A relaunch holds metadata through restart and may move the endpoint, so
 # waiting for the lock alone is insufficient; retry must resolve afresh.
 # The header owns the captain-direct record-wait contract.
@@ -339,7 +383,7 @@ fm_send_captain_flagged() {
     case "$1" in
       --from-captain) return 0 ;;
       --resolve-key|--fire-and-forget|--from-mate) [ $# -ge 2 ] || return 1; shift 2 ;;
-      --resolve-key=*|--fire-and-forget=*|--correction) shift ;;
+      --resolve-key=*|--fire-and-forget=*|--correction|--result) shift ;;
       *) return 1 ;;
     esac
   done
@@ -568,6 +612,7 @@ RESOLVE_KEYS=
 FIRE_AND_FORGET_ID=
 FROM_CAPTAIN=0
 CORRECTION=0
+RESULT=0
 FROM_MATE=
 END_OPTIONS=0
 fm_send_add_resolve_key() {  # <key>
@@ -616,6 +661,10 @@ while :; do
       CORRECTION=1
       shift
       ;;
+    --result)
+      RESULT=1
+      shift
+      ;;
     --from-mate)
       [ $# -ge 2 ] || { echo "error: --from-mate requires a sender mate id" >&2; exit 1; }
       [ -z "$FROM_MATE" ] || { echo "error: duplicate --from-mate" >&2; exit 1; }
@@ -640,6 +689,10 @@ if [ "$TARGET_BACKEND" != remote ]; then
 fi
 if [ "$FROM_CAPTAIN" = 1 ] && [ "$CORRECTION" = 1 ]; then
   echo "error: --correction is for a first-mate steer and cannot accompany --from-captain; nothing was sent" >&2
+  exit 1
+fi
+if [ "$RESULT" = 1 ] && { [ "$FROM_CAPTAIN" = 1 ] || [ -n "$FROM_MATE" ]; }; then
+  echo "error: --result is for a first-mate steer and cannot accompany --from-captain or --from-mate; nothing was sent" >&2
   exit 1
 fi
 if [ "$FROM_CAPTAIN" = 1 ]; then
@@ -717,24 +770,35 @@ fi
 
 # Captain-direct echo guard (see the header): never deliver the captain's own
 # message to a secondmate a second time.
+CARRIES_RESULT=0
+echo_corr=
+if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] \
+  && [ "$KEY_MODE" = 0 ] && [ -n "$*" ]; then
+  if [ "$RESULT" = 1 ] || fm_captain_direct_carries_result "$*"; then
+    CARRIES_RESULT=1
+  fi
+fi
 if [ "$MARK_FROM_FIRSTMATE" = 1 ] && [ "$FROM_CAPTAIN" != 1 ] && [ -z "$FROM_MATE" ] && [ -z "$RESOLVE_KEYS" ] \
   && [ "$KEY_MODE" = 0 ] && [ -n "$*" ]; then
   if echo_corr=$(fm_captain_direct_echo_corr "$STATE" "$TARGET_TASK_ID" "$*"); then
     if [ "$CORRECTION" = 1 ]; then
       fm_captain_direct_log "$STATE" "correction-sent corr=$echo_corr task=$TARGET_TASK_ID"
-    else
+    elif [ "$CARRIES_RESULT" = 0 ]; then
       fm_captain_direct_log "$STATE" "suppressed corr=$echo_corr task=$TARGET_TASK_ID"
       printf 'suppressed=captain-direct-echo corr=%s\n' "$echo_corr"
-      echo "fm-send: NOT sent to $TARGET_TASK_ID - it already has the captain's own message (corr=$echo_corr) and answers him itself, and this steer repeats or reconciles it. Nothing to do. If a later report from $TARGET_TASK_ID shows a real gap, send only that fix with --correction." >&2
+      echo "fm-send: NOT sent to $TARGET_TASK_ID - it already has the captain's own message (corr=$echo_corr) and answers him itself, and this steer repeats or reconciles it. Nothing to do. If this delivers new findings (a child's report or outcome), resend it with --result, naming the report file. If a later report from $TARGET_TASK_ID shows a real gap, send only that fix with --correction." >&2
       exit 0
     fi
   fi
 fi
 
-# After a captain message reaches a secondmate: record it for the echo guard and
-# tell this home's first mate once, FYI only (see the header).
-fm_send_capture_captain_message() {
+# Post-delivery hooks only: logging must not claim a failed result was sent,
+# and captain-memory capture must not remember an undelivered instruction.
+fm_send_message_delivered() {
   local source
+  if [ "$CARRIES_RESULT" = 1 ]; then
+    fm_captain_direct_log "$STATE" "result-sent corr=${echo_corr:-$PENDING_REPLY_CORR} task=$TARGET_TASK_ID"
+  fi
   [ "$FROM_CAPTAIN" = 1 ] || return 0
   # Remember a standing instruction he gave any worker or mate
   # (bin/fm_captain_memory.py), detached so delivery never waits on it.
@@ -1024,6 +1088,10 @@ else
     if [ -n "$existing_corr" ] \
       && fm_pending_reply_corr_reusable "$STATE" "$existing_corr" "$TARGET_TASK_ID"; then
       PENDING_REPLY_CORR=$existing_corr
+      if [ "$INBOX_PLANE" = 1 ] && [ "$TARGET_BACKEND" != remote ] \
+        && [ "$MESSAGE" != "$(fm_pending_reply_recovery_message "$(fm_pending_reply_path "$STATE" "$PENDING_REPLY_CORR")")" ]; then
+        FM_SEND_IDEMPOTENT=1
+      fi
     else
       if [ "$existing_corr_explicit" = 1 ]; then
         echo "error: explicitly requested pending-reply correlation '${existing_corr:-empty}' is not reusable for $TARGET_TASK_ID; refusing to mint a replacement correlation" >&2
@@ -1038,6 +1106,10 @@ else
       PENDING_REPLY_CREATED=1
     fi
     fm_pending_reply_embed_corr "$MESSAGE" "$PENDING_REPLY_CORR" MESSAGE
+    # Settle a stale unconfirmed attempt first (bin/fm-pending-reply-lib.sh
+    # owns the rule), so one interrupted send cannot block every resend.
+    [ "$PENDING_REPLY_CREATED" = 1 ] \
+      || fm_pending_reply_reconcile_delivery "$STATE" "$PENDING_REPLY_CORR" >/dev/null 2>&1 || true
     if [ "$PENDING_REPLY_CREATED" != 1 ] \
       && fm_pending_reply_delivery_attempt_unresolved "$STATE" "$PENDING_REPLY_CORR"; then
       if [ "$TARGET_BACKEND" = remote ]; then
@@ -1050,7 +1122,9 @@ else
         exit 1
       fi
     fi
-    if ! fm_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR"; then
+    delivery_plane=typed
+    [ "$INBOX_PLANE" != 1 ] || delivery_plane=inbox
+    if ! fm_pending_reply_prepare_delivery "$STATE" "$PENDING_REPLY_CORR" "$delivery_plane"; then
       [ "$PENDING_REPLY_CREATED" != 1 ] \
         || fm_pending_reply_discard_undelivered "$STATE" "$PENDING_REPLY_CORR" || true
       echo "error: failed to durably prepare pending-reply delivery for $TARGET_TASK_ID" >&2
@@ -1168,7 +1242,7 @@ else
       echo "error: steer not sent to remote secondmate $TARGET_REMOTE_ID (the remote steering-inbox record could not be written; the remote leg's stderr above has the reason)" >&2
       exit 1
     fi
-    fm_send_capture_captain_message
+    fm_send_message_delivered
     # The remote record is durable delivery, exactly as a local enqueue is.
     if [ -n "$PENDING_REPLY_CORR" ]; then
       if fm_pending_reply_confirm_delivery "$STATE" "$PENDING_REPLY_CORR"; then
@@ -1235,7 +1309,7 @@ else
       echo "error: steer not sent to $INBOX_TASK_ID: its inbox record could not be written under $STATE/$INBOX_TASK_ID.inbox" >&2
       exit 1
     fi
-    fm_send_capture_captain_message
+    fm_send_message_delivered
     fm_lock_release "$INBOX_META_LOCK"
     # Enqueue IS durable delivery to the task's record: mark the pending
     # expectation delivered now, without resolving it; the pending-reply
@@ -1337,7 +1411,7 @@ else
       exit 1
       ;;
   esac
-  fm_send_capture_captain_message
+  fm_send_message_delivered
   # Delivery confirmed. Mark the pending expectation delivered without resolving
   # it: the pending-reply header owns report resolution and its exceptions.
   if [ -n "$PENDING_REPLY_CORR" ]; then

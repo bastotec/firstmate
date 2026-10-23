@@ -994,7 +994,8 @@ SH
 }
 
 test_driver_stop_is_scoped_and_escalates_after_timeout() {
-  local dir="$TMP_ROOT/stop-escalation" pid gen
+  local mode=${1:-legacy}
+  local dir="$TMP_ROOT/stop-escalation-$mode" pid gen
   mkdir -p "$dir/state"
   cat > "$dir/deck" <<'PY'
 #!/usr/bin/env python3
@@ -1041,11 +1042,119 @@ PY
   [ ! -e "$dir/signalled" ] || fail "a non-finite timeout signalled the Deck process before refusal"
   python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" other 1 || fail "unrelated task stop refused"
   kill -0 "$pid" 2>/dev/null || fail "stopping another task killed this driver"
-  python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
-    || fail "the timed-out driver group was not escalated"
+  if [ "$mode" = legacy ]; then
+    python3 "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned 0.3 \
+      || fail "the timed-out driver group was not escalated"
+    wait "$pid" 2>/dev/null || true
+    kill -0 "$pid" 2>/dev/null && fail "the timed-out driver survived escalation"
+    pass "Deck stop: exact task scope and bounded escalation remove survivors"
+    return 0
+  fi
+  python3 - "$ROOT/bin/fm-deck-stop.py" "$dir/state" owned <<'PY' \
+    || fail "cooperative stop forced a survivor or accepted unproven stop"
+import subprocess
+import sys
+helper, state, task = sys.argv[1:]
+result = subprocess.run(
+    [sys.executable, helper, state, task, "0.3", "--cooperative"],
+    capture_output=True, text=True, timeout=10,
+)
+assert result.returncode == 1, result
+assert "refusing replacement without forcing it" in result.stderr, result.stderr
+PY
+  [ -e "$dir/signalled" ] || fail "cooperative stop never requested TERM"
+  # No forced cleanup is performed by the helper in cooperative mode.
+  kill -0 -- -"$pid" 2>/dev/null || fail "cooperative stop killed the owned group"
+  kill -KILL -- -"$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
-  kill -0 "$pid" 2>/dev/null && fail "the timed-out driver survived escalation"
-  pass "Deck stop: exact task scope and bounded escalation remove survivors"
+  pass "Deck stop: exact task scope and cooperative timeout preserve survivors"
+}
+
+test_driver_cooperative_stop_preserves_survivors() {
+  test_driver_stop_is_scoped_and_escalates_after_timeout cooperative
+}
+
+test_cooperative_stop_accounts_for_inherited_driver_argv() {
+  local dir="$TMP_ROOT/stop-inherited-argv"
+  mkdir -p "$dir/bin" "$dir/state"
+  cp "$ROOT/bin/fm-deck-stop.py" "$dir/bin/"
+  cat > "$dir/bin/fm-deck-worker.sh" <<'SH'
+#!/usr/bin/env bash
+trap ': > "$FM_STOP_ROOT/signalled"; exit 0' TERM
+line=$(
+  python3 -c 'import os; print(os.getppid())' > "$FM_STOP_ROOT/child-pid"
+  deadline=$((SECONDS + 20))
+  while [ -d "$FM_STOP_ROOT" ] && [ ! -e "$FM_STOP_ROOT/release" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    /bin/sleep 0.05
+  done
+  printf 'probe finished'
+)
+SH
+  python3 - "$dir" <<'PY' || fail "cooperative stop misclassified an inherited-argv descendant"
+import os, pathlib, runpy, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+helper = root / 'bin/fm-deck-stop.py'
+arguments = runpy.run_path(str(helper))['process_arguments']
+for case in ('owned', 'survivor', 'unisolated'):
+    directory = root / case
+    directory.mkdir()
+    isolated = case != 'unisolated'
+    cmd = ['/bin/bash', str(root/'bin/fm-deck-worker.sh'), '--id', 'owned',
+           '--state', str(root/'state'), '--gen', 'old', '--deck', str(root/'deck'), '--', 'brief']
+    p = subprocess.Popen(cmd, env=dict(os.environ, FM_STOP_ROOT=str(directory)),
+                         start_new_session=isolated)
+    stopping = None
+    child = None
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            path = directory/'child-pid'
+            if path.exists() and path.read_text().strip():
+                child = int(path.read_text())
+                break
+            assert p.poll() is None, case
+            time.sleep(.02)
+        assert child is not None, case
+        assert child != p.pid and os.getpgid(child) == os.getpgid(p.pid), case
+        assert arguments(child) == arguments(p.pid), 'fixture did not inherit launch argv'
+        stopping = subprocess.Popen([sys.executable, str(helper), str(root/'state'),
+                                     'owned', '3' if case == 'owned' else '0.3', '--cooperative'],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if case == 'owned':
+            time.sleep(.5)
+            assert stopping.poll() is None, 'stop refused or accepted a live owned descendant'
+            (directory/'release').touch()
+            _, error = stopping.communicate(timeout=8)
+            assert stopping.returncode == 0, error
+            assert p.wait(timeout=3) == 0
+            assert (directory/'signalled').exists(), 'owned driver never received TERM'
+        else:
+            _, error = stopping.communicate(timeout=8)
+            assert stopping.returncode == 1, error
+            expected = 'without forcing it' if isolated else 'has no isolated group'
+            assert expected in error, error
+            assert p.poll() is None, 'refusal killed the driver'
+            os.kill(child, 0)
+            assert not (directory/'signalled').exists(), 'refusal forced the driver past its probe'
+        print(f'{case}: inherited argv classified; stop proof preserved')
+    finally:
+        (directory/'release').touch()
+        if stopping is not None and stopping.poll() is None:
+            stopping.kill()
+            stopping.communicate(timeout=3)
+        try:
+            p.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            if isolated:
+                os.killpg(p.pid, signal.SIGKILL)
+            else:
+                p.kill()
+                if child is not None:
+                    try: os.kill(child, signal.SIGKILL)
+                    except ProcessLookupError: pass
+            p.wait(timeout=3)
+PY
+  pass "Deck cooperative stop owns inherited-argv subshells, waits for survivors, and refuses unisolated drivers"
 }
 
 test_liveness_reads_the_driver_as_an_agent() {
@@ -1486,6 +1595,109 @@ PYTHON
   chmod +x "$dir/bin/fm-session-start.sh" "$dir/bin/fm-watch-arm.sh" "$dir/deck"
 }
 
+test_secondmate_tool_path_reaches_startup_without_changing_siblings() {
+  local dir="$TMP_ROOT/home-tool-path"
+  make_secondmate_host_fixture "$dir"
+  python3 - "$dir" <<'PYTHON' || fail "home-local tool path did not reach fresh startup safely"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+original_path = os.environ['PATH']
+# Two executable toolchains; quota uses env-node exactly as an npm CLI does.
+for label, version, node_version in [('default', '0.0.1', 'v18.0.0'), ('selected tools', '99.0.0', 'v99.0.0')]:
+    tools = root/label
+    tools.mkdir()
+    (tools/'node').write_text('#!/bin/sh\nif [ "$1" = --version ]; then printf "%s\\n" "' + node_version + '"; else exec /bin/sh "$@"; fi\n')
+    (tools/'quota-axi').write_text('#!/usr/bin/env node\nprintf "%s\\n" "' + version + '"\n')
+    for tool in tools.iterdir(): tool.chmod(0o755)
+# Run the real bootstrap compatibility helper during the driver's startup,
+# before any model turn or manually prefixed tool command can mask selection.
+startup = root/'bin/fm-session-start.sh'
+startup.write_text('''#!/bin/bash
+set -e
+"$(dirname "$0")/fm-lock.sh"
+. "$(dirname "$0")/fm-quota-axi-lib.sh"
+{
+  node --version
+  quota-axi --version
+  if fm_quota_axi_compatible; then echo compatible; else echo incompatible; fi
+} > "$FM_HOME/tool-resolution"
+cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
+echo complete-startup
+''')
+startup.chmod(0o755)
+def launch(home, expected, invalid=False, secondmate=True):
+    home.mkdir(exist_ok=True)
+    (home/'state').mkdir(exist_ok=True)
+    env = dict(os.environ, PATH=str(root/'default')+':'+original_path, FM_HOME=str(home),
+               FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE=str(root/'unrelated-config'))
+    gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], env=env, text=True).strip()
+    cmd = ['/bin/bash', '-c', 'exec -a fm-deck-worker /bin/bash "$@"', 'fm-deck-worker',
+           str(root/'bin/fm-deck-worker.sh'), '--id', 'host', '--state', str(root/'parent'),
+           '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+    if secondmate: cmd.insert(5, '--secondmate')
+    pane = home/'pane'
+    with pane.open('w') as output:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                             env=env, text=True, start_new_session=True)
+        try:
+            if invalid:
+                assert p.wait(timeout=15) == 2, pane.read_text()
+                assert 'config/secondmate-tool-path' in pane.read_text(), pane.read_text()
+                assert not (home/'tool-resolution').exists(), 'invalid grant reached bootstrap'
+                assert not (home/'turns').exists(), 'invalid grant reached a model turn'
+                return
+            deadline = time.monotonic()+30
+            while time.monotonic() < deadline:
+                busy = root/'parent/host.busy-state'
+                if (home/'turns').exists() and busy.exists() and 'state=idle' in busy.read_text(): break
+                assert p.poll() is None, pane.read_text()
+                time.sleep(.1)
+            else: raise AssertionError(pane.read_text())
+            if secondmate:
+                assert (home/'tool-resolution').read_text().splitlines() == expected, pane.read_text()
+            else:
+                assert not (home/'tool-resolution').exists(), 'ship ran secondmate startup'
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            assert p.wait(timeout=20) == 0, pane.read_text()
+        finally:
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGTERM)
+                try: p.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(p.pid, signal.SIGKILL); p.wait()
+selected = root/'home'
+grant = selected/'config/secondmate-tool-path'
+grant.write_text(str(root/'selected tools')+'\n'+str(root/'default')+'\n')
+launch(selected, ['v99.0.0','99.0.0','compatible'])
+sibling = root/'sibling'
+launch(sibling, ['v18.0.0','0.0.1','incompatible'])
+# Empty and removed grants preserve defaults, including across a fresh driver.
+for content in ('', None):
+    if content is None: grant.unlink()
+    else: grant.write_text(content)
+    launch(selected, ['v18.0.0','0.0.1','incompatible'])
+# Invalid or unsafe explicit grants stop before startup or model execution.
+for number, value in enumerate(('relative/bin', '/absent-home-tool-path', str(root/'default')+':/bin',
+                                str(root/'default')+'\r', str(root/'default')+'\0')):
+    home = root/('invalid-'+str(number)); (home/'config').mkdir(parents=True)
+    (home/'config/secondmate-tool-path').write_text(value)
+    launch(home, None, invalid=True)
+for kind in ('directory', 'symlink'):
+    home = root/('invalid-'+kind); (home/'config').mkdir(parents=True)
+    path = home/'config/secondmate-tool-path'
+    if kind == 'directory': path.mkdir()
+    else: path.symlink_to(root/'absent')
+    launch(home, None, invalid=True)
+# A ship sharing a home does not apply a secondmate-only grant.
+ship = root/'ship'; (ship/'config').mkdir(parents=True)
+(ship/'config/secondmate-tool-path').write_text('invalid-for-a-home-host')
+launch(ship, None, secondmate=False)
+assert os.environ['PATH'] == original_path, 'launcher environment changed'
+print('PASS fresh host startup executes selected Node/npm CLI and compatibility helper; sibling, empty/absent, invalid and ship scopes preserved')
+PYTHON
+  pass "Deck home-local tool path reaches startup without changing sibling/default launches"
+}
+
 # Deck lets a running tool finish on SIGTERM, so a secondmate inside a long
 # shell command used to hold Ctrl+C and /quit until that command ended, and a
 # relaunch gave up on it after 30s. The driver now kills the running command's
@@ -1612,6 +1824,168 @@ with (root/'pane').open('w') as output:
 PYTHON
   done
   pass "Deck secondmate stops a turn inside a long tool on Ctrl+C or /quit, and a stuck Deck at its bound"
+}
+
+# A host stopped by a relaunch's TERM must not wait without bound on a watcher
+# arm that defers or ignores TERM: it kills that arm's process tree after
+# FM_DECK_CHILD_STOP_SECS, so its shutdown stays well inside the relaunch wait
+# and the old watcher cannot keep writing after the host is gone.
+test_child_stop_grace_starts_at_term() {
+  local dir="$TMP_ROOT/child-stop-deadline"
+  mkdir -p "$dir"
+  python3 - "$ROOT/bin/fm-process-tree-lib.sh" "$dir" <<'PYTHON' || fail "child stop restarted its grace period after intervening work"
+import os, pathlib, signal, subprocess, sys, time
+script = r'''
+. "$1"
+python3 -c 'import pathlib, signal, sys, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); pathlib.Path(sys.argv[1]).touch(); time.sleep(60)' "$2/ready" &
+child=$!
+trap 'kill_tree "$child"; wait "$child" 2>/dev/null || true' EXIT
+for ((i=0; i<100; i++)); do
+  [ ! -e "$2/ready" ] || break
+  sleep 0.05
+done
+[ -e "$2/ready" ] || exit 1
+fm_begin_child_stop "$child"
+sleep 3.5
+fm_begin_child_stop "$child"
+echo waiting
+rc=0
+fm_stop_child_bounded "$child" 3 || rc=$?
+[ "$rc" -eq 137 ] || exit 1
+! kill -0 "$child" 2>/dev/null || exit 1
+echo stopped
+'''
+p = subprocess.Popen(['bash', '-c', script, '_', *sys.argv[1:]], stdout=subprocess.PIPE,
+                     stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    started = time.monotonic()
+    try:
+        out, err = p.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        out, err = p.communicate()
+        raise AssertionError(('child-stop deadline test timed out', out, err))
+    elapsed = time.monotonic() - started
+    assert p.returncode == 0, (out, err)
+    assert out.splitlines() == ['waiting', 'stopped'], (out, err)
+    assert elapsed < 5, f'child received a fresh grace period after a slow intervening step: {elapsed:.2f}s'
+finally:
+    try: os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError: pass
+    p.wait()
+PYTHON
+  pass "child shutdown consumes its grace from the first TERM, including intervening work"
+}
+
+test_secondmate_host_shutdown_bounds_a_watcher_that_ignores_term() {
+  local dir mode
+  for mode in stubborn exits real-arm quit-term; do
+  dir="$TMP_ROOT/host-shutdown-watcher-$mode"
+  make_secondmate_host_fixture "$dir"
+  cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+trap '' TERM
+( trap '' TERM; while :; do printf x >> "$FM_HOME/watch-writes"; sleep 0.1; done ) &
+printf '%s\n' "$!" > "$FM_HOME/writer-pid"
+printf '%s\n' "$$" > "$FM_HOME/arm-pid"
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+while :; do sleep 0.1; done
+SH
+  if [ "$mode" = quit-term ]; then
+    sed "s/trap '' TERM/trap ': > \"\$FM_HOME\/cleanup-started\"' TERM/" "$dir/bin/fm-watch-arm.sh" > "$dir/arm-quit"
+    mv "$dir/arm-quit" "$dir/bin/fm-watch-arm.sh"
+    touch "$dir/home/config/primary-split"
+    cat > "$dir/bin/fm-captain-lane.sh" <<'SH'
+#!/usr/bin/env bash
+trap '' TERM INT HUP
+printf '%s\n' "$$" > "$FM_HOME/lane-pid"
+while :; do sleep 0.1; done
+SH
+  elif [ "$mode" = exits ]; then
+    sed "s/trap '' TERM/trap 'exit 143' TERM/" "$dir/bin/fm-watch-arm.sh" > "$dir/arm-exits"
+    mv "$dir/arm-exits" "$dir/bin/fm-watch-arm.sh"
+  elif [ "$mode" = real-arm ]; then
+    cp "$ROOT/bin/fm-watch-arm.sh" "$dir/bin/fm-watch-arm.sh"
+    cat > "$dir/bin/fm-watch.sh" <<'SH'
+#!/usr/bin/env bash
+. "${BASH_SOURCE[0]%/*}/fm-wake-lib.sh"
+trap 'exit 143' TERM
+fm_lock_try_acquire "$STATE/.watch.lock" || exit 2
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "${BASH_SOURCE[0]}" > "$STATE/.watch.lock/watcher-path"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+touch "$STATE/.last-watcher-beat"
+( trap '' TERM; while :; do printf x >> "$FM_HOME/watch-writes"; sleep 0.1; done ) &
+printf '%s\n' "$!" > "$FM_HOME/writer-pid"
+printf '%s\n' "$PPID" > "$FM_HOME/arm-pid"
+sleep 60
+SH
+    chmod +x "$dir/bin/fm-watch.sh"
+  fi
+  chmod +x "$dir/bin/fm-watch-arm.sh"
+  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_DECK_CHILD_STOP_SECS=2 FM_ARM_CHILD_STOP_SECS=1 python3 - "$dir" "$mode" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
+import os, pathlib, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+home = root / 'home'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+           PATH=str(root/'bin') + os.pathsep + os.environ['PATH'])
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(root/'parent'), 'host'], text=True).strip()
+cmd = ['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+       str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(root/'parent'),
+       '--gen', gen, '--deck', str(root/'deck'), '--', 'charter']
+def alive(pid):
+    result = subprocess.run([os.environ['FM_TEST_SYSTEM_PS'], '-o', 'stat=', '-p', str(pid)], capture_output=True, text=True)
+    return result.returncode == 0 and bool(result.stdout.strip()) and 'Z' not in result.stdout
+def wait_for(check, label, bound=60):
+    deadline = time.monotonic() + bound
+    while time.monotonic() < deadline:
+        if check(): return
+        if p.poll() is not None: raise AssertionError(label+': '+(root/'pane').read_text())
+        time.sleep(.1)
+    raise AssertionError(label+': '+(root/'pane').read_text())
+pids = []
+with (root/'pane').open('w') as output:
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT,
+                         env=env, text=True, start_new_session=True)
+    try:
+        wait_for(lambda: (home/'writer-pid').exists() and (home/'arm-pid').exists(), 'watcher arm start')
+        arm = int((home/'arm-pid').read_text()); writer = int((home/'writer-pid').read_text())
+        pids = [arm, writer]
+        if sys.argv[2] in ('real-arm', 'quit-term'):
+            wait_for(lambda: 'idle since' in (root/'pane').read_text(), 'idle host')
+        if sys.argv[2] == 'quit-term':
+            wait_for(lambda: (home/'lane-pid').exists(), 'captain lane start')
+            pids.append(int((home/'lane-pid').read_text()))
+        started = time.monotonic()
+        if sys.argv[2] == 'quit-term':
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            wait_for(lambda: (home/'cleanup-started').exists(), 'quit cleanup start', bound=10)
+        os.kill(p.pid, signal.SIGTERM)
+        p.wait(timeout=30)
+        took = time.monotonic() - started
+        assert took < 8, (took, (root/'pane').read_text())
+        assert not alive(arm), 'the host left its watcher arm running'
+        assert not alive(writer), "the host left its watcher's helper running"
+        if sys.argv[2] == 'quit-term':
+            assert p.returncode == 0, 'TERM interrupted the successful /quit cleanup'
+            assert not alive(pids[-1]), 'the host left its captain lane running'
+            assert not (root/'parent/host.captain-lane').exists(), 'the captain lane marker outlived cleanup'
+        size = (home/'watch-writes').stat().st_size
+        time.sleep(.5)
+        assert (home/'watch-writes').stat().st_size == size, 'the old watcher kept writing after the host stopped'
+        if sys.argv[2] == 'real-arm':
+            assert 'reason=arm-interrupted' in (home/'state/.watch-cycle-exits.log').read_text(), 'a second TERM aborted arm cleanup'
+        print(f'host stopped {took:.1f}s after TERM ({sys.argv[2]})')
+    finally:
+        try: os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        p.wait()
+        for pid in pids:
+            try: os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+PYTHON
+  done
+  pass "a secondmate host signals once and stops the captured watcher tree even after the arm exits"
 }
 
 # A captain wake whose turn failed before the model ran (a gateway outage) is
@@ -2039,6 +2413,302 @@ with (root/'pane').open('w') as output:
 PYTHON
   done
   pass "Deck host retains failed and interrupted handling child stderr and serves later wakes"
+}
+
+# A zero-exit startup report is not a complete digest. Preserve this refusal
+# independently from watcher publication retry; never dispatch a blind turn.
+test_secondmate_host_refuses_an_incomplete_startup_digest() {
+  local dir="$TMP_ROOT/host-incomplete-digest"
+  make_secondmate_host_fixture "$dir"
+  cat > "$dir/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'STARTUP TRUNCATED: fixture wake-queue stage incomplete\n'
+exit 0
+SH
+  python3 - "$dir" <<'PYTHON' || fail "an incomplete startup digest was accepted"
+import os, pathlib, signal, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+home = root/'home'
+state = root/'parent'
+(home/'state/.session-start-complete').write_text('123\n')
+queue = home/'state/.wake-queue'
+queue.write_text('fixture durable wake\n')
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='')
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+    str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+    '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate('/quit\n', timeout=30)
+    assert p.returncode != 0, out+err
+    assert 'fixture wake-queue stage incomplete' in err
+finally:
+    if p.poll() is None:
+        os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+assert 'session start did not publish a complete digest' in (state/'host.status').read_text()
+assert not (home/'turns').exists(), 'incomplete startup launched a model turn'
+assert queue.read_text() == 'fixture durable wake\n'
+assert not (home/'watch-starts').exists(), 'incomplete startup armed a watcher'
+PYTHON
+  pass "Deck host refuses a zero-exit incomplete digest without consuming wakes or starting turns"
+}
+
+# The host refuses to start without a complete digest, so it must not inherit
+# session start's 120s interactive bound: a slow but healthy startup on a loaded
+# machine was truncated there and every relaunch failed. The host passes its own
+# bound, and an unusable override (empty, nonnumeric, zero, padded zero) falls
+# back to the default rather than disabling the bound.
+test_secondmate_host_gives_session_start_its_own_bound() {
+  local dir="$TMP_ROOT/host-session-start-bound" value expected
+  make_secondmate_host_fixture "$dir"
+  cat > "$dir/bin/fm-session-start.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "${FM_SESSION_START_TIMEOUT-unset}" >> "$FM_HOME/start-budgets"
+exit 7
+SH
+  for value in unset 900 '' abc 0 00; do
+    case "$value" in 900) expected=900 ;; *) expected=600 ;; esac
+    rm -f "$dir/home/start-budgets"
+    python3 - "$dir" "$value" <<'PYTHON' || fail "session start bound for override '$value'"
+import os, pathlib, signal, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+value = sys.argv[2]
+home = root/'home'
+state = root/'parent'
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='', FM_CONFIG_OVERRIDE='',
+    FM_SESSION_START_TIMEOUT='120')
+env.pop('FM_DECK_SESSION_START_TIMEOUT', None)
+if value != 'unset':
+    env['FM_DECK_SESSION_START_TIMEOUT'] = value
+gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+    str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+    '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+try:
+    out, err = p.communicate('/quit\n', timeout=30)
+    assert p.returncode != 0, out+err
+finally:
+    if p.poll() is None:
+        os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+PYTHON
+    [ "$(cat "$dir/home/start-budgets" 2>/dev/null)" = "$expected" ] \
+      || fail "override '$value' passed bound '$(cat "$dir/home/start-budgets" 2>/dev/null)', expected $expected"
+  done
+  pass "Deck host gives session start its own bound and rejects unusable overrides"
+}
+
+# Real sequence-lock custody: transient contention must not kill a healthy host,
+# while exhausted retries must not steal a live holder or dispatch a lost wake.
+test_secondmate_host_retries_watcher_publication() {
+  local mode dir
+  for mode in accepted-error doorbell-error equal-output transient held quit-backoff quit-published; do
+    dir="$TMP_ROOT/host-publication-$mode"
+    make_secondmate_host_fixture "$dir"
+    cat > "$dir/bin/mv" <<'SH'
+#!/usr/bin/env bash
+"$FM_TEST_REAL_MV" "$@" || exit $?
+case "${2:-}" in
+  "${FM_HOME%/*}/parent/host.inbox/"[0-9]*.msg)
+    printf '%s\n' "$2" >> "$FM_HOME/published-records"
+    case "$FM_TEST_PUBLICATION_MODE" in
+      accepted-error|equal-output)
+        if [ ! -e "$FM_HOME/accepted-error" ]; then
+          : > "$FM_HOME/accepted-error"
+          exit 1
+        fi
+        ;;
+      quit-published)
+        : > "$FM_HOME/published"
+        for ((i=0; i<200; i++)); do
+          [ -d "$FM_HOME" ] || exit 2
+          [ ! -e "$FM_HOME/release-publication" ] || exit 0
+          sleep .1
+        done
+        exit 2
+        ;;
+    esac
+    ;;
+esac
+SH
+    chmod +x "$dir/bin/mv"
+    if [ "$mode" = doorbell-error ]; then
+      cat >> "$dir/bin/fm-task-inbox-lib.sh" <<'SH'
+fm_task_inbox_doorbell_line() {
+  printf '%s\n' "$1" >> "$FM_HOME/doorbell-failures"
+  return 1
+}
+SH
+    elif [ "$mode" = equal-output ]; then
+      cat > "$dir/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+[ "${1:-}" != --handling-delivered ] || exit 0
+trap 'exit 143' TERM INT
+printf '%s\n' "$$" >> "$FM_HOME/watch-starts"
+printf 'watcher: started pid=1 (beacon fresh)\n'
+for ((i=0; i<600; i++)); do
+  [ -d "$FM_HOME" ] || exit 2
+  if [ -f "$FM_HOME/trigger" ]; then
+    rm "$FM_HOME/trigger"
+    printf 'check: example\n'
+    exit 0
+  fi
+  sleep .1
+done
+exit 2
+SH
+    fi
+    python3 - "$dir" "$mode" <<'PYTHON' || fail "watcher publication contention: $mode"
+import json, os, pathlib, shutil, signal, subprocess, sys, time
+root = pathlib.Path(sys.argv[1])
+mode = sys.argv[2]
+home = root/'home'
+state = root/'parent'
+(root/'tmp').mkdir()
+env = dict(os.environ, FM_HOME=str(home), FM_ROOT_OVERRIDE='', FM_STATE_OVERRIDE='',
+           FM_CONFIG_OVERRIDE='', FM_TASK_INBOX_LOCK_WAIT_SECS='1', TMPDIR=str(root/'tmp'),
+           FM_TEST_REAL_MV=shutil.which('mv'), FM_TEST_PUBLICATION_MODE=mode,
+           PATH=str(root/'bin')+os.pathsep+os.environ['PATH'])
+p = holder = None
+def pane(): return (root/'pane').read_text()
+def rows():
+    f = home/'turns'
+    return [json.loads(x) for x in f.read_text().splitlines()] if f.exists() else []
+def wait_for(check, label):
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        if check(): return
+        if p is not None and p.poll() is not None:
+            raise AssertionError(label+': host exited: '+pane())
+        time.sleep(.1)
+    raise AssertionError(label+': '+pane())
+try:
+    gen = subprocess.check_output([str(root/'bin/fm-busy-event.sh'), 'arm', str(state), 'host'], text=True).strip()
+    p = subprocess.Popen(['bash', '-c', 'exec -a fm-deck-worker bash "$@"', 'fm-deck-worker',
+        str(root/'bin/fm-deck-worker.sh'), '--secondmate', '--id', 'host', '--state', str(state),
+        '--gen', gen, '--deck', str(root/'deck'), '--', 'charter'], env=env, stdin=subprocess.PIPE,
+        stdout=(root/'pane').open('w'), stderr=subprocess.STDOUT, text=True, start_new_session=True)
+    wait_for(lambda: len(rows()) == 1 and 'state=idle' in (state/'host.busy-state').read_text(), 'startup')
+    inbox = state/'host.inbox'
+    (inbox/'handled').mkdir(parents=True, exist_ok=True)
+    # The real lock primitive owns the lock; release through that same owner.
+    holder = subprocess.Popen(['bash', '-c', '''
+. "$1/bin/fm-wake-lib.sh"
+fm_lock_try_acquire "$1/parent/host.inbox/.seq.lock" || exit 1
+trap 'fm_lock_release "$1/parent/host.inbox/.seq.lock"' EXIT
+: > "$1/holder-ready"
+for ((i=0; i<400; i++)); do
+  [ -d "$1" ] && [ ! -e "$1/release-holder" ] || exit 0
+  sleep .1
+done
+exit 2
+''', '_', str(root)], env=env, start_new_session=True)
+    wait_for(lambda: (root/'holder-ready').exists(), 'real lock holder')
+    lock = inbox/'.seq.lock'
+    owner = os.readlink(lock)
+    queue = home/'state/.wake-queue'
+    queue.write_text('fixture durable wake\n')
+    (home/'captain-wakes').touch()
+    (home/'trigger').touch()
+    wait_for(lambda: 'retrying watcher steering publication' in pane(), 'publication retry')
+    assert holder.poll() is None and os.readlink(lock) == owner
+    assert not list(inbox.glob('*.msg')) and len(rows()) == 1
+    if mode in ('accepted-error', 'doorbell-error', 'equal-output'):
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+        if mode == 'doorbell-error':
+            assert p.wait(timeout=30) != 0
+            assert 'could not publish watcher steering doorbell' in pane()
+            assert len((home/'doorbell-failures').read_text().splitlines()) == 1
+            assert len((home/'published-records').read_text().splitlines()) == 1
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1 and 'check: example' in records[0].read_text()
+            assert not list((inbox/'handled').glob('*.msg')) and len(rows()) == 1
+        else:
+            wait_for(lambda: (home/'accepted-error').exists(), 'accepted write with error return')
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1
+            accepted = records[0].read_bytes()
+            body = records[0].read_text().split('--\n', 1)[1]
+            assert body.splitlines()[0].startswith('Watcher publication: '), 'publication identity must lead the serialized body for candidate filtering'
+            if mode == 'equal-output':
+                wait_for(lambda: len((home/'watch-starts').read_text().splitlines()) >= 2, 'second watcher')
+                (home/'trigger').touch()
+            expected = 3 if mode == 'equal-output' else 2
+            wait_for(lambda: len(rows()) >= expected and 'state=idle' in (state/'host.busy-state').read_text(), 'accepted wake turns')
+            time.sleep(.5)
+            assert len(rows()) == expected, 'an accepted publication dispatched duplicate turns'
+            handled = sorted((inbox/'handled').glob('*.msg'))
+            assert len(handled) == expected - 1, 'one publication produced extra durable records'
+            assert not list(inbox.glob('*.msg'))
+            assert (inbox/'handled'/records[0].name).read_bytes() == accepted
+            assert len((home/'published-records').read_text().splitlines()) == expected - 1, 'replay renamed another record'
+            assert all('check: example' in row['inbox'] for row in rows()[1:])
+            assert 'retrying watcher steering publication (2/3)' in pane()
+            if mode == 'equal-output':
+                def payload(record):
+                    body = record.read_text().split('--\n', 1)[1]
+                    return '\n'.join(line for line in body.splitlines() if not line.startswith('Watcher publication: '))
+                assert payload(handled[0]) == payload(handled[1]), 'control did not publish equal watcher output'
+                assert handled[0].read_bytes() != handled[1].read_bytes()
+            p.stdin.write('/quit\n'); p.stdin.flush()
+            assert p.wait(timeout=30) == 0
+        assert queue.read_text() == 'fixture durable wake\n', 'host consumed the durable wake'
+    elif mode == 'transient':
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+        wait_for(lambda: len(rows()) == 2 and 'state=idle' in (state/'host.busy-state').read_text(), 'retained wake turn')
+        records = list((inbox/'handled').glob('*.msg'))
+        assert len(records) == 1 and 'check: example' in records[0].read_text()
+        assert 'check: example' in rows()[1]['inbox']
+        time.sleep(.5)
+        assert len(rows()) == 2, 'a successful retry dispatched twice'
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        assert p.wait(timeout=30) == 0
+    elif mode.startswith('quit-'):
+        if mode == 'quit-published':
+            (root/'release-holder').touch()
+            assert holder.wait(timeout=10) == 0
+            wait_for(lambda: (home/'published').exists(), 'publication barrier')
+            records = list(inbox.glob('*.msg'))
+            assert len(records) == 1
+            published = records[0].read_bytes()
+        p.stdin.write('/quit\n'); p.stdin.flush()
+        if mode == 'quit-published':
+            wait_for(lambda: any(f.read_text() == '/quit\n' for f in
+                                (root/'tmp').glob('fm-deck-worker.*/input.[0-9]*')), 'queued exit')
+            (home/'release-publication').touch()
+        assert p.wait(timeout=10) == 0, pane()
+        assert len(rows()) == 1, 'queued exit allowed another model turn'
+        assert queue.read_text() == 'fixture durable wake\n'
+        assert not list((inbox/'handled').glob('*.msg'))
+        if mode == 'quit-published':
+            assert records[0].read_bytes() == published, 'exit changed the published record'
+        else:
+            assert holder.poll() is None and os.readlink(lock) == owner
+            assert not list(inbox.glob('*.msg'))
+            (root/'release-holder').touch()
+            assert holder.wait(timeout=10) == 0
+    else:
+        assert p.wait(timeout=30) != 0
+        assert 'could not publish watcher steering doorbell' in pane()
+        assert holder.poll() is None and os.readlink(lock) == owner
+        assert not list(inbox.glob('*.msg')) and len(rows()) == 1
+        assert queue.read_text() == 'fixture durable wake\n', 'failed publication consumed the durable wake'
+        (root/'release-holder').touch()
+        assert holder.wait(timeout=10) == 0
+finally:
+    for child in (p, holder):
+        if child is not None:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait()
+PYTHON
+  done
+  pass "Deck host replays accepted publications once, separates equal wakes, preserves lock custody, and honors queued exits"
 }
 
 # A watcher cycle that fails used to end the host ("watcher failed (exit 1)"),
@@ -3625,17 +4295,23 @@ if [ -n "${FM_TEST_DECK_CASES:-}" ]; then
 fi
 
 test_stream_deck_recovery
+test_secondmate_tool_path_reaches_startup_without_changing_siblings
 test_stream_deck_ring_rings_live_driver
 test_idle_interrupt_does_not_echo_fake_input
 test_secondmate_host_serializes_wakes_and_steering
 test_secondmate_routine_wakes_think_less
 test_secondmate_stops_a_turn_inside_a_long_tool
+test_child_stop_grace_starts_at_term
+test_secondmate_host_shutdown_bounds_a_watcher_that_ignores_term
 test_secondmate_retries_a_captain_wake_whose_turn_failed
 test_split_secondmate_answers_the_captain_beside_a_busy_supervisor
 test_secondmate_turn_model_follows_the_switch_file
 test_secondmate_host_survives_an_unconfirmed_successor_watcher
 test_secondmate_fast_successor_keeps_its_notification
 test_secondmate_host_retains_failed_successor_start_evidence
+test_secondmate_host_refuses_an_incomplete_startup_digest
+test_secondmate_host_gives_session_start_its_own_bound
+test_secondmate_host_retries_watcher_publication
 test_secondmate_host_survives_a_failed_watcher_and_resumes_its_session
 test_secondmate_watcher_backoff_keeps_turn_stop_responsive
 test_secondmate_turns_guard_the_reply_logs
@@ -3677,6 +4353,8 @@ test_completed_turn_removes_busy_ack_before_the_next_steer
 test_driver_stop_terminates_active_deck_and_resolves_spaced_paths
 test_stale_secondmate_driver_is_stopped_at_relaunch_boundary
 test_driver_stop_is_scoped_and_escalates_after_timeout
+test_driver_cooperative_stop_preserves_survivors
+test_cooperative_stop_accounts_for_inherited_driver_argv
 test_liveness_reads_the_driver_as_an_agent
 test_stream_liveness_uses_the_deck_driver_argv0
 test_control_busy_and_delivery_tables_name_deck

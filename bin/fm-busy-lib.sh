@@ -240,6 +240,56 @@ fm_busy_classify_meta() {  # <meta-file> <id> <state-dir> [tail40]
   fm_busy_classify "$backend" "$target" "$harness" "$id" "$state" "$tail40"
 }
 
+fm_busy_admit_stopped() {
+  local meta=$1 id=$2 state=$3 expected_record=$4 expected_size=$5 script_dir=$6 expected_state=${7:-stopped}
+  local line verb busy backend target harness changed=0 size=0
+  # shellcheck source=bin/fm-approval-wait.sh
+  . "$script_dir/fm-approval-wait.sh"
+  fm_approval_wait_admit "$state" "$id" || {
+    printf 'worker %s awaits explicit parent approval release; automatic action refused\n' "$id" >&2
+    return 3
+  }
+  case "$(fm_meta_get "$meta" kind)" in
+    ''|ship|scout) ;;
+    *) changed=1 ;;
+  esac
+  [ -z "$(fm_meta_get "$meta" remote_host)" ] || changed=1
+  line=$(fm_run_timed 60 "$script_dir/fm-crew-state.sh" "$id" 2>/dev/null) || line=
+  verb=$(printf '%s\n' "$line" | sed -n '1s/^state: \([a-z]*\).*/\1/p')
+  if [ "$expected_state" = 'done' ]; then
+    [ "$verb" = 'done' ] || changed=1
+  else
+    case "$verb" in
+      failed|blocked|paused) ;;
+      unknown)
+        case "$line" in
+          'state: unknown · source: none · backend target gone:'*|'state: unknown · source: none · worktree gone ('*) ;;
+          *) changed=1 ;;
+        esac
+        ;;
+      *) changed=1 ;;
+    esac
+  fi
+  backend=$(fm_backend_of_meta "$meta")
+  target=$(fm_backend_target_of_meta "$meta")
+  harness=$(fm_meta_get "$meta" harness)
+  if fm_backend_is_retired "$backend"; then
+    busy=$(fm_busy_classify "$backend" "$target" "$harness" "$id" "$state")
+  else
+    busy=$(fm_busy_classify_live "$backend" "$target" "$harness" "$id" "$state" "fm-$id")
+  fi
+  case "$busy" in busy*) changed=1 ;; esac
+  if [ -e "$state/$id.status" ]; then
+    size=$(wc -c < "$state/$id.status" 2>/dev/null | tr -d ' ')
+  fi
+  if ! fm_approval_wait_admit "$state" "$id"; then changed=1; fi
+  if [ "$changed" = 1 ] || [ "$size" != "$expected_size" ] \
+    || [ "$(cat "$meta" 2>/dev/null)" != "$expected_record" ]; then
+    printf 'worker record or activity %s changed during scan\n' "$id" >&2
+    return 3
+  fi
+}
+
 # fm_busy_is_busy: boolean view for callers that only gate on provable
 # activity. 0 iff the classification verdict is exactly busy; idle, unknown,
 # and dead all return 1, so an unknown can never be silently promoted to

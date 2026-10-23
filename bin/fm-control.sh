@@ -6,6 +6,7 @@
 #        fm-control.sh <task-id> exit
 #        fm-control.sh <task-id> relaunch [--harness <name>] [--model <name>]
 #                                         [--effort <level>] [--unless-held-stopped [--replace-live]]
+#                                         [--if-still-stopped <status-bytes> --expected-record <metadata>]
 #                                         (--note <text> | --note-file <path>)
 #        fm-control.sh <task-id> reincarnate
 #                                         (--note <text> | --note-file <path>)
@@ -26,6 +27,10 @@
 # postcondition for every action. There is deliberately NO arbitrary-text and
 # NO generic raw-key entry point here; fm-send remains the only way to send an
 # agent something to read.
+#
+# The verb effects and endpoint checks below apply to endpoint-backed tasks.
+# A spec-<name> selector with a specialist record in this home delegates first
+# to bin/fm-specialist.sh; its header owns those direct-job verb semantics.
 #
 #   interrupt  Deliver the harness's verified interrupt sequence. The agent
 #              keeps running. Postcondition: delivery succeeded, the endpoint
@@ -78,7 +83,12 @@
 #              secondmate reconciles its own home's records at startup, so its
 #              standing charter is never rewritten.
 #              Records a durable checkpoint and that note, exits the old agent,
-#              then delegates the launch to its single owner,
+#              requests cooperative TERM from only its task-bound Deck driver,
+#              and proves both that driver group gone and the endpoint stopped
+#              within FM_CONTROL_RELAUNCH_STOP_WAIT. A timeout refuses
+#              replacement without forced termination; all preflight refusals
+#              still apply.
+#              Then delegates the launch to its single owner,
 #              bin/fm-spawn.sh --relaunch. Backlog eligibility is proved before
 #              exit: an unheld In-flight dependency blocker is valid recovery,
 #              while blocked Queued work and every hold still refuse with the
@@ -86,6 +96,24 @@
 #              the prior durable record in place and reports the concrete
 #              state; it never leaves a half-transitioned task claiming to be
 #              running.
+#              Before stopping or launching, the checkpoint rejects a foreign
+#              or unreadable worktree owner claim; an absent claim keeps legacy
+#              recovery eligible. This also protects recover-missing.
+#              --if-still-stopped admits a local ship (absent kind= also means
+#              ship) or scout retry only under the control lock, with unchanged
+#              --expected-record metadata and status byte count, a fresh
+#              failed/blocked/paused/gone crew state, and no
+#              live semantic busy turn. bin/fm-approval-wait.sh also guards
+#              an explicit parent approval exclusion.
+#              It rechecks after the endpoint probe
+#              and composer preflight, refusing resumed activity without an
+#              interrupt or exit submission. Exit 3 leaves the worker for a
+#              fresh scan; a late refusal may leave a failed transaction journal.
+#              A local caller may set FM_CONTROL_RELAUNCH_TX to a unique id
+#              (letters, digits, dots, underscores and hyphens only) to bind
+#              replacement publication to its invocation; otherwise relaunch
+#              generates one. The journal records relaunch_tx and the launch
+#              owner publishes control_relaunch_tx in the replacement metadata.
 #
 #   recover-missing For a local record, restore a terminal whose endpoint reads
 #              missing, then hand the launch to the existing owner
@@ -181,8 +209,9 @@
 # same need for every adapter because the brief on disk, not a harness-private
 # session, is the durable instruction.
 #
-# Targeting is EXACT: only a bare task id with a state/<id>.meta record in
-# THIS home is accepted, and the record must pass the shared endpoint-identity
+# Targeting is EXACT: apart from the specialist selector above, only a bare
+# task id with a state/<id>.meta record in THIS home is accepted, and the record
+# must pass the shared endpoint-identity
 # validation (bin/fm-backend.sh's fm_backend_validate_task_endpoint). A legacy
 # fm-<id> label, an explicit session:window endpoint, and a bare window name
 # are all refused - a lifecycle command delivered to the wrong endpoint is far
@@ -217,9 +246,13 @@
 #
 # Environment knobs (all bounded waits, seconds):
 #   FM_CONTROL_POLL              poll interval for postcondition waits (0.5)
-#   FM_CONTROL_EXIT_WAIT         wait for an endpoint to read agent-free: after
-#                                the exit command, and for a recreated
-#                                terminal's shell to finish starting (30)
+#   FM_CONTROL_EXIT_WAIT         plain-exit per-wait bound for task-bound Deck
+#                                driver stop and endpoint agent-free proof;
+#                                also bounds recreated shell startup (30)
+#   FM_CONTROL_RELAUNCH_STOP_WAIT  per-wait bound for the same two stop proofs
+#                                on relaunch; replacement requires both proofs
+#                                under the same control lock, never a forced
+#                                stop (120)
 #   FM_CONTROL_LAUNCH_WAIT       dead->alive wait after a relaunch (90)
 #   FM_CONTROL_EXIT_RETRIES      Enter retries for the exit command (3)
 #   FM_CONTROL_CLEAR_RETRIES     composer clear/re-read attempts in the exit
@@ -269,6 +302,43 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
   exit 1
 }
 
+# Specialist selectors delegate before endpoint routing; the CLI header owns
+# their direct-job contract.
+case "${1:-}" in
+  spec-*)
+    if [ -f "$STATE/specialists/${1#spec-}.json" ]; then
+      fm_spec_name=${1#spec-}
+      fm_spec_verb=${2:-}
+      shift 2 2>/dev/null || shift $#
+      case "$fm_spec_verb" in
+        model)
+          [ $# -ge 1 ] || { echo "error: model needs a route" >&2; exit 2; }
+          exec "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "$1"
+          ;;
+        interrupt|exit)
+          exec "$SCRIPT_DIR/fm-specialist.sh" stop "$fm_spec_name"
+          ;;
+        relaunch|recover-missing)
+          while [ $# -gt 0 ]; do
+            case "$1" in
+              --model) [ $# -ge 2 ] || { echo "error: --model needs a route" >&2; exit 2; }
+                "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "$2" || exit; shift 2 ;;
+              --model=*) "$SCRIPT_DIR/fm-specialist.sh" model "$fm_spec_name" "${1#--model=}" || exit; shift ;;
+              *) shift ;;
+            esac
+          done
+          echo "specialist spec-$fm_spec_name has no process between jobs; its next job starts it"
+          exit 0
+          ;;
+        *)
+          echo "error: $fm_spec_verb does not apply to specialist spec-$fm_spec_name (model, interrupt, relaunch, recover-missing)" >&2
+          exit 2
+          ;;
+      esac
+    fi
+    ;;
+esac
+
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-busy-lib.sh
@@ -288,6 +358,7 @@ CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 
 POLL=${FM_CONTROL_POLL:-0.5}
 EXIT_WAIT=${FM_CONTROL_EXIT_WAIT:-30}
+RELAUNCH_STOP_WAIT=${FM_CONTROL_RELAUNCH_STOP_WAIT:-120}
 LAUNCH_WAIT=${FM_CONTROL_LAUNCH_WAIT:-90}
 EXIT_RETRIES=${FM_CONTROL_EXIT_RETRIES:-3}
 CLEAR_RETRIES=${FM_CONTROL_CLEAR_RETRIES:-3}
@@ -353,6 +424,9 @@ NOTE=
 NOTE_SET=0
 UNLESS_HELD_STOPPED=0
 REPLACE_LIVE=0
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
 control_want_value=
 for control_arg in "$@"; do
   if [ -n "$control_want_value" ]; then
@@ -364,6 +438,13 @@ for control_arg in "$@"; do
       model) NEW_MODEL=$control_arg; MODEL_SET=1 ;;
       effort) NEW_EFFORT=$control_arg; EFFORT_SET=1 ;;
       note) NOTE=$control_arg; NOTE_SET=1 ;;
+      expected_record) EXPECTED_RECORD=$control_arg; EXPECTED_RECORD_SET=1 ;;
+      if_still_stopped)
+        case "$control_arg" in
+          ''|*[!0-9]*) die "--if-still-stopped requires a status byte count" ;;
+        esac
+        STOPPED_STATUS_SIZE=$control_arg
+        ;;
       note_file)
         [ -f "$control_arg" ] || die "--note-file '$control_arg' is not a readable file"
         NOTE=$(cat "$control_arg")
@@ -384,6 +465,8 @@ for control_arg in "$@"; do
     --note=*) NOTE=${control_arg#--note=}; NOTE_SET=1 ;;
     --note-file) control_want_value=note_file ;;
     --unless-held-stopped) UNLESS_HELD_STOPPED=1 ;;
+    --expected-record) control_want_value=expected_record ;;
+    --if-still-stopped) control_want_value=if_still_stopped ;;
     --replace-live) REPLACE_LIVE=1 ;;
     --note-file=*)
       [ -f "${control_arg#--note-file=}" ] || die "--note-file '${control_arg#--note-file=}' is not a readable file"
@@ -418,6 +501,14 @@ case "$NEW_EFFORT" in
   *) die "--effort must be one of default, low, medium, high, xhigh, max" ;;
 esac
 
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$VERB" = relaunch ] && [ "$EXPECTED_RECORD_SET" = 1 ] \
+    || die "--if-still-stopped requires relaunch with --expected-record"
+fi
+case "${FM_CONTROL_RELAUNCH_TX:-}" in
+  *[!a-zA-Z0-9._-]*) die "FM_CONTROL_RELAUNCH_TX must contain only letters, digits, dots, underscores, or hyphens" ;;
+esac
+
 # --- exact task-id resolution ----------------------------------------------
 
 case "$RAW_ID" in
@@ -433,6 +524,30 @@ fm_lock_try_acquire "$CONTROL_LOCK" \
   || die "another lifecycle action is already running for task $ID"
 CONTROL_LOCK_HELD=1
 META="$STATE/$ID.meta"
+if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
+  || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
+  printf 'worker record %s changed or vanished\n' "$ID" >&2
+  exit 3
+fi
+case "$VERB" in
+  relaunch|recover-missing|reincarnate)
+    # shellcheck source=bin/fm-approval-wait.sh
+    . "$SCRIPT_DIR/fm-approval-wait.sh"
+    if ! fm_approval_wait_admit "$STATE" "$ID"; then
+      echo "error: task $ID awaits explicit parent approval release; recovery refused" >&2
+      [ -z "$STOPPED_STATUS_SIZE" ] || exit 3
+      exit 1
+    fi
+    ;;
+esac
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  case "$(fm_meta_get "$META" kind)" in
+    ''|ship|scout) ;;
+    *) die "--if-still-stopped applies to local ship or scout workers only" ;;
+  esac
+  [ -z "$(fm_meta_get "$META" remote_host)" ] \
+    || die "--if-still-stopped applies to local ship or scout workers only"
+fi
 if [ ! -f "$META" ]; then
   case "$RAW_ID" in
     fm-*)
@@ -567,6 +682,24 @@ fi
 
 busy_verdict() {
   fm_busy_classify_meta "$META" "$ID" "$STATE"
+}
+
+require_worktree_ownership() {
+  if [ "$KIND" = secondmate ] \
+    && ! fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$WT" >/dev/null 2>&1; then
+    return 0
+  fi
+  fm_treehouse_slot_owner_state "$WT" "$ID"
+  case "$FM_TREEHOUSE_SLOT_OWNER" in
+    other) die "task $ID's recorded worktree $WT is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to $VERB and tangle ownership" ;;
+    unsafe) die "task $ID's recorded worktree $WT has an unreadable owner claim; refusing to $VERB and risk a conflict" ;;
+  esac
+}
+
+admit_stopped_retry() {
+  [ -n "$STOPPED_STATUS_SIZE" ] || return 0
+  require_worktree_ownership
+  fm_busy_admit_stopped "$META" "$ID" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" || exit $?
 }
 
 # A relaunch is existing-task recovery, not fresh dispatch. Prove its backlog
@@ -714,6 +847,17 @@ do_interrupt() {
   printf '%s cancel=%s' "$proof" "$cancel"
 }
 
+# stop_wait: the bound on proving the old agent stopped once its exit is under
+# way. A relaunch waits FM_CONTROL_RELAUNCH_STOP_WAIT so a host still shutting
+# down is waited out and replaced rather than abandoned half-stopped.
+stop_wait() {
+  if [ "$VERB" = relaunch ]; then
+    printf '%s' "$RELAUNCH_STOP_WAIT"
+  else
+    printf '%s' "$EXIT_WAIT"
+  fi
+}
+
 retire_busy_incarnation() {
   if [ -f "$STATE/$ID.busy-gen" ]; then
     "$SCRIPT_DIR/fm-busy-event.sh" retire "$STATE" "$ID" --current-gen >/dev/null 2>&1 || true
@@ -721,7 +865,10 @@ retire_busy_incarnation() {
 }
 
 stop_deck_residual_drivers() {
-  [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "$STATE" "$ID" "$EXIT_WAIT" \
+  local args=("$STATE" "$ID" "$(stop_wait)")
+  # Relaunch must never turn a bounded stop refusal into a forced kill.
+  [ "$VERB" != relaunch ] || args+=(--cooperative)
+  [ "$HARNESS" != deck ] || python3 "$SCRIPT_DIR/fm-deck-stop.py" "${args[@]}" \
     || die "the prior Deck driver has not been proved stopped; refusing replacement"
 }
 
@@ -813,6 +960,7 @@ do_exit() {
   local state cmd verdict cancel interrupt_result=not-needed
   require_state_verified_backend exit "the agent actually stopped"
   state=$(agent_state)
+  admit_stopped_retry
   case "$state" in
     dead)
       stop_deck_residual_drivers
@@ -826,6 +974,10 @@ do_exit() {
   # A busy agent is interrupted first before the exit command is submitted.
   case "$(busy_verdict)" in
     busy*)
+      if [ -n "$STOPPED_STATUS_SIZE" ]; then
+        printf 'worker record or activity %s changed during scan\n' "$ID" >&2
+        return 3
+      fi
       cancel=$(deliver_interrupt) || return $?
       state=$(agent_state)
       case "$state" in
@@ -843,6 +995,7 @@ do_exit() {
   esac
   cmd=$(fm_control_exit_command "$HARNESS")
   gate_exit_composer "$cmd"
+  admit_stopped_retry
   if [ "$EXIT_COMPOSER_OUTCOME" = agent-gone ]; then
     # The agent is gone: nothing may be typed at the endpoint, and the right
     # remedy is a respawn (relaunch / recover-missing), not a composer clear.
@@ -865,8 +1018,13 @@ do_exit() {
     || die "the exit command could not be sent to task $ID on $BACKEND"
   [ "$verdict" != send-failed ] \
     || die "the exit command could not be sent to task $ID on $BACKEND"
-  state=$(wait_agent_state "$EXIT_WAIT" dead) || {
-    die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within ${EXIT_WAIT}s"
+  # A driver can be parked in a synchronous probe and not consume /quit.
+  # After protocol delivery, ask only this task's argv-bound driver to stop
+  # cooperatively, proving its group gone before accepting endpoint liveness.
+  # The endpoint's own fresh/dead or agent-closed proof remains mandatory.
+  [ "$VERB" != relaunch ] || stop_deck_residual_drivers
+  state=$(wait_agent_state "$(stop_wait)" dead) || {
+    die "exit-delivered $ID interrupt=$interrupt_result exit-command=delivered agent-state=$state exit=unconfirmed; the agent did not stop within $(stop_wait)s"
   }
   # The incarnation is over: retire its busy wiring so no stale record or
   # orphaned generation survives the agent that produced it.
@@ -931,7 +1089,14 @@ journal_write() {  # <phase> [extra-line]...
     echo "from_effort=$PRIOR_EFFORT"
     echo "to_harness=$TARGET_HARNESS"
     echo "to_model=$TARGET_MODEL"
+    echo "requested_model=$NEW_MODEL"
     echo "to_effort=$TARGET_EFFORT"
+    [ -z "$RELAUNCH_TX" ] || echo "relaunch_tx=$RELAUNCH_TX"
+    if [ -n "$NOTE" ]; then
+      echo "note_file=$NOTE_FILE"
+    else
+      echo "note=none"
+    fi
     local line
     for line in "$@"; do
       echo "$line"
@@ -1150,10 +1315,11 @@ resolve_relaunch_profile() {
 # refuses outright when any of it cannot be established.
 CHECKPOINT_LINES=()
 safe_checkpoint() {
-  local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta
+  local wt_real wt_top wt_top_real head head_ref head_ref_status status_output dirty children marker child_meta traversal_error traversal_status
   CHECKPOINT_LINES=()
   [ -n "$WT" ] || die "task $ID has no recorded worktree; refusing to relaunch without a recorded local copy to preserve"
   [ -d "$WT" ] || die "task $ID's recorded worktree $WT is missing; refusing to relaunch and lose track of its work"
+  require_worktree_ownership
   wt_real=$(cd "$WT" 2>/dev/null && pwd -P) || die "task $ID's recorded worktree $WT cannot be resolved"
   wt_top=$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null) \
     || die "task $ID's recorded worktree $WT is not a git worktree; refusing to relaunch without a checkout whose unlanded work can be accounted for"
@@ -1193,8 +1359,12 @@ safe_checkpoint() {
       || die "task $ID's home $WT is not marked as its own seeded secondmate home (marker: ${marker:-none}); refusing to relaunch"
     [ -d "$WT/state" ] \
       || die "secondmate $ID's home has no readable state directory, so its child work cannot be accounted for; refusing to relaunch"
-    find "$WT/state" -mindepth 1 -maxdepth 1 -print >/dev/null 2>&1 \
-      || die "secondmate $ID's child records cannot be traversed; refusing to relaunch"
+    if traversal_error=$(find "$WT/state" -mindepth 1 -maxdepth 1 -print 2>&1 >/dev/null); then
+      :
+    else
+      traversal_status=$?
+      die "secondmate $ID's child records cannot be traversed at $WT/state (find exit $traversal_status): ${traversal_error:-no diagnostic output}; refusing to relaunch"
+    fi
     children=0
     for child_meta in "$WT/state"/*.meta; do
       if [ ! -e "$child_meta" ] && [ ! -L "$child_meta" ]; then
@@ -1244,7 +1414,7 @@ record_note() {
 }
 
 do_relaunch() {
-  local exit_result state note_line
+  local exit_result state
   local -a spawn_args
 
   local -x FM_CONTROL_MODEL_CHOICE_ACTION=keep
@@ -1277,27 +1447,23 @@ do_relaunch() {
   esac
 
   relaunch_backlog_preflight
-  if [ -n "$NOTE" ]; then
-    note_line="note_file=$NOTE_FILE"
-  else
-    note_line="note=none"
-  fi
   safe_checkpoint
+  admit_stopped_retry
   cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
-  journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write checkpoint "${CHECKPOINT_LINES[@]}"
 
   record_note
-  journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write noted "${CHECKPOINT_LINES[@]}"
 
-  journal_write stopping "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write stopping "${CHECKPOINT_LINES[@]}"
   exit_result=$(do_exit)
-  journal_write exited "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
+  journal_write exited "${CHECKPOINT_LINES[@]}" "exit_result=$exit_result"
 
   # The launch owner (fm-spawn --relaunch) clears the previous incarnation's
   # per-task harness wiring before arming the new one, so nothing to do here.
-  RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
+  RELAUNCH_TX="${FM_CONTROL_RELAUNCH_TX:-${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM}"
+  journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
@@ -1323,7 +1489,7 @@ do_relaunch() {
   }
   RELAUNCH_AGENT_CONFIRMED=1
 
-  journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=$exit_result"
+  journal_write complete "${CHECKPOINT_LINES[@]}" "exit_result=$exit_result"
   RELAUNCH_ACTIVE=0
   echo "relaunched $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$WT"
 }
@@ -1405,7 +1571,7 @@ reincarnate_preflight() {
 }
 
 do_recover_missing() {
-  local state note_line wt wname proj_abs
+  local state wt wname proj_abs
   local -a spawn_args
 
   if [ "$VERB" != reincarnate ]; then
@@ -1450,19 +1616,6 @@ do_recover_missing() {
   wt=$(fm_meta_get "$META" worktree)
   [ -n "$wt" ] && [ -d "$wt" ] || die "task $ID's recorded worktree '${wt:-none}' is absent; refusing to recover without the local copy its work lives in"
 
-  if fm_treehouse_pool_slot "$(fm_meta_get "$META" project)" "$wt" >/dev/null 2>&1; then
-    fm_treehouse_slot_owner_state "$wt" "$ID"
-    case "$FM_TREEHOUSE_SLOT_OWNER" in
-      other) die "task $ID's recorded pool slot $wt is currently claimed by task $FM_TREEHOUSE_SLOT_OWNER_ID; refusing to recover and tangle ownership" ;;
-      unsafe) die "task $ID's recorded pool slot $wt has an unreadable owner claim; refusing to recover and risk a conflict" ;;
-    esac
-  fi
-
-  if [ -n "$NOTE" ]; then
-    note_line="note_file=$NOTE_FILE"
-  else
-    note_line="note=none"
-  fi
   # recover-missing has no dirty-copy refusal; reincarnate checked cleanliness
   # in its preflight. A missing-endpoint rescue is mid-work by definition,
   # so uncommitted changes are its normal state, and
@@ -1472,12 +1625,12 @@ do_recover_missing() {
   safe_checkpoint
   cp -p "$META" "$META_PRIOR" 2>/dev/null || true
   RELAUNCH_ACTIVE=1
-  journal_write checkpoint "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write checkpoint "${CHECKPOINT_LINES[@]}"
 
   record_note
-  journal_write noted "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write noted "${CHECKPOINT_LINES[@]}"
 
-  journal_write recreating "${CHECKPOINT_LINES[@]}" "$note_line"
+  journal_write recreating "${CHECKPOINT_LINES[@]}"
   wname="fm-$ID"
   proj_abs=$(cd "$wt" && pwd -P)
   # recover_stream_endpoint makes a new endpoint and rebinds the record and $T
@@ -1493,7 +1646,7 @@ do_recover_missing() {
   }
 
   RELAUNCH_TX="${BASHPID:-$$}.$(date -u +%Y%m%dT%H%M%SZ).$RANDOM"
-  journal_write launching "${CHECKPOINT_LINES[@]}" "$note_line" "relaunch_tx=$RELAUNCH_TX"
+  journal_write launching "${CHECKPOINT_LINES[@]}"
   spawn_args=("$ID" --relaunch --harness "$TARGET_HARNESS")
   # A chained surface was only pre-flighted above: the ORIGINAL chain is what
   # the launch owner resolves and records the lane for, so its cooldown
@@ -1519,7 +1672,7 @@ do_recover_missing() {
   }
   RELAUNCH_AGENT_CONFIRMED=1
 
-  journal_write complete "${CHECKPOINT_LINES[@]}" "$note_line" "exit_result=recreated"
+  journal_write complete "${CHECKPOINT_LINES[@]}" "exit_result=recreated"
   RELAUNCH_ACTIVE=0
   echo "recovered $ID harness=$TARGET_HARNESS from=$PRIOR_RECORDED_HARNESS model=$TARGET_MODEL effort=$TARGET_EFFORT backend=$BACKEND endpoint=$T worktree=$wt"
 }

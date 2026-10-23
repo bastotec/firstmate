@@ -32,6 +32,10 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | Mate lane failing or recovered | the mate's lane-health episode | [`fm-deck-worker.sh`'s SUPERVISOR HEALTH block](../bin/fm-deck-worker.sh) and [`fm-captain-lane.sh`'s lane-health comment](../bin/fm-captain-lane.sh) |
 | Handed-off orders overdue or cleared | the overdue hand-off delivery journal | [`fm-captain-lane.sh`'s OVERDUE HAND-OFFS comment](../bin/fm-captain-lane.sh) |
 | Child validation parked too long or moving again | the child's parked-run episode | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh); its header owns timing and resolution, including teardown's close |
+| Worker PR's CI recovery needs escalation, worker unreachable | the worker's stalled-CI record | [`fm_ci_stall.py`](../bin/fm_ci_stall.py); its docstring owns bounds, retries and hand-off |
+| A stuck worker its mate did not or could not unstick | the worker's keep-alive record | [`fm_worker_keepalive.py`](../bin/fm_worker_keepalive.py); its docstring owns conditions, bounds and escalation |
+| A second mate's question its parent left unanswered | the parent's keep-alive record of that mate's open questions | [`fm_worker_keepalive.py`](../bin/fm_worker_keepalive.py); its docstring owns the bound, the wake and the escalation |
+| Idle worker needing mate judgement | the worker's sweep handoff | [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh); its header owns handoff delivery and repeat suppression, never a captain hold |
 | Answer to an ordinary marked request | a correlated line guarded by the pending-reply record | `bin/fm-secondmate-report.sh`, which resolves the parent channel from the mate home; the pending-reply guard repairs a line stranded in the local mate's same-basename status file before recovery or escalation; [captain-direct messages](#captain-direct-messages) follow their own rule |
 | An outcome that exists only in the mate's reasoning | none | the charter and the `AGENTS.md` carve-outs only |
 
@@ -54,7 +58,7 @@ The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns whe
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
-- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh) have a watchdog, while other unanswered decisions remain a supervision-quality question, separable from channel delivery.
+- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh), [parent-bound secondmate questions and keep-alive escalations](../bin/fm_worker_keepalive.py) have watchdogs; other child decisions remain a supervision-quality question, separable from channel delivery.
 - No separate ledger watcher: the lightweight ledger pass stays inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
 - No orphan lifecycle: teardown refuses instead of removing an undelivered outcome, the same way it refuses on other unlanded conditions.
 
@@ -66,7 +70,7 @@ The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns whe
 `tests/fm-teardown.test.sh` covers teardown delivering a child's final line and refusing when the channel cannot be written.
 `tests/fm-brief.test.sh` pins the charter's channel rule.
 `tests/fm-send-secondmate-marker.test.sh` covers the captain-direct tag for secondmate and worker targets, its refusals, and a correlated line resolving a captain message's pending reply.
-`tests/fm-captain-direct-echo.test.sh` covers the parent's one FYI note per captain-direct delivery, the echo guard that holds back a parent steer repeating it (and `--correction`), and a captain-direct pending reply that never reposts or escalates.
+`tests/fm-captain-direct-echo.test.sh` covers the parent's one FYI note per captain-direct delivery, the echo guard that holds back a parent steer repeating it (and `--correction`, plus `--result` or a named report file for new findings), and a captain-direct pending reply that never reposts or escalates.
 `tests/fm-pending-reply.test.sh` covers helper-selected local routing, remote-channel classification, same-basename restatement before false escalation, readable wrong-home diagnostics, the rule that arbitrary mate-home sightings never acknowledge a reply, unread local requests not completing a turn, and migrated remote targets ignoring retained local inbox records while still waiting for the reply mirror.
 `tests/fm-watch-parent-channel-echo.test.sh` covers outgoing-channel exclusion in signal, heartbeat, and daemon catch-all scans without suppressing child reports, the parent's mirror, or an ordinary same-named file in a home with no parent record.
 [`tests/fm-mate-mail.test.sh`](../tests/fm-mate-mail.test.sh) covers peer routing, diversion before document fetch, bridge refusals, and interrupted delivery and terminal bookkeeping.

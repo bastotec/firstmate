@@ -3,9 +3,9 @@
 #
 # Output contract: `--json` prints one object with schema
 # `fm-fleet-snapshot.v1`.
-# Worker inventory comes from endpoint task metadata and secondmate ledgers;
-# direct specialist jobs and task groups are not collected here. Their CLI
-# headers (bin/fm-specialist.sh and bin/fm-group.sh) own inspection.
+# Worker inventory comes from endpoint task metadata, specialist records, and
+# secondmate ledgers. Task groups are not collected here; bin/fm-group.sh's
+# header owns their inspection.
 # The command does not acquire the session lock, drain wakes, arm watchers,
 # mutate backlog state, or write reports. Its default ledger collector may
 # atomically refresh parent-side cached copies of remote home summaries under
@@ -35,16 +35,16 @@
 #     structured record is Done, and missing ids stay open.
 #     There is no separate decision type: any captain-held task is the same
 #     primitive, whatever kind its row carries.
-#     hold_bucket is the single classification for every captain hold, decided
-#     only from structured fields - state, hold_kind, hold_until,
+#     hold_bucket classifies open, unchecked captain-held rows with a hold reason,
+#     using only structured fields - state, checked, hold_kind, hold_until,
 #     unresolved_blocker_ids, and the machine-written hold-set timestamp. No
 #     hold reason or body prose is ever matched. The buckets are total and
-#     mutually exclusive, so every captain hold lands in exactly one and none
-#     can fall through: "blocked" when any blocker is unresolved, else "dated"
-#     when hold_until is still in the future, else "aged" when an undated hold
-#     is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; legacy
-#     unstamped holds fall back to `since`), else "live". A non-captain or Done
-#     row carries null.
+#     mutually exclusive for those eligible rows: "blocked" when any blocker
+#     is unresolved, else "dated" when hold_until is still in the future, else
+#     "aged" when an undated hold is at least FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS
+#     old (default 14, floored elapsed days; legacy unstamped holds fall back
+#     to `since`), else "live". A non-captain row, a
+#     Done row, and a row marked done ("[x]") in any section carry null.
 #     captain_actionable means "waiting on the captain now" and is exactly
 #     hold_bucket == "live".
 #     hold_age_days is the hold's age when computable, else null.
@@ -86,21 +86,42 @@
 #     endpoint.agent_state is bin/fm-backend.sh's recovery-grade verdict
 #     (fm_backend_agent_state) for every local task with a recorded target, and
 #     "not_checked" for remote rows, target-less rows, and discarded generations.
+#   specialists[]: separate worker-shaped rows from this home's
+#     state/specialists/<name>.json, never state/<id>.meta or tasks[]. Endpoint
+#     supervision must not probe these records as endpoint-backed workers.
+#     The hidden fm_crew.py _spec-rows reader never reconciles or mutates state
+#     and remains available in a gate context. Each row has id spec-<name>,
+#     name, kind specialist, subject, session, stored status, current_job,
+#     last_job, suspension, stop_on_tool_failure, and the worker-shaped fields
+#     owned by bin/fm-specialist.sh's header. current_state has source
+#     specialist-record, state working|idle|suspended|retired, a bounded detail,
+#     and observed_at at read time. A running record whose runner is no longer
+#     alive under fm_crew.py's identity rules projects state stopped instead,
+#     with detail saying the runner ended and the next specialist command
+#     reconciles it; stored status stays running. actions supplies watch,
+#     steer, captain_message, and model commands. Unreadable records are skipped;
+#     a failed collection produces an empty array.
 #   scout_reports[]: present data/<id>/report.md pointers.
 #   main_inventory: {valid,reason,orphan_in_flight[],unstructured_current_count} -
 #     main-home current-inventory checks shared with secondmate_home_summary_json
 #     (orphan structured in-flight ids with no state/<id>.meta, and unstructured
 #     current backlog rows). Does not invent live tasks; meta remains truth for
-#     workers. Bearings maps failures into omitted[] disclosure (and a Charted
-#     Next gate line) rather than silent empty Underway.
+#     endpoint-backed workers. Bearings maps failures into omitted[] disclosure
+#     (and a Charted Next gate line) rather than silent empty Underway.
 #   secondmate_current: {records[],total,shown,truncated} - bounded current summaries
 #     for registered secondmates, selected from validated structured state inside
 #     each home with explicit provenance, freshness, endpoint evidence, and unknown
 #     failure reasons. Parent status and bounded terminal evidence are historical,
 #     untrusted supplements only and never override readable structured-home facts.
-#     Each structured-home record carries active_children, decisions_open, holds,
-#     queued, landed, endpoints, counts, omitted, and crew_time (the home's busy
-#     intervals from bin/fm_report.py crew-time; null from older producers). provenance.summary_source
+#     Each structured-home record carries active_children, specialists,
+#     decisions_open, holds, queued, landed, endpoints, counts, omitted, and
+#     crew_time (the home's busy intervals from bin/fm_report.py crew-time;
+#     null from older producers).
+#     specialists uses the row contract above, with [] for older producers.
+#     Home summaries keep active_children and endpoint counts endpoint-only;
+#     a working specialist still makes the home active_child_work when no
+#     higher-priority unknown or captain_decision classification applies.
+#     provenance.summary_source
 #     distinguishes "local-ledger", "remote-ledger", and "remote-ledger-cache";
 #     freshness is "cached" only for the cache source, and observed_at/age_seconds
 #     come from the selected summary's generation. Every record carries
@@ -128,10 +149,19 @@
 #     or a backlog-vs-metadata inventory mismatch makes their summary incomplete;
 #     they retain independently trustworthy structured surfaces.
 #     The home summary's unknown_children lists unknown non-secondmate task ids
-#     owned by structured In flight rows, independently of its first invalidity.
+#     owned by structured In flight rows, independently of its first invalidity,
+#     except the reader's final fallback: source "none" with detail starting
+#     "no current-state source available" means readable idle, nothing claimed.
+#     That task's endpoint state stays unknown; every other unknown still counts,
+#     including missing worktrees or endpoints, unreadable runs, and timeouts.
 #     An unowned leftover is instead an unowned_current inventory mismatch.
-#     An inventory mismatch keeps the home's own current classification unless
-#     unknown_children is nonempty or the backlog is untrustworthy.
+#     The producer keeps its computed state for inventory disagreements, including
+#     unstructured_current, while retaining valid=false, reason, and invalidity.
+#     Nonempty unknown_children or other invalidity kinds still force unknown.
+#     This does not widen parent projection trust: secondmate_current rejects
+#     unstructured_current with unknown state and historical parent-event fallback.
+#     bin/fm_report.py reads the published state directly; its header owns how
+#     reports distinguish record disagreements from unread data.
 #     Which closed rows a home contributes is bin/fm-landed-lib.sh's rule, shared
 #     with the bearings projection so one Recently Landed section has one owner.
 #   secondmate_guidance: return-channel action note for renderers and bearings.
@@ -308,8 +338,9 @@ FM_SNAPSHOT_PARENT_ACTIVITY_TIMEOUT, with truncation disclosed in the result.
 The registered secondmate table uses FM_SNAPSHOT_REGISTRY_LINES,
 FM_SNAPSHOT_REGISTRY_BYTES, FM_SNAPSHOT_REGISTRY_RECORDS, and
 FM_SNAPSHOT_REGISTRY_TIMEOUT, with unavailability and truncation disclosed.
-Every captain hold carries hold_bucket, decided only from structured fields and
-never from hold reason or body prose: "blocked", "dated", "aged", or "live".
+Captain holds carry hold_bucket, decided only from structured fields and never
+from hold reason or body prose: "blocked", "dated", "aged", or "live" for eligible
+rows, while a row marked done ("[x]") or in Done carries no bucket (null).
 An undated hold ages once its hold-set timestamp is at least
 FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS old (default 14; 0 ages every hold with a
 non-negative computed age); legacy holds without a stamp fall back to their
@@ -599,7 +630,7 @@ backlog_json() {  # [<backlog-path>] - defaults to this home's $BACKLOG
           | .requires_child_metadata = (.current_role == "worker")
           | .hold_age_days = days_between((.hold_set // .since); $now)
           | .hold_bucket =
-              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" then null
+              (if .hold_kind != "captain" or .hold_reason == null or .state == "done" or .checked == true then null
                elif (.unresolved_blocker_ids | length) > 0 then "blocked"
                elif .hold_until != null and .hold_until > $today then "dated"
                elif .hold_until == null and .hold_age_days != null
@@ -1043,6 +1074,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     --argjson landed_n "$FM_SNAPSHOT_SECONDMATE_LANDED_PER_HOME" \
     --slurpfile backlog "$1" \
     --slurpfile tasks "$2" \
+    --argjson specialists "$SPECIALISTS_JSON" \
     --argjson crew_time "$(python3 "$SCRIPT_DIR/fm_report.py" crew-time "$STATE" 2>/dev/null || echo null)" \
     "$FM_LANDED_JQ_DEFS"'
     ($backlog[0]) as $backlog
@@ -1092,7 +1124,11 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
     # live state is needed.
     # Only owned in-flight work needs a readable live state; a leftover record
     # that no current item owns is reported as unowned instead.
+    # A worker the reader found idle with nothing claimed (every source read, no
+    # state asserted, its final fallback) was read; it is not an unread child.
     | ([ $tasks[] | select(.kind != "secondmate" and .current_state.state == "unknown")
+         | select((.current_state.source == "none"
+                   and ((.current_state.detail // "") | startswith("no current-state source available"))) | not)
          | select(.id as $id | [$owned_in_flight[].id] | index($id) != null) ]) as $unknown_children
     | ([ $owned_in_flight[]
          | select(.requires_child_metadata)
@@ -1168,11 +1204,11 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
        else {kind:null,ids:[]} end) as $invalidity
     | (if ($valid | not)
           and (($unknown_children | length) > 0
-               or (["orphan_in_flight","unowned_current","terminal_in_flight"]
+               or (["orphan_in_flight","unowned_current","terminal_in_flight","unstructured_current"]
                    | index($invalidity.kind) | not))
        then "unknown"
        elif any($decisions_all[]; .verb == "needs-decision" or .verb == "captain-hold") then "captain_decision"
-       elif ($active_all | length) > 0 then "active_child_work"
+       elif ($active_all | length) > 0 or any($specialists[]; .current_state.state == "working") then "active_child_work"
        elif ($holds_all | length) > 0 then "externally_held"
        else "no_active_work" end) as $state
     | {
@@ -1186,6 +1222,7 @@ secondmate_home_summary_json() {  # <backlog-json-file> <tasks-json-file>
         invalidity:$invalidity,
         state:$state,
         active_children:$active_all[:$child_n],
+        specialists:$specialists,
         decisions_open:$decisions_all[:$decisions_n],
         holds:$holds_all[:$queued_n],
         queued:([$queued_all[] | {id:(.id | trunc(120)),title:(.title | trunc(120)),
@@ -2004,7 +2041,7 @@ secondmate_current_json() {  # <parent-tasks-json-file> <output-file>
          provenance:{selected:"structured-home",structured_home:$home,summary_source:$summary_source,summary_valid:$summary_valid,
            trust:(if $summary_valid then "complete" else "partial-structured" end),parent_event_role:"historical-only"},
          freshness:{status:$summary_freshness,observed_at:$observed,age_seconds:$summary_age},
-         active_children:$summary.active_children,
+         active_children:$summary.active_children,specialists:($summary.specialists // []),
          decisions_open:$summary.decisions_open,holds:$summary.holds,queued:$summary.queued,
          landed:$summary.landed,endpoints:$summary.endpoints,counts:$summary.counts,omitted:$summary.omitted,
          crew_time:($summary.crew_time // null),
@@ -2108,6 +2145,10 @@ printf '%s\n' "$BACKLOG_JSON" > "$BACKLOG_JSON_FILE" \
 printf '%s\n' "$TASKS_JSON" > "$TASKS_JSON_FILE" \
   || { echo "fm-fleet-snapshot: temporary task file write failed" >&2; exit 1; }
 
+# Specialists are persistent workers: one worker-shaped row each, read-only.
+SPECIALISTS_JSON=$(FM_HOME="$FM_HOME" python3 "$SCRIPT_DIR/fm_crew.py" _spec-rows 2>/dev/null) || SPECIALISTS_JSON='[]'
+printf '%s' "$SPECIALISTS_JSON" | jq -e 'type == "array"' >/dev/null 2>&1 || SPECIALISTS_JSON='[]'
+
 if [ "$OUTPUT_MODE" = secondmate-home-summary ]; then
   secondmate_home_summary_json "$BACKLOG_JSON_FILE" "$TASKS_JSON_FILE" \
     || { echo "fm-fleet-snapshot: secondmate home summary failed" >&2; exit 1; }
@@ -2137,6 +2178,7 @@ jq -n \
   --slurpfile scout_reports "$SCOUT_REPORTS_JSON_FILE" \
   --slurpfile secondmate_current "$SECONDMATE_CURRENT_JSON_FILE" \
   --slurpfile secondmate_landed "$SECONDMATE_LANDED_JSON_FILE" \
+  --argjson specialists "$SPECIALISTS_JSON" \
   '($backlog[0]) as $backlog
    | ($tasks[0]) as $tasks
    | ($main_inventory[0]) as $main_inventory
@@ -2153,6 +2195,7 @@ jq -n \
      roots:{fm_root:$fm_root,state:$state,data:$data,config:$config,projects:$projects},
      backlog:$backlog,
      tasks:($tasks | map(. + {backlog:backlog_by_id(.id)})),
+     specialists:$specialists,
      main_inventory:$main_inventory,
      scout_reports:($scout_reports | map(. + {kind:report_kind(.id)})),
      secondmate_current:$secondmate_current,

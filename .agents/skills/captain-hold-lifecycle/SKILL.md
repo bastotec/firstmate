@@ -22,15 +22,17 @@ The parent decides whatever is within its authority; otherwise it holds the call
 A scout that finds captain questions appends them as keyed `needs-decision` lines and stops; its parent holds them and runs `complete` for it.
 
 Every unresolved question that belongs to the captain and is discovered while producing, reading, presenting, or ending an investigation or visual review must be carried by a captain-held task in the authoritative backlog of the home that owns the originating work before that work or review may be treated as complete.
-Prefer holding the work item the question gates over minting a new row; create a new task only when no work item exists to hold.
-Put the question and its options in the hold reason, and keep one held task per genuine gate: a multi-question review is one held task pointing at its report, not a row per question. Represent that task with exactly one board card that consolidates its questions and options; never fan one task id into duplicate same-key cards.
+Prefer holding the work item the question gates over minting a new row; create separate calls only when no work item exists to hold or one item would otherwise bundle unrelated decisions.
+Put the question and its options in the hold reason, and keep one held task and one card per genuine decision.
+Unrelated questions from one review become separate held tasks and cards, each pointing at the same report; never fan one task id into duplicate same-key cards.
 Register or re-hold through `bin/fm-captain-hold.sh hold`, which is idempotent per task id.
 After inventorying the whole report and review surface, run `bin/fm-captain-hold.sh complete` with every captain-held task id, or with `--none` only when the reviewed surface leaves nothing waiting on the captain.
 A completed investigation and an ended visual review use this same owner and completion command; a visual tool, including Lavish, never owns a parallel completion policy.
 Run the command in the originating work's authoritative `FM_HOME`; secondmate-owned work registers in that secondmate home's backlog, and a question already held anywhere is never re-registered as a second row.
 Do not close a captain-held task merely because the originating investigation completed, its report was archived, its visual review ended, or its task was torn down.
 Holding the work item the question gates is safe for exactly that reason: cleanup keeps such a row open with the finished work's deliverable recorded and returns it to the queue, so it still reads as the captain's own call.
-Resolve it only through the answer, board-requested reconciliation, or stale-clear paths described below.
+Resolve it through the lifecycle owner according to what actually happened: `answer` records the captain's words, while board-requested `reconcile close` and `stale-clear` close the underlying task on evidence and are appropriate only when that work is complete or the question itself is the whole task.
+When an erroneous call gates unfinished work, use the evidence-only `withdraw` path in the script's header to retire the call without completing that work or claiming captain approval.
 
 Record captain answers without paraphrasing: `bin/fm-captain-hold.sh answer` writes his exact words into the task and closes a question-shaped call, while `--release` frees a captain-gated work item to proceed.
 A merge approval uses that existing release path because approval permits the merge to proceed; cleanup closes the work only after it lands and records what shipped.
@@ -51,7 +53,7 @@ Both outcomes refuse unless that task still has the pending request created by t
 A normal captain answer also retires any pending request because the call is settled, including close, release, and idempotent replay paths.
 A retirement failure makes the command fail without reversing the already-durable answer, close, or note, and `reconcile list` keeps the surviving request visible for retry.
 `reconcile list` names every request still outstanding.
-Never use `answer` for an evidence-only moot call: `answer` records what the captain said, while `reconcile close` records verified evidence.
+Never use `answer` for an evidence-only moot call; choose the evidence path using the unfinished-work distinction above.
 A captain-held task closed outside this owner leaves no durable answer, so the completion gate keeps failing until `answer` records the decision the captain actually gave.
 Resolved findings, recommendations that need no captain choice, and prose that merely sounds decision-like do not create held tasks.
 Bearings reads the resulting structured state and must never compensate by scraping historical reports, visual-review artifacts, terminal output, chat, or other prose.
@@ -68,10 +70,10 @@ This sequence is the parent mate's responsibility, not the worker's; the scout's
 
 1. Read the complete investigation result and complete the visual review before declaring either complete.
 2. Inventory only genuine unresolved choices that require the captain, and find the task each one gates.
-3. Hold that task - or create one captain-held task for the review's open questions - with a concise reason carrying the question and options, and its decision card (below).
+3. Hold the task each decision gates, or create a separate held call for each unrelated question, with a concise reason, its own decision card (below), and a pointer to the shared report.
 4. Run `complete` with the full captain-held inventory for that review pass.
 5. Relay the choices to the captain as decisions from Bearings' Captain's Call section under `AGENTS.md` section 9; do not use the word hold in captain chat.
-6. Record captain answers through `answer` (or a channel that feeds `answers`), close a board-requested moot call through evidence-backed `reconcile close`, handle stale candidates through the decision-card sweep below, record a still-active reconciliation through `reconcile note`, apply the dated or conditional deferral policy above, or confirm a channel already closed it.
+6. Choose the answer, evidence, or deferral outcome under Policy above, record a still-active reconciliation through `reconcile note`, or confirm a channel already settled the call.
 7. Confirm Bearings reflects the outcome: resolved calls leave Captain's Call, released work resumes, active reconciliations remain held, and deferred work sits in Charted Next with its date or condition.
 
 ## Decision cards
@@ -81,12 +83,18 @@ When you hold, author a full card with your judgment using the schema in `bin/fm
 Pass it as `bin/fm-captain-hold.sh hold <id> --reason "<reason>" --card-file <path>`; re-holding an active call this way replaces its card and keeps its timestamp.
 A script that holds on its own leaves a draft card, which is not a judgment.
 The mate whose home holds the call owns its card, a second mate included, and writes its situation and options for the captain in plain words.
+Write it so a person can act on it without context: the title says what happened and asks the question, the situation adds only what the choice needs, and each option says what it does, with no task names, run ids, hashes or other internal jargon (`bin/fm-card.sh` refuses those).
+For example: "The release is ready. Publish today or wait until Monday?"
+One decision per card: never bundle unrelated questions, and keep each option label a short phrase while its instruction carries the detail; `bin/fm-card.sh` owns the enforced wording limits.
+A card is normal priority; mark it urgent only for production down, customer-facing breakage, money, or a real external secret exposure, using the reason schema in `bin/fm-card.sh`.
+Before raising a token concern or pursuing a side investigation, follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, the owner of exposure triage and the investigation time-box.
+Housekeeping is never a captain call: leftover branches or local commits after a merge, worktree or slot cleanup, and stale scratch are yours to resolve (see `task-delivery`'s finished-work sweep), at most mentioned as an FYI.
 To replace a draft without touching the hold, run `bin/fm-card.sh write <id> --file <path>`.
 When the session-start digest's `DECISION CARDS` subsection lists calls without a full card, write one for each before going idle, once this session has verified lock ownership.
 It also lists every open captain call: before going idle, check each one's hold reason, body, and the captain's recorded preferences, and record any answer he already gave instead of leaving it in front of him, with `--defer` when that answer waits on a condition.
 This reconciles calls the home already holds and so binds an idle second mate too; `bin/fm-session-start.sh`'s header owns startup backfill and listing mechanics.
 On every heartbeat, run `bin/fm-card.sh backfill` first, then replace each draft with a full card, then run `bin/fm-card.sh stale`.
-Under the captain's standing ruling of 2026-10-07, check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"`, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
+Under the captain's standing ruling of 2026-10-07, check each candidate's evidence yourself, clear the ones it confirms with `bin/fm-card.sh clear <id> --why "<one line of evidence>"` subject to Policy's unfinished-work distinction, keep any call the captain still needs, and tell the captain how many you cleared and why in your next natural reply.
 A message "card <id>: option <key>" is the captain choosing that option; a redirect text is the captain's words too.
 A needs-you card raised by `bin/fm-machine-blocker.sh` is the exception: never record its option through `answer`; follow its instruction, and only a passing re-check closes it.
 The home that holds the call resolves it: a second mate answers a call in its own backlog through the steps below, and a home that does not hold the call forwards the captain's exact words to the second mate that does through `bin/fm-send.sh`.

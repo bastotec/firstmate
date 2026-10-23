@@ -136,10 +136,18 @@
 #   set (its header owns the refusal). A secondmate runs in its own home and is
 #   not marked.
 #   Only after this isolation check, every fresh ship or scout requires a clean
-#   task worktree. If a pooled slot's only dirt is a wholly untracked .scratch/
-#   directory (not a symlink, with nothing tracked beneath it), spawn moves it
-#   intact to state/slot-quarantine/<slot>-<epoch>/.scratch and rechecks cleanliness.
-#   It never deletes that work; any other dirt refuses without moving it.
+#   task worktree. If a pooled slot's only dirt is untracked leftovers of a
+#   previous worker - a wholly untracked .scratch/ directory at any age, or any
+#   other untracked path whose own and descendants' modification times are at
+#   least a day old (1440 minutes) - and all candidates and descendants are
+#   readable, with searchable directories, no symlinks, and nothing tracked,
+#   spawn moves them intact to
+#   state/slot-quarantine/<slot>-<epoch>/ (same relative paths) and rechecks
+#   cleanliness. The age threshold is fixed; a regular file named .scratch
+#   has no age exemption. All candidates are inspected before any move; any
+#   ineligible dirt or failed inspection refuses without moving anything.
+#   A move failure refuses and attempts to restore already-moved paths; a failed
+#   restore reports the path preserved in quarantine. No leftover is deleted.
 #   When an origin configuration is detected, spawn fetches it,
 #   resolves the current remote default branch, and resets to its tip. When none
 #   is detected, spawn skips that remote freshness check and launches from the
@@ -226,6 +234,22 @@
 # one W3C traceparent= carrier, the same value injected into the pane as
 # TRACEPARENT; the default-off path writes neither, leaving the generated meta
 # and launch environment unchanged.
+#   Serialized spawns: fresh spawns serialize per home. The outer invocation
+#   holds state/.spawn-serial.lock (waiting up to FM_SPAWN_SERIAL_WAIT_SECS,
+#   900, then launching anyway with a warning) and runs the spawn as a child.
+#   --relaunch bypasses this wrapper: it reuses the recorded worktree and
+#   endpoint, and must preserve fm-control's parent-owned control-lock handoff.
+#   A child refused with "endpoint superseded", "endpoint_superseded", or
+#   "duplicate_label" is retried after FM_SPAWN_TRANSIENT_RETRY_SECS (10), at
+#   most FM_SPAWN_TRANSIENT_RETRIES (2) times; any other refusal is final.
+#   A failed spawn closes the endpoint it created only if record publication
+#   has not started and no task meta exists, so an unpublished endpoint does
+#   not keep the retry's label registered. A pooled slot that reads dirty is
+#   rechecked once after FM_SPAWN_DIRTY_RECHECK_SECS (3) before the "is not
+#   clean" refusal, to tolerate checkout settling without discarding dirt.
+#   FM_SPAWN_SERIAL_CHILD is a test seam naming the child.
+#   Regressions: tests/fm-spawn-serial.test.sh and
+#   tests/fm-spawn-pool-base-freshen.test.sh.
 #   --traceparent <carrier> delivers a carrier that a REMOTE parent already
 #   resolved and will record, instead of resolving one from this home's frozen
 #   decision. It is accepted only for --secondmate spawns, only as a strictly
@@ -790,6 +814,7 @@ SPAWN_TASK_SET_LOCK_HELD=0
 SPAWN_TREEHOUSE_PROJECT_LOCK=
 SPAWN_TREEHOUSE_PROJECT_LOCK_HELD=0
 SPAWN_SLOT_CLAIMED=0
+SPAWN_ENDPOINT_CREATED=0
 RELAUNCH_REPLACEMENT_PENDING=0
 RELAUNCH_REPLACEMENT_BUSY_GEN=
 RELAUNCH_REPLACEMENT_HARNESS=
@@ -877,6 +902,17 @@ spawn_abort_cleanup() {
     fm_lock_release "$SPAWN_CONTROL_LOCK" || true
   fi
   [ -z "$SPAWN_META_TMP" ] || rm -f "$SPAWN_META_TMP" 2>/dev/null || true
+  # A fresh endpoint this spawn created for a task no record describes would
+  # keep its label (fm-<id>) registered, so the next attempt is refused as
+  # "endpoint superseded". This spawn knows that endpoint's own id, so it
+  # closes exactly that one.
+  if [ "$status" -ne 0 ] && [ "$SPAWN_ENDPOINT_CREATED" = 1 ] \
+     && [ "$SPAWN_META_PUBLISH_STARTED" = 0 ] \
+     && [ ! -e "$STATE/$ID.meta" ] && [ ! -L "$STATE/$ID.meta" ]; then
+    SPAWN_ENDPOINT_CREATED=0
+    fm_backend_stream_kill "$T" "" "$W" >/dev/null 2>&1 \
+      || echo "warning: could not close task $ID's endpoint $T after the aborted spawn" >&2
+  fi
   if [ "$CONFIG_INHERIT_LOCK_HELD" = 1 ]; then
     CONFIG_INHERIT_LOCK_HELD=0
     fm_lock_release "$CONFIG_INHERIT_LOCK" || true
@@ -944,6 +980,50 @@ if [ "${#POS[@]}" -gt 0 ] && [ "${POS[0]}" != "$idpart" ] && case "$idpart" in *
   done
   exit "$rc"
 fi
+
+# Serialization policy lives in the header's "Serialized spawns" section.
+# Recognize the child by the holder pid its parent exported, so an agent that
+# merely inherited the variable is not mistaken for the wrapper's child.
+spawn_serialized() {
+  local lock="$STATE/.spawn-serial.lock" attempt=0 rc err held=0
+  local retries=${FM_SPAWN_TRANSIENT_RETRIES:-2} delay=${FM_SPAWN_TRANSIENT_RETRY_SECS:-10}
+  local wait_max=${FM_SPAWN_SERIAL_WAIT_SECS:-900}
+  case "$retries" in ''|*[!0-9]*) retries=2 ;; esac
+  case "$delay" in ''|*[!0-9]*) delay=10 ;; esac
+  case "$wait_max" in ''|*[!0-9]*) wait_max=900 ;; esac
+  if [ "$wait_max" -eq 0 ]; then
+    fm_lock_try_acquire "$lock" && held=1
+  elif fm_lock_acquire_wait_bounded "$lock" "$wait_max"; then
+    held=1
+  fi
+  if [ "$held" -eq 0 ]; then
+    echo "warning: another spawn in this home still holds $lock; launching ${POS[0]} without waiting longer" >&2
+  fi
+  err=$(mktemp "${TMPDIR:-/tmp}/fm-spawn-err.XXXXXX") || err=/dev/null
+  while :; do
+    rc=0
+    FM_SPAWN_SERIAL_HOLDER=$$ FM_SPAWN_NO_GUARD=1 "${FM_SPAWN_SERIAL_CHILD:-$SCRIPT_DIR/fm-spawn.sh}" "$@" 2>"$err" || rc=$?
+    [ "$err" = /dev/null ] || cat "$err" >&2
+    if [ "$rc" -ne 0 ] && [ "$attempt" -lt "$retries" ] && [ "$err" != /dev/null ] \
+       && grep -qE "endpoint superseded|endpoint_superseded|duplicate_label" "$err"; then
+      attempt=$((attempt + 1))
+      echo "notice: ${POS[0]}'s spawn hit a transient refusal; retrying in ${delay}s (retry $attempt of $retries)" >&2
+      sleep "$delay"
+      continue
+    fi
+    break
+  done
+  [ "$err" = /dev/null ] || rm -f "$err"
+  [ "$held" = 0 ] || fm_lock_release "$lock" >/dev/null 2>&1 || true
+  return "$rc"
+}
+if [ "$RELAUNCH" -eq 0 ] && [ "${FM_SPAWN_SERIAL_HOLDER:-}" != "$PPID" ]; then
+  serial_rc=0
+  spawn_serialized "$@" || serial_rc=$?
+  exit "$serial_rc"
+fi
+unset FM_SPAWN_SERIAL_HOLDER
+
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
 if [ -e "$STATE" ] || [ -L "$STATE" ]; then
@@ -1757,32 +1837,67 @@ spawn_worktree_has_origin_config() {  # <worktree>
   return 1
 }
 
-# The header owns scratch quarantine eligibility and preservation. Requiring
-# no tracked entries prevents moving clean tracked files alongside untracked dirt.
-quarantine_spawn_slot_scratch() {  # <worktree> <porcelain status>
-  local worktree=$1 status=$2 line dest tracked
-  [ -n "$status" ] || return 1
-  while IFS= read -r line; do
-    case "$line" in '?? .scratch/'|'?? .scratch/'*) ;; *) return 1 ;; esac
-  done <<EOF
-$status
-EOF
-  [ -d "$worktree/.scratch" ] && [ ! -L "$worktree/.scratch" ] || return 1
-  tracked=$(git -C "$worktree" ls-files -- .scratch) || return 1
-  [ -z "$tracked" ] || return 1
+# The header owns leftover quarantine eligibility and preservation.
+# Requiring no tracked entries prevents moving clean tracked files alongside untracked dirt.
+quarantine_spawn_slot_scratch() {  # <worktree>
+  local worktree=$1 line path dest parent tracked recent unsafe inspected=0 scratch_seen=0 moved=0 i
+  local -a paths=()
+  while IFS= read -r -d '' line; do
+    case "$line" in '') inspected=1; break ;; '?? '*) ;; *) return 1 ;; esac
+    path=${line#?? }
+    path=${path%/}
+    case "$path" in
+      .scratch|.scratch/*)
+        path=.scratch
+        [ "$scratch_seen" -eq 0 ] || continue
+        scratch_seen=1
+        ;;
+    esac
+    case "$path" in ''|.|..|/*|../*|*/../*|.git|.git/*) return 1 ;; esac
+    [ -e "$worktree/$path" ] && [ ! -L "$worktree/$path" ] || return 1
+    tracked=$(git --literal-pathspecs -C "$worktree" ls-files -- "$path") || return 1
+    [ -z "$tracked" ] || return 1
+    unsafe=$(find "$worktree/$path" \( -type l -o ! -exec test -r {} \; -o \( -type d ! -exec test -x {} \; \) \) -print -quit 2>/dev/null) || return 1
+    [ -z "$unsafe" ] || return 1
+    if [ "$path" != .scratch ] || [ ! -d "$worktree/$path" ]; then
+      recent=$(find "$worktree/$path" -mmin -1440 -print -quit 2>/dev/null) || return 1
+      [ -z "$recent" ] || return 1
+    fi
+    paths+=("$path")
+  done < <(git -C "$worktree" status --porcelain=v1 --untracked-files=normal -z && printf '\0')
+  [ "$inspected" -eq 1 ] && [ "${#paths[@]}" -gt 0 ] || return 1
   dest="$STATE/slot-quarantine/$(basename "$worktree")-$(date +%s)"
-  mkdir -p "$dest" && mv "$worktree/.scratch" "$dest/.scratch" || return 1
-  echo "notice: pooled worktree '$worktree' held only a previous worker's .scratch/; moved it to $dest/.scratch and continuing" >&2
+  for path in "${paths[@]}"; do
+    parent=.
+    case "$path" in */*) parent=${path%/*} ;; esac
+    if ! { mkdir -p "$dest/$parent" && mv "$worktree/$path" "$dest/$path"; }; then
+      for ((i=moved-1; i>=0; i--)); do
+        path=${paths[i]}
+        mv "$dest/$path" "$worktree/$path" || echo "error: could not restore '$worktree/$path'; preserved at '$dest/$path'" >&2
+      done
+      return 1
+    fi
+    moved=$((moved+1))
+  done
+  echo "notice: pooled worktree '$worktree' held only a previous worker's untracked leftovers (${paths[*]}); moved them to $dest and continuing" >&2
 }
 
+SPAWN_DIRTY_RECHECK_SECS=${FM_SPAWN_DIRTY_RECHECK_SECS:-3}
+case "$SPAWN_DIRTY_RECHECK_SECS" in ''|*[!0-9]*) SPAWN_DIRTY_RECHECK_SECS=3 ;; esac
 freshen_spawn_worktree_base() {  # <worktree>
   local worktree=$1 default target expected actual status
-  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || {
+  status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || {
     echo "error: could not inspect pooled worktree '$worktree' before refreshing its base" >&2
     return 1
   }
-  if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree" "$status"; then
-    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain) || return 1
+  if [ -n "$status" ] && quarantine_spawn_slot_scratch "$worktree"; then
+    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || return 1
+  fi
+  # Dirt a slot shows while its checkout is still settling is gone moments
+  # later (header "Serialized spawns"), so one recheck precedes the refusal.
+  if [ -n "$status" ]; then
+    sleep "$SPAWN_DIRTY_RECHECK_SECS"
+    status=$(git -C "$worktree" -c core.quotePath=false status --porcelain --untracked-files=normal) || return 1
   fi
   if [ -n "$status" ]; then
     if describe_stale_submodule_pins "$worktree" "$status"; then
@@ -1903,6 +2018,7 @@ EOF
     exit 1
   fi
   T="$STREAM_TAG:$STREAM_ENDPOINT_ID"
+  SPAWN_ENDPOINT_CREATED=1
 fi
 if [ "$KIND" = secondmate ]; then
   FM_INHERITABLE_CONFIG=trace-context \

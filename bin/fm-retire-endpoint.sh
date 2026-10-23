@@ -3,11 +3,11 @@
 # stop, on an operator's explicit say-so or, with --finished, on the owning
 # mate's proof that the work is finished.
 #
-# No daemon runs this script or produces what it writes. Cleanup on its own
-# never retires such a record - bin/fm-teardown.sh's endpoint gates refuse on a
-# stop nothing proved, and --force does not lift them - so these records would
-# otherwise stay forever. This is the one way they are ever retired, and it
-# runs only when someone names them.
+# Retirement requires a named record and an explicit basis, never just a
+# missing endpoint. Cleanup on its own never retires such a record -
+# bin/fm-teardown.sh's endpoint gates refuse on a stop nothing proved, and
+# --force does not lift them. The idle sweep can invoke --finished under the
+# narrower proof below; operator retirement requires inspecting the machine.
 #
 # --finished is the owning mate's path, under the captain's standing
 # instruction that whoever created a worker cleans it up once its work is done.
@@ -17,13 +17,27 @@
 # ship only while its worktree is still this task's own, so cleanup's
 # landed-work gate actually runs; when tmux is installed, its inventory must
 # be readable and omit the window, or definitively report no server; and it
-# never proceeds past cleanup's work-protection gate, so unlanded or
-# uncommitted work, a scout without its report, or an
+# never proceeds past cleanup's work-protection gate. It invokes teardown with
+# --keep-commits; bin/fm-teardown.sh's header owns that preservation contract.
+# Work that still fails that gate, a scout without its report, or an
 # unresolved captain decision retires nothing. Its basis is that cleanup, once
 # those gates pass, has already stopped every process under the worktree before
 # it reaches the endpoint. It skips the type-back prompt because an agent runs
-# it, and records basis=finished-work in the assertion log instead. Anything it
-# refuses goes to the captain as a decision.
+# it, and records basis=finished-work in the assertion log instead. Refusals
+# follow .agents/skills/task-delivery/SKILL.md's finished-work sweep policy.
+# --merged-pr <url> is accepted only with --finished and exactly one task id;
+# it forwards a supported PR/MR URL to teardown for live forge verification
+# when metadata and backlog do not record it. This also carries a ledger-only
+# URL across the idle sweep's retirement fallback.
+# --expected-record <metadata> is also restricted to --finished with one task
+# id. It checks the caller's snapshot under the control lock before recording
+# an assertion (exit 3 on mismatch), then forwards the same snapshot to
+# teardown's independently locked admission guard; see its header.
+# --if-still-stopped <status-bytes> requires --expected-record, checks activity
+# before recording the assertion, and forwards the guard to teardown.
+# --expected-state done selects teardown's finished-worker admission instead;
+# it requires --if-still-stopped. Teardown's header owns both admission modes
+# and the later rechecks; an activity refusal exits 3.
 #
 # Absence from the hub is never proof that a worker stopped: a same-protocol
 # restart clears the registry while live agents rejoin on their own schedule,
@@ -84,6 +98,8 @@ if [ "$#" -eq 1 ] && [ "$1" = --list-orphans ] \
 fi
 # shellcheck source=bin/fm-backend.sh
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-busy-lib.sh
+. "$SCRIPT_DIR/fm-busy-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
@@ -97,6 +113,7 @@ usage() {
   cat <<'EOF'
 usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> --merged-pr <url>
        FM_HOME=<owning-home> fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
 
@@ -177,19 +194,27 @@ that owns the records, asks for no typed confirmation, and takes only:
     can be read and does not list its window, or tmux definitively reports
     that no server is running.
 
-Cleanup's work-protection refusal is NOT proceeded past: unlanded or
-uncommitted work, a scout whose report is missing, or a captain decision the
-report still leaves open retires nothing. Cleanup stops every process under
-the worktree before it reaches the endpoint, which is what stands behind the
-stop this asserts. The log line carries basis=finished-work. Anything refused
-here is the captain's decision.
+--finished invokes cleanup with --keep-commits: unlanded work is never
+discarded; a merged task's clean leftover commits are saved on a kept/ branch
+under bin/fm-teardown.sh's header contract. Every other refusal stands.
+Cleanup's work-protection refusal is NOT proceeded past: work still failing
+that gate, a scout whose report is missing, or a captain decision the report
+still leaves open retires nothing. Cleanup stops every process under the
+worktree before it reaches the endpoint, which is what stands behind the stop
+this asserts. The log line carries basis=finished-work. Refusals belong to the
+owning mate under .agents/skills/task-delivery/SKILL.md's finished-work sweep.
+
+--merged-pr <url> supplies the PR/MR URL for one --finished task when it is
+not recorded in its metadata or backlog. Cleanup rechecks its live forge state
+before preserving any committed work on a kept/ branch.
 
 --orphan: close one live stream endpoint whose task record in this home is
 already gone. It needs an explicit FM_HOME and asks for no typed confirmation.
 Ownership needs this home's state/<id>.inbox/deck-<endpoint-id>/ record plus
 label fm-<id>; a label or local process match alone is never enough.
 bin/fm-retire-orphan-lib.sh's header owns the full eligibility checks and the
-remaining check-to-kill race. Refusals are the captain's decision.
+remaining check-to-kill race. Refusals belong to the owning mate under
+.agents/skills/task-delivery/SKILL.md's finished-work sweep.
 Task files, worktrees, branches and backlog rows remain untouched; the command
 writes its assertion log and locking records.
 
@@ -212,6 +237,11 @@ refuse() {
 
 IDS=()
 FINISHED=0
+MERGED_PR_URL=
+EXPECTED_RECORD=
+EXPECTED_RECORD_SET=0
+STOPPED_STATUS_SIZE=
+EXPECTED_STATE=stopped
 OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
@@ -226,6 +256,30 @@ while [ "$#" -gt 0 ]; do
       ;;
     --finished)
       FINISHED=1
+      ;;
+    --merged-pr)
+      if [ "$#" -eq 0 ] || ! fm_pr_url_parse "$1"; then
+        refuse "--merged-pr requires a supported PR/MR URL"
+      fi
+      MERGED_PR_URL=$1
+      shift
+      ;;
+    --expected-record)
+      [ "$#" -gt 0 ] || refuse "--expected-record needs metadata"
+      EXPECTED_RECORD=$1
+      EXPECTED_RECORD_SET=1
+      shift
+      ;;
+    --expected-state)
+      [ "$#" -gt 0 ] && [ "$1" = 'done' ] || refuse "--expected-state requires done"
+      EXPECTED_STATE=$1
+      shift
+      ;;
+    --if-still-stopped)
+      [ "$#" -gt 0 ] || refuse "--if-still-stopped needs a status byte count"
+      case "$1" in ''|*[!0-9]*) refuse "--if-still-stopped needs a status byte count" ;; esac
+      STOPPED_STATUS_SIZE=$1
+      shift
       ;;
     --override-runtime-refusal)
       OVERRIDE_RUNTIME_REFUSAL=1
@@ -256,6 +310,23 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+if [ "$EXPECTED_RECORD_SET" = 1 ]; then
+  [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
+    || refuse "--expected-record requires --finished with exactly one task id"
+fi
+
+if [ "$EXPECTED_STATE" = 'done' ]; then
+  [ -n "$STOPPED_STATUS_SIZE" ] || refuse "--expected-state requires --if-still-stopped"
+fi
+if [ -n "$STOPPED_STATUS_SIZE" ]; then
+  [ "$EXPECTED_RECORD_SET" = 1 ] || refuse "--if-still-stopped requires --expected-record"
+fi
+
+if [ -n "$MERGED_PR_URL" ]; then
+  [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
+    || refuse "--merged-pr requires --finished with exactly one task id"
+fi
 
 if [ "$ORPHAN" = 1 ] || [ "$LIST_ORPHANS" = 1 ]; then
   [ "$FINISHED" = 0 ] || refuse "--finished retires task records; --orphan and --list-orphans close endpoints that have none - use one mode"
@@ -297,7 +368,12 @@ for id in "${IDS[@]}"; do
 done
 
 NOTE=
+EXPECTED_LOCK_HELD=0
 cleanup_note() {
+  if [ "$EXPECTED_LOCK_HELD" = 1 ]; then
+    fm_lock_release "$expected_lock" || true
+    EXPECTED_LOCK_HELD=0
+  fi
   [ -z "$NOTE" ] || rm -f "$NOTE"
   NOTE=
 }
@@ -445,8 +521,8 @@ retirement_done_args() {  # <id> <pr> <verdict>
 # with its deliverable, exactly as cleanup and the session-start replay do, so
 # a retirement never quietly answers the captain's own question.
 # The record-only mutation runs under the task's control lock, the same lock
-# cleanup, relaunch and an idle-sweep hold (bin/fm-captain-hold.sh
-# --expected-record) take, so none of them acts on a record mid-retirement.
+# cleanup, relaunch and snapshot-guarded holds take, so none of them acts on a
+# record mid-retirement.
 # Revalidate the pre-cleanup snapshot under that lock: an assertion for the
 # old incarnation must not retire a replacement published while we waited.
 # Regression coverage: tests/fm-teardown-endpoint-safety.test.sh.
@@ -590,9 +666,22 @@ for id in "${IDS[@]}"; do
     echo "error: $id's task record could not be read before retirement; nothing was retired" >&2
     continue
   fi
+  if [ "$EXPECTED_RECORD_SET" = 1 ]; then
+    expected_lock="$STATE/.control-$id.lock"
+    fm_lock_try_acquire "$expected_lock" || refuse "another lifecycle action is already running for task $id"
+    EXPECTED_LOCK_HELD=1
+    if ! retirement_record=$(cat "$STATE/$id.meta" 2>/dev/null) || [ "$retirement_record" != "$EXPECTED_RECORD" ]; then
+      printf 'worker record %s changed or vanished\n' "$id" >&2
+      exit 3
+    fi
+    if [ -n "$STOPPED_STATUS_SIZE" ]; then
+      fm_busy_admit_stopped "$STATE/$id.meta" "$id" "$STATE" "$EXPECTED_RECORD" "$STOPPED_STATUS_SIZE" "$SCRIPT_DIR" "$EXPECTED_STATE" || exit $?
+    fi
+  fi
   worktree=$(fm_meta_get "$STATE/$id.meta" worktree)
   endpoint=$(fm_backend_target_of_meta "$STATE/$id.meta")
   if ! record_retirement_assertion "$id"; then
+    cleanup_note
     status=1
     echo "error: the assertion that $id should be retired could not be recorded in $RETIREMENT_LOG; nothing was retired - a record is never removed without a durable author" >&2
     continue
@@ -609,15 +698,27 @@ for id in "${IDS[@]}"; do
     echo "note: $id is being retired with a runtime refusal overridden by $retired_by at $retired_at" >&2
   fi
   teardown_rc=0
-  "$SCRIPT_DIR/fm-teardown.sh" "$id" || teardown_rc=$?
+  teardown_args=("$id")
+  if [ "$EXPECTED_RECORD_SET" = 1 ]; then
+    teardown_args+=(--expected-record "$EXPECTED_RECORD")
+    fm_lock_release "$expected_lock"
+    EXPECTED_LOCK_HELD=0
+  fi
+  [ -z "$STOPPED_STATUS_SIZE" ] || teardown_args+=(--if-still-stopped "$STOPPED_STATUS_SIZE")
+  [ "$EXPECTED_STATE" != 'done' ] || teardown_args+=(--expected-state 'done')
+  [ "$FINISHED" = 0 ] || teardown_args+=(--keep-commits)
+  [ -z "$MERGED_PR_URL" ] || teardown_args+=(--merged-pr "$MERGED_PR_URL")
+  "$SCRIPT_DIR/fm-teardown.sh" "${teardown_args[@]}" || teardown_rc=$?
   if [ "$teardown_rc" = 0 ]; then
     echo "note: $id retired; cleanup completed under the retirement recorded for $retired_by at $retired_at" >&2
+  elif [ "$teardown_rc" = 3 ] && [ -n "$STOPPED_STATUS_SIZE" ]; then
+    status=3
   elif [ "$teardown_rc" = "$RUNTIME_REFUSAL_EXIT" ]; then
     status=1
     echo "error: $id's runtime reported the endpoint still present and this retirement did not override that; nothing was retired - rerun with --override-runtime-refusal if you have verified no worker is still running behind it" >&2
   elif [ "$teardown_rc" = "$WORK_GATE_EXIT" ] && [ "$FINISHED" = 1 ]; then
     status=1
-    echo "error: cleanup for $id refused over unlanded or uncommitted work in its worktree, so it is not finished; nothing was retired, and this is the captain's decision" >&2
+    echo "error: cleanup for $id refused over unlanded or uncommitted work in its worktree, so it is not finished; nothing was retired - the owning mate decides under .agents/skills/task-delivery/SKILL.md's finished-work sweep" >&2
   elif [ "$teardown_rc" != "$WORK_GATE_EXIT" ]; then
     status=1
     if [ -e "$STATE/$id.meta" ] || [ -L "$STATE/$id.meta" ]; then

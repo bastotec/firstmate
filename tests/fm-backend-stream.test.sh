@@ -1278,11 +1278,30 @@ test_spawn_hosts_a_deck_secondmate() {
   mkdir -p "$CASE_DIR/home/data"
   printf 'deck\n' > "$CASE_DIR/home/config/secondmate-harness"
   printf 'manual\n' > "$CASE_DIR/home/config/backlog-backend"
+  mkdir -p "$home/selected-tools"
+  printf '%s\n' "$home/selected-tools" > "$home/config/secondmate-tool-path"
+  cat > "$home/selected-tools/node" <<'SH'
+#!/bin/sh
+if [ "$1" = --version ]; then echo v99.0.0; else exec /bin/sh "$@"; fi
+SH
+  cat > "$home/selected-tools/quota-axi" <<'SH'
+#!/usr/bin/env node
+echo 99.0.0
+SH
+  chmod +x "$home/selected-tools/node" "$home/selected-tools/quota-axi"
   # The real host driver and stream transport run; only startup diagnostics,
   # watcher timing, and model calls are shimmed. No shared runtime is touched.
   cat > "$code/bin/fm-session-start.sh" <<'SH'
 #!/usr/bin/env bash
 "$(dirname "$0")/fm-lock.sh" || exit
+# Execute the bootstrap's real compatibility consumer through the home host's
+# PATH, not a manually scoped command or an assertion over environment strings.
+. "$(dirname "$0")/fm-quota-axi-lib.sh"
+{
+  node --version
+  quota-axi --version
+  fm_quota_axi_compatible && echo compatible
+} > "$FM_HOME/startup-tools"
 cat "$FM_HOME/state/.lock" > "$FM_HOME/state/.session-start-complete"
 printf 'fixture startup\n'
 SH
@@ -1323,6 +1342,8 @@ PY
   assert_grep 'kind=secondmate' "$CASE_DIR/home/state/$id.meta" "spawn lost the secondmate kind"
   assert_grep "home=$home" "$CASE_DIR/home/state/$id.meta" "spawn lost the isolated home"
   wait_for_capture "$target" FIXTURE-TURN-DELIVERED || fail "spawn never ran the Deck charter turn"
+  assert_equals "$(printf 'v99.0.0\n99.0.0\ncompatible')" "$(cat "$home/startup-tools")" \
+    "actual spawn/PTY/home startup did not execute the explicitly selected tools"
   # Output can arrive before the next heartbeat publishes the new foreground
   # process. Wait for that protocol observation, not an arbitrary sleep.
   wait_for_agent_state "$target" alive

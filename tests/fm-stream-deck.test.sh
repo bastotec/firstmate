@@ -654,3 +654,67 @@ assert conversation_busy(state, 'task'), 'a running turn, a recovery included, k
 assert not conversation_busy(state, 'task'), 'no lane, no conversation work'
 print('PASS a conversation lane keeps every party record from the supervisor, and the recorded stream decides')
 PY
+python3 - "$ROOT" "$LAB/handoff" <<'PY'
+import fcntl, os, pathlib, signal, subprocess, sys, time
+root, state = map(pathlib.Path, sys.argv[1:])
+sys.path.insert(0, str(root/'bin'))
+from fm_stream_deck import Receiver
+state.mkdir()
+(state/'task.captain-lane').touch()
+receiver = Receiver(state, 'task', 'a'*32)
+turn = pathlib.Path(receiver.start('live', True))
+env = dict(os.environ, FM_CAPTAIN_LANE_STATE=str(state), FM_CAPTAIN_LANE_ID='task')
+text = 'Completed synthetic audit: preserve these words.\nSecond line: café.'
+def handoff():
+    start = time.monotonic()
+    with subprocess.Popen([str(root/'bin/fm-captain-handoff.sh'), '--from', 'firstmate', text],
+                          env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                          start_new_session=True) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=4)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+    elapsed = time.monotonic() - start
+    assert result.returncode == 0, result.stderr
+    source = pathlib.Path(next(line.split('=', 1)[1] for line in result.stdout.splitlines()
+                               if line.startswith('handed-over=')))
+    assert source.is_file() and source.read_text().endswith('From the first mate: ' + text)
+    assert not (source.parent/'handled'/source.name).exists()
+    return source, result.stderr, elapsed
+source, diagnostic, normal = handoff()
+assert (turn/(str(int(source.stem))+'.msg')).is_file(), 'normal native publication'
+print('normal handoff elapsed=%.3fs' % normal)
+# Keep handled history in the real scanner path, but no history item is eligible.
+for n in range(1000, 1100):
+    (source.parent/'handled'/('%d.msg' % n)).write_text('schema=fm-task-inbox.v1\n--\nordinary history\n')
+with (receiver.root/'.lifecycle.lock').open('a') as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    try:
+        source, diagnostic, contended = handoff()
+        original = source.read_bytes()
+        assert not (turn/(str(int(source.stem))+'.msg')).exists()
+    finally:
+        fcntl.flock(lock, fcntl.LOCK_UN)
+assert contended < 4, contended
+assert 'enqueue elapsed_ms=' in diagnostic
+assert 'lifecycle-lock phase=waiting' in diagnostic
+assert 'lifecycle-lock phase=acquired' not in diagnostic
+assert 'projection phase=started' not in diagnostic
+assert 'native-publication outcome=timeout' in diagnostic
+assert text not in diagnostic and str(state) not in diagnostic, 'timings must not disclose payloads or paths'
+# The existing driver publication entry point must still consume the intact source.
+result = subprocess.run([sys.executable, str(root/'bin/fm_stream_deck.py'), 'captain', str(state), 'task'],
+                        capture_output=True, text=True, check=True, timeout=4)
+assert int(result.stdout) == 1
+assert source.read_bytes() == original
+assert text in (turn/(str(int(source.stem))+'.msg')).read_text()
+assert not (source.parent/'handled'/source.name).exists(), 'publication never acknowledges'
+source, diagnostic, recovered = handoff()
+assert 'lifecycle-lock phase=acquired elapsed_ms=' in diagnostic
+assert 'projection phase=completed elapsed_ms=' in diagnostic
+assert 'native-publication outcome=completed' in diagnostic
+print('PASS bounded handoff with held lifecycle lock elapsed=%.3fs; fallback and normal publication elapsed=%.3fs' % (contended, recovered))
+PY

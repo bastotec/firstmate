@@ -20,7 +20,8 @@
 # on every wake. Printed reason lines:
 #   signal: <file>...      status/turn-end signals, surfaced when a listed status
 #                          span has a captain-relevant event OR a no-verb signal lacks
-#                          positive execution evidence, unless afk is active
+#                          positive execution evidence, unless afk is active; a
+#                          span of only quiet replies is absorbed (signal_files_only_quiet)
 #   stale: <window>        a provably-working stale is ALWAYS absorbed (with a wedge
 #                          timer) regardless of what the status log says - an active
 #                          run-step or busy pane outranks even a captain-relevant log
@@ -155,6 +156,22 @@
 #                          bin/fm-parked-run-watch.sh, which this watcher runs
 #                          detached every FM_PARKED_RUN_INTERVAL seconds (600)
 #                          while the home records a worker
+#   check: stalled CI: ...
+#                          surfaced once from a queue row keyed
+#                          ci-stall:<id>:<epoch>, queued by bin/fm-ci-stall.sh;
+#                          its Python docstring owns recovery and escalation.
+#                          This watcher runs it detached every
+#                          FM_CI_STALL_INTERVAL seconds (600) only when a worker
+#                          meta records pr=https://github.com/...
+#   check: worker keep-alive: ...
+#                          surfaced once from a queue row keyed
+#                          keepalive:<id>:<condition>:<epoch>, queued by
+#                          bin/fm-worker-keepalive.sh; its Python docstring owns
+#                          what is stuck, the instruction and the escalation.
+#                          This watcher runs it detached every
+#                          FM_KEEPALIVE_INTERVAL seconds (300) while the home
+#                          records a ship, scout or second mate or retains keep-alive
+#                          episode records that may need departure resolution
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
@@ -310,6 +327,10 @@ esac
 SECONDMATE_REVIVE_INTERVAL=${FM_SECONDMATE_REVIVE_INTERVAL:-30}
 PARKED_RUN_INTERVAL=${FM_PARKED_RUN_INTERVAL:-600}
 case "$PARKED_RUN_INTERVAL" in ''|*[!0-9]*|0) PARKED_RUN_INTERVAL=600 ;; esac
+KEEPALIVE_INTERVAL=${FM_KEEPALIVE_INTERVAL:-300}
+case "$KEEPALIVE_INTERVAL" in ''|*[!0-9]*|0) KEEPALIVE_INTERVAL=300 ;; esac
+CI_STALL_INTERVAL=${FM_CI_STALL_INTERVAL:-600}
+case "$CI_STALL_INTERVAL" in ''|*[!0-9]*|0) CI_STALL_INTERVAL=600 ;; esac
 IDLE_SWEEP_INTERVAL=${FM_IDLE_SWEEP_SECS:-1800}
 case "$IDLE_SWEEP_INTERVAL" in ''|*[!0-9]*|0) IDLE_SWEEP_INTERVAL=1800 ;; esac
 case "$SECONDMATE_REVIVE_INTERVAL" in ''|*[!0-9]*|0) SECONDMATE_REVIVE_INTERVAL=30 ;; esac
@@ -1743,7 +1764,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" crew_done=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" quiet="" keepalive="" crew_done=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1755,7 +1776,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*|specialist:*|group:*|group-cleanup:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|keepalive:*|ci-stall:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*|specialist:*|group:*|group-cleanup:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1772,6 +1793,14 @@ procevent_surface_queued() {
       lane-heal:*)
         key=${key#lane-heal:}
         lanes="$lanes ${key%%:*}"
+        ;;
+      worker-quiet:*)
+        key=${key#worker-quiet:}
+        quiet="$quiet ${key%%:*}"
+        ;;
+      keepalive:*)
+        key=${key#keepalive:}
+        keepalive="$keepalive ${key%%:*}"
         ;;
       parked-run:*)
         key=${key#parked-run:}
@@ -1807,6 +1836,14 @@ procevent_surface_queued() {
   if [ -n "$parked" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason worker run parked too long:$parked"
+  fi
+  if [ -n "$keepalive" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason worker keep-alive (read each row's instruction):$keepalive"
+  fi
+  if [ -n "$quiet" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason worker check-in:$quiet"
   fi
   if [ -n "$idle" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
@@ -1975,6 +2012,20 @@ signal_files_actionable() {  # <status-file> ...
   return "$found"
 }
 
+# 0 when every file in a signal batch is a status log whose new span, from its
+# last classified position, holds only quiet replies and reserved-key
+# pending-reply resolutions (status_span_only_quiet in bin/fm-classify-lib.sh);
+# 1 for any turn-end marker, unreadable log, or other line. A pure read.
+signal_files_only_quiet() {  # <status-file> ...
+  local f found=1
+  for f in "$@"; do
+    case "$f" in *.status) ;; *) return 1 ;; esac
+    status_span_only_quiet "$f" "$(fm_wake_signal_seen_size "$STATE" "$f")" || return 1
+    found=0
+  done
+  return "$found"
+}
+
 # Surfaced-marker bookkeeping for the heartbeat backstop is owned by
 # fm-watch-wake-lib.sh, shared with the per-wake path so both write one format.
 # Mark each actionable status log through the endpoint captured by the heartbeat
@@ -2068,6 +2119,21 @@ poll_sleep() {
     [ "$now" -gt "$start" ] && return 0
     start=$now
   done
+}
+
+# bin/fm_worker_keepalive.py owns stuck-worker detection and escalation. It
+# runs git per worker, so it runs detached on its own cadence.
+keepalive_detached() {
+  local record
+  [ "$(age_of "$STATE/.last-keepalive")" -ge "$KEEPALIVE_INTERVAL" ] || return 0
+  if ! grep -lqE '^kind=(ship|scout|secondmate)$' "$STATE"/*.meta 2>/dev/null; then
+    for record in "$STATE/keepalive/"*.json "$STATE/keepalive/asks/"*.json; do
+      [ -f "$record" ] && break
+    done
+    [ -f "$record" ] || return 0
+  fi
+  touch "$STATE/.last-keepalive"
+  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-worker-keepalive.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
 # --- Main entry: the runtime below runs only when this file is executed as a
@@ -2267,6 +2333,15 @@ parked_run_detached() {
     "$SCRIPT_DIR/fm-parked-run-watch.sh" scan </dev/null >/dev/null 2>&1 &
 }
 
+# bin/fm_ci_stall.py owns stalled-CI recovery and escalation. It reads GitHub,
+# so it runs detached on its own cadence; cheap when no worker records a PR.
+ci_stall_detached() {
+  [ "$(age_of "$STATE/.last-ci-stall")" -ge "$CI_STALL_INTERVAL" ] || return 0
+  grep -lq '^pr=https://github.com/' "$STATE"/*.meta 2>/dev/null || return 0
+  touch "$STATE/.last-ci-stall"
+  FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-ci-stall.sh" scan </dev/null >/dev/null 2>&1 &
+}
+
 # bin/fm-idle-sweep.sh owns sweep eligibility, cadence, and locking.
 # Launch detached because a sweep can take minutes and must not delay the
 # watcher's cycle or liveness beacon.
@@ -2300,13 +2375,15 @@ pr_poll_control_release() {
 }
 
 watcher_cleanup() {
+  # A repeated stop must not interrupt recovery publication or lock release.
+  trap '' HUP INT TERM
   local cleanup_status=0 owns_lock=0 transition=release-lock
   pr_poll_control_release || cleanup_status=1
   if [ "$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)" = "${WATCHER_PID:-}" ]; then
     owns_lock=1
     if [ "${WATCHER_RECOVERY_PENDING:-0}" -eq 1 ] \
       && [ "${FM_WATCH_DELIVERED_REASON:-}" = "check: rearm-resurface" ]; then
-      transition=release-lock-existing
+      transition='release-lock-existing'
     fi
   fi
   fm_active_check_stop || cleanup_status=1
@@ -2457,6 +2534,8 @@ while :; do
   # waiting for the next session start (bin/fm-secondmate-revive.sh).
   secondmate_revive_detached
   parked_run_detached
+  ci_stall_detached
+  keepalive_detached
 
   # Finished workers are cleaned up and idle ones become decisions here, so a
   # home never keeps them waiting for a model turn (bin/fm-idle-sweep.sh).
@@ -2645,6 +2724,9 @@ EOF
     #     (even via an interactive menu that wrote no done: status), waiting on a
     #     decision, or wedged. Absorbing such a turn-end is exactly the
     #     swallowed-finish this change guards against.
+    # A no-verb wake whose every new status line is a quiet reply or a pending-reply
+    # resolution (signal_files_only_quiet) needs no evidence: nothing in it is the
+    # crew's own progress, so there is no finish to swallow.
     # Positive evidence is either an authoritative provably-working verdict or, in a
     # home that opts in with config/turnend-churn-absorb and for a BARE turn-end
     # alone, a pane that rendered something since the previous poll
@@ -2672,7 +2754,8 @@ EOF
     # comment above handle_wake in bin/fm-supervise-daemon.sh).
     # shellcheck disable=SC2086  # same space-separated status-path list
     if afk_present || [ "$signal_actionable" -eq 0 ] \
-      || { ! signal_crew_provably_working $files && ! signal_turnend_panes_churned $files; }; then
+      || { ! signal_files_only_quiet $files && ! signal_crew_provably_working $files \
+        && ! signal_turnend_panes_churned $files; }; then
       while IFS=$(printf '\t') read -r sf sig f; do
         [ -n "$sf" ] || continue
         file_reason="$reason"

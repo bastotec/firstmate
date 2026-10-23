@@ -36,6 +36,7 @@
 #   fm-captain-hold.sh diverged
 #   fm-captain-hold.sh reconcile list
 #   fm-captain-hold.sh stale-clear <task-id> --evidence-file <path>
+#   fm-captain-hold.sh withdraw <task-id> --evidence-file <path> (--release | --park <reason>)
 #   fm-captain-hold.sh reconcile close <task-id> --evidence-file <path>
 #   fm-captain-hold.sh reconcile note <task-id> --note-file <path>
 #
@@ -46,6 +47,10 @@
 # question gates over minting a new row. The command records a UTC `Captain
 # hold set:` timestamp in the task body: repeating an active hold preserves the
 # existing timestamp, while re-holding released work starts a new lifecycle.
+# Fresh stamp selection runs under the task lock and advances beyond both the
+# existing leading hold-set stamp and the newest recorded withdrawal's stamp.
+# If the clock has not advanced, it uses one second after the later stamp so
+# withdrawal retries cannot mistake a fresh call for the withdrawn lifecycle.
 # A task already closed is refused rather than reopened. `--until` records the
 # captain's own deferral date through `tasks-axi hold --until`, so a "revisit
 # later" answer is stored as a date rather than an undated live call; its
@@ -111,8 +116,8 @@
 # The deferral is settled when the newest resolution block has mode `deferred`
 # and no `Deferral reopened:` marker precedes it, even if parking is unfinished.
 # An exact retry matches the decision words and normalized parked condition,
-# or finishes an interrupted deferral; other answers (including keyed answers), stale-clear,
-# and reconcile close/note are refused. `open` excludes settled deferrals,
+# or finishes an interrupted deferral; other answers (including keyed answers),
+# stale-clear, withdraw, and reconcile close/note are refused. `open` excludes settled deferrals,
 # so card discovery skips them; stale reports any leftover card as an orphan.
 # `deferred` is read-only: 0 means a settled deferral or a reopening whose
 # captain hold has not landed, 1 means neither, and 2 means unreadable;
@@ -177,6 +182,17 @@
 # record twice; an exact retry on the closed task completes finalization.
 # A closed task with a different newest resolution, or an open task not held
 # for the captain, is refused.
+#
+# `withdraw` settles only the erroneous call, never the underlying task.
+# It requires an open captain-held task, not a card file, and the same
+# evidence-file limit as stale-clear. It records `withdrawn-released` or `withdrawn-parked`
+# under `Withdrawal evidence:`, without captain words or memory capture.
+# --release removes the hold; --park replaces it with a parked hold carrying
+# the caller's reason (parentheses normalized as above). Neither starts work,
+# changes worker custody, or marks work done. The card and pending reconcile
+# request are retired and the matching parent key resolved. Matching evidence,
+# mode and normalized park reason finish interrupted finalization exactly once;
+# changed retries, settled deferrals, and closed tasks are refused.
 #
 # A channel's ONLY job is to turn whatever it received into those keyed lines
 # and pipe them here. It must never map keys to tasks, build decision records,
@@ -255,7 +271,8 @@
 #
 # Resolution records: the block written into the body names this script, the
 # decision digest, and a `Resolution mode:` of answered, released, deferred,
-# repaired, reconciled, or stale-cleared. Records written by the retired fm-decision-hold.sh (routed,
+# repaired, reconciled, stale-cleared, withdrawn-released, or withdrawn-parked.
+# Records written by the retired fm-decision-hold.sh (routed,
 # declined, answered, repaired) are recognized everywhere a record is read, so
 # nothing already closed needs rewriting.
 #
@@ -273,7 +290,7 @@
 # the record; bin/fm-inactive-reconcile.sh's diagnostics name a broken binding.
 #
 # Only a mate raises or settles a captain call: `hold`, `answer`, `answers`, and
-# `stale-clear` refuse (exit 3) a ship or scout worker of this home, per
+# `stale-clear`/`withdraw` refuse (exit 3) a ship or scout worker of this home, per
 # bin/fm-worker-guard-lib.sh; a worker's question goes to its mate as a status
 # line instead.
 set -eu
@@ -563,6 +580,7 @@ body_has_resolution_record() {  # <task-body>
     *"Resolution recorded by fm-decision-hold."*"Captain decision:"*) return 0 ;;
     *"Resolution recorded by fm-captain-hold."*"Reconciliation evidence:"*) return 0 ;;
     *"Resolution recorded by fm-captain-hold."*"Stale-clear evidence:"*) return 0 ;;
+    *"Resolution recorded by fm-captain-hold."*"Withdrawal evidence:"*) return 0 ;;
   esac
   return 1
 }
@@ -628,16 +646,18 @@ closed_answer_replay_mode_compatible() {  # <mode> <task-body>
 # The record's label is what keeps an evidence-backed reconciliation from
 # reading as the captain's own words. `reconciled` closes a call that went moot
 # and carries verified evidence, `stale-cleared` closes a stale call on the
-# first mate's evidence under the captain's standing ruling, and every other
-# mode carries what the captain said. A deferred answer also carries the
+# first mate's evidence under the captain's standing ruling, and withdrawals
+# retire only the call on evidence. Every other mode carries what the captain said. A deferred answer also carries the
 # caller's own one-line condition verbatim below the mode, because the parked
 # hold reason is the parentheses-free storage form tasks-axi requires, while
 # the words themselves are what captain-facing readers need to see again.
-resolution_block() {  # <mode> [verbatim-deferral-condition]
+resolution_block() {  # <mode> [condition-or-park-reason] [hold-set-stamp]
   local label='Captain decision:'
   case "$1" in
     reconciled) label='Reconciliation evidence:' ;;
     stale-cleared) label='Stale-clear evidence:' ;;
+    withdrawn-released) label=$(printf 'Withdrawal hold set: %s\n\nWithdrawal evidence:' "${3:-}") ;;
+    withdrawn-parked) label=$(printf 'Withdrawal hold set: %s\nWithdrawal hold reason: %s\n\nWithdrawal evidence:' "${3:-}" "$2") ;;
     deferred)
       [ "$#" -ge 2 ] && [ -n "${2:-}" ] \
         && label=$(printf 'Deferral condition: %s\n\n%s' "$2" "$label")
@@ -898,12 +918,29 @@ body_hold_set_timestamp() {  # <decoded-task-body>
 }
 
 write_hold_set_stamp() {  # <task-id> <shown-body> <timestamp> <preserve-existing-0-or-1>
-  local id=$1 body=$2 hold_set=$3 preserve=$4 existing new_body tmp
+  local id=$1 body=$2 hold_set=$3 preserve=$4 existing new_body tmp withdrawn_hold_set
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   existing=$(body_hold_set_timestamp "$body")
   if [ "$preserve" = 1 ] && [ -n "$existing" ]; then
     return 0
+  fi
+  # Under the task lock, a fresh call must advance beyond stamps that its
+  # withdrawal replay guard can still see, even when the wall clock repeats.
+  withdrawn_hold_set=$(printf '%s\n' "$body" | sed -n 's/^Withdrawal hold set: //p' | head -1)
+  if [ -n "$existing$withdrawn_hold_set" ]; then
+    hold_set=$(python3 - "$hold_set" "$existing" "$withdrawn_hold_set" <<'PY'
+import datetime
+import sys
+
+stamp = sys.argv[1]
+previous = max(sys.argv[2:])
+if stamp <= previous:
+    form = "%Y-%m-%dT%H:%M:%SZ" if "T" in previous else "%Y-%m-%d"
+    stamp = (datetime.datetime.strptime(previous, form) + datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+print(stamp)
+PY
+    ) || fail "could not advance the hold-set stamp for $id"
   fi
   if [ -n "$existing" ]; then
     body=${body#"Captain hold set: $existing"}
@@ -981,7 +1018,7 @@ command_hold() {
     esac
   fi
   if [ -n "$card_file" ]; then
-    "$CARD_TOOL" validate --file "$card_file" \
+    "$CARD_TOOL" validate --file "$card_file" --task "$id" \
       || fail "the decision card for $id is invalid; nothing was held"
   fi
   hold_set=${FM_CAPTAIN_HOLD_NOW:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
@@ -1106,12 +1143,12 @@ command_hold() {
 # Record a resolution block beneath any leading active hold-set stamp,
 # preserving the previous body below it and archiving the pristine original.
 # Successful closure removes the stamp to restore resolution-first ordering.
-write_resolution_record() {  # <task-id> <mode> <shown-body> [verbatim-deferral-condition]
+write_resolution_record() {  # <task-id> <mode> <shown-body> [condition-or-park-reason]
   local id=$1 mode=$2 body=$3 new_body tmp hold_set condition=${4:-}
-  new_body=$(resolution_block "$mode" "$condition")
   body=$(decode_shown_value "$body") \
     || fail "could not decode the existing body for $id"
   hold_set=$(body_hold_set_timestamp "$body")
+  new_body=$(resolution_block "$mode" "$condition" "$hold_set")
   if [ -n "$hold_set" ]; then
     body=${body#"Captain hold set: $hold_set"}
     case "$body" in
@@ -1888,6 +1925,90 @@ command_stale_clear() {
   printf 'stale-cleared: %s\n' "$id"
 }
 
+# Withdraw an erroneous call on unfinished work without claiming completion.
+command_withdraw() {
+  local id=${1:-} evidence_file='' mode='' reason='' storage_reason='' recorded_reason
+  local show state hold_kind body recorded_mode occurrence replay=0 hold_set recorded_hold_set
+  [ "$#" -ge 1 ] || { usage >&2; exit 2; }
+  shift
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --evidence-file) shift; evidence_file=${1:-} ;;
+      --release) [ -z "$mode" ] || fail "choose exactly one of --release or --park"; mode=withdrawn-released ;;
+      --park)
+        [ -z "$mode" ] || fail "choose exactly one of --release or --park"
+        shift; reason=${1:-}; mode=withdrawn-parked
+        validate_one_line reason "$reason"
+        storage_reason=$(parentheses_free_reason "$reason")
+        ;;
+      *) usage >&2; exit 2 ;;
+    esac
+    shift
+  done
+  validate_slug task-id "$id"
+  [ -n "$mode" ] || fail "choose exactly one of --release or --park"
+  [ -n "$evidence_file" ] || fail "--evidence-file is required for withdrawal"
+  load_decision "$evidence_file"
+  acquire_task_control_lock "$id"
+  require_tasks_axi
+  task_show_or_fail "$id" "captain-held task $id is absent from this home's configured backlog (data directory $DATA)"
+  state=$(show_field "$show" state)
+  hold_kind=$(show_field_value "$show" hold_kind)
+  body=$(show_field "$show" body)
+  [ "$state" != "done" ] || fail "task $id is already closed; withdrawal cannot reopen it"
+  refuse_settled_deferral "$id" "$(show_field_value "$show" body)"
+  recorded_mode=$(recorded_resolution_mode "$body" || true)
+  case "$recorded_mode" in
+    withdrawn-released|withdrawn-parked)
+      hold_set=$(body_hold_set_timestamp "$(show_field_value "$show" body)")
+      recorded_hold_set=$(printf '%s\n' "$(show_field_value "$show" body)" | sed -n 's/^Withdrawal hold set: //p' | head -1)
+      if [ "$hold_kind" = captain ] && [ -n "$hold_set" ] && [ "$hold_set" != "$recorded_hold_set" ]; then
+        [ "$(recorded_decision_digest "$body" || true)" != "$DECISION_DIGEST" ] \
+          || fail "task $id withdrawal ownership mismatch: a new captain hold replaced the withdrawn call"
+      else
+        recorded_reason=''
+        if [ "$recorded_mode" = withdrawn-parked ]; then
+          recorded_reason=$(printf '%s\n' "$(show_field_value "$show" body)" | sed -n 's/^Withdrawal hold reason: //p' | head -1)
+        fi
+        [ "$recorded_mode" = "$mode" ] \
+          && [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ] \
+          && [ "$recorded_reason" = "$storage_reason" ] \
+          || fail "task $id withdrawal retry mismatch: evidence, mode, or hold reason changed"
+        replay=1
+      fi
+      ;;
+  esac
+  if [ "$replay" = 0 ]; then
+    [ "$hold_kind" = captain ] || fail "task $id is not held for the captain; there is no call to withdraw"
+    if [ "$(recorded_decision_digest "$body" || true)" = "$DECISION_DIGEST" ]; then
+      fail "task $id records this evidence under another resolution mode: ${recorded_mode:-unknown}"
+    fi
+    occurrence=$(( $(resolution_record_count "$body") + 1 ))
+    write_resolution_record "$id" "$mode" "$body" "$storage_reason"
+  else
+    occurrence=$(resolution_record_count "$body")
+    [ -z "$hold_set" ] || [ "$hold_set" = "$recorded_hold_set" ] \
+      || fail "task $id withdrawal ownership mismatch: a new captain hold replaced the withdrawn call"
+    case "$mode:$hold_kind" in
+      *:captain|withdrawn-released:|withdrawn-parked:parked) ;;
+      *) fail "task $id withdrawal ownership mismatch: hold kind ${hold_kind:-none}" ;;
+    esac
+    if [ "$hold_kind" = parked ]; then
+      [ "$(show_field_value "$show" hold_reason)" = "$storage_reason" ] \
+        || fail "task $id withdrawal ownership mismatch: parked reason changed"
+    fi
+  fi
+  if [ "$mode" = withdrawn-released ]; then
+    tasks_axi unhold "$id" >/dev/null || fail "could not release withdrawn call $id"
+  else
+    tasks_axi hold "$id" --reason "$storage_reason" --kind parked >/dev/null \
+      || fail "could not park withdrawn call $id"
+  fi
+  remove_interrupted_answer_stamp "$id"
+  publish_parent_resolution_then_retire "$id" "$occurrence" "$mode"
+  printf 'withdrawn: %s\n' "$id"
+}
+
 # The still-active outcome. The hold survives, so the call stays the captain's
 # and stays on Captain's Call, now carrying what the re-check found.
 reconcile_note() {
@@ -2264,7 +2385,7 @@ command_probe() {
 }
 
 case "${1:-}" in
-  hold|answer|answers|stale-clear) fm_worker_guard_refuse "$STATE" "$1 a captain call" ;;
+  hold|answer|answers|stale-clear|withdraw) fm_worker_guard_refuse "$STATE" "$1 a captain call" ;;
 esac
 
 case "${1:-}" in
@@ -2282,6 +2403,7 @@ case "${1:-}" in
   diverged) shift; command_diverged "$@" ;;
   reconcile) shift; command_reconcile "$@" ;;
   stale-clear) shift; command_stale_clear "$@" ;;
+  withdraw) shift; command_withdraw "$@" ;;
   -h|--help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

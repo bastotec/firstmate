@@ -241,7 +241,15 @@ test_repeated_failure_that_queued_new_mail_still_wakes() {
   for lib in fm-timeout-lib.sh fm-pr-lib.sh fm-line-cap-lib.sh fm-check-lib.sh; do
     [ -e "$tmpbin/$lib" ] || ln -s "$ROOT/bin/$lib" "$tmpbin/$lib"
   done
-  printf '%s\n' '#!/usr/bin/env bash' 'echo "fm-mail: woke for 42"' 'echo "fm-mail: connection refused" >&2' 'exit 1' > "$tmpbin/fm-mail.sh"
+  # Exceed the pipe buffer after the publication line so an early-exiting
+  # matcher deterministically exposes a broken pipe instead of racing printf.
+  cat > "$tmpbin/fm-mail.sh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' 'fm-mail: woke for 42'
+printf '%262144s\n' ''
+printf '%s\n' 'fm-mail: connection refused' >&2
+exit 1
+SH
   chmod +x "$tmpbin/fm-mail.sh"
 
   out="$home/out1.txt"

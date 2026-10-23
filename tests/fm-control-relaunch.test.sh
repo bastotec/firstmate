@@ -218,6 +218,7 @@ run_control() {  # <case-dir> <args...>
     HOME="$dir/user-home" \
     FM_SPAWN_NO_GUARD=1 \
     FM_CONTROL_POLL=0.01 FM_CONTROL_EXIT_WAIT="${FM_TEST_EXIT_WAIT:-0.05}" FM_CONTROL_LAUNCH_WAIT=0.05 \
+    FM_CONTROL_RELAUNCH_STOP_WAIT="${FM_TEST_RELAUNCH_STOP_WAIT:-${FM_TEST_EXIT_WAIT:-0.05}}" \
     FM_REAL_GIT="${FM_REAL_GIT:-}" FM_FAKE_GIT_FAILURE="${FM_FAKE_GIT_FAILURE:-}" \
     FM_REAL_MV="${FM_REAL_MV:-}" FM_FAKE_COMPLETE_JOURNAL_MV_FAIL="${FM_FAKE_COMPLETE_JOURNAL_MV_FAIL:-}" \
     FM_FAKE_META_PUBLISH_MV_FAIL="${FM_FAKE_META_PUBLISH_MV_FAIL:-}" \
@@ -342,9 +343,21 @@ SH
 # --- 1. same-harness relaunch -----------------------------------------------
 
 test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
-  local dir out rc gen_before gen_after
+  local dir out rc gen_before gen_after prompt precedence_line old_rule_line
   dir=$(new_case same rl1)
   add_ship_task "$dir" rl1 deck
+  cat >> "$dir/home/data/rl1/brief.md" <<'EOF'
+
+# Rules
+7. Never stop, restart, or update the shared `no-mistakes` daemon - it is one instance serving
+   every lane/home, so restarting it kills other lanes' in-flight pipeline runs; only firstmate
+   manages the daemon.
+   Before you append `blocked:` about the pipeline, run `no-mistakes daemon status` and
+   `no-mistakes axi status`. If the daemon socket refuses connections or is missing, append
+   `blocked: {the daemon error}` and stop even when the local run record still says running or
+   fixing, because that record can be stale after the daemon exits. A run record failed with a
+   daemon error is also a real block.
+EOF
   gen_before=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl1)
   printf 'busy_gen=%s\n' "$gen_before" >> "$dir/home/state/rl1.meta"
   out=$(run_control "$dir" rl1 relaunch --note "stopped mid-refactor"); rc=$?
@@ -363,7 +376,18 @@ test_same_harness_relaunch_keeps_identity_and_reuses_the_endpoint() {
     || fail "the transaction journal should end complete"
   assert_grep "/quit" "$dir/fake/literal" "the previous agent should have been exited"
   assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
-  pass "fm-control relaunch: a same-harness relaunch replaces the agent in the same endpoint and worktree"
+  prompt="$dir/home/data/rl1/launch-brief.md"
+  assert_grep "$prompt" "$dir/fake/literal" "the replacement must receive the current emitted prompt"
+  precedence_line=$(grep -n '^This section supersedes any older brief or steer that tells you to stop, hold, preserve evidence, wait for custody or a tooling owner, or leave a daemon or tool alone instead of trying the obvious fix;' "$prompt" | cut -d: -f1)
+  old_rule_line=$(grep -n '^7\. Never stop, restart, or update the shared' "$prompt" | cut -d: -f1)
+  [ -n "$precedence_line" ] && [ -n "$old_rule_line" ] && [ "$precedence_line" -lt "$old_rule_line" ] \
+    || fail "relaunch must deliver the superseding repair contract before the obsolete daemon rule"
+  assert_grep "the hard stops below, the rule against stopping, restarting or updating a running shared daemon, and the no-mistakes ask-user escalation and \`--yes\` / \`-y\` ban are unchanged" "$prompt" \
+    "repair precedence must preserve safety and ask-user boundaries"
+  assert_grep 'install it for your user or start it, retry, and report only if that fails' "$prompt" \
+    "relaunch must deliver the repair default"
+  assert_grep 'deploying or promoting to production' "$prompt" "relaunch must retain the hard stops"
+  pass "fm-control relaunch: a same-harness relaunch preserves identity and supersedes obsolete stopping rules"
 }
 
 test_relaunch_refuses_before_exit_when_the_composer_holds_pending_text() {
@@ -754,18 +778,34 @@ PY
 }
 
 test_live_deck_relaunch_uses_control_protocol_before_residual_stop() {
-  local dir out rc gen pid
+  local dir out rc gen pid observer_pid observer_rc
   dir=$(new_case live-deck-stop rl-deck-live)
   add_ship_task "$dir" rl-deck-live deck
-  cat > "$dir/fakebin/deck" <<'SH'
-#!/usr/bin/env bash
-printf '{"type":"run_started","session":"live-session"}\n'
-touch "$FM_DECK_TEST_READY"
-/bin/sleep 60
-SH
+  cat > "$dir/fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+
+def stop(*_):
+    if not os.path.exists(os.environ["FM_DECK_PROTOCOL_FIRST"]):
+        open(os.environ["FM_DECK_STOPPED_BEFORE_PROTOCOL"], "w").close()
+    subprocess.Popen([sys.executable, "-c", "import time; time.sleep(1)"])
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+print(json.dumps({"type": "run_started", "session": "live-session"}), flush=True)
+open(os.environ["FM_DECK_TEST_READY"], "w").close()
+# Outlive the confirmation window even when the machine is heavily loaded.
+time.sleep(600)
+PY
   chmod +x "$dir/fakebin/deck"
   gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-live)
-  FM_DECK_TEST_READY="$dir/ready" \
+  FM_DECK_TEST_READY="$dir/ready" FM_DECK_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_DECK_STOPPED_BEFORE_PROTOCOL="$dir/stopped-before-protocol" \
     python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
     "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-live --state "$dir/home/state" \
     --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
@@ -774,8 +814,41 @@ SH
   [ -e "$dir/ready" ] || fail "live Deck driver never started"
   printf deck > "$dir/fake/command"
   printf deck > "$dir/fake/becomes"
+  # Reproduce a driver that cannot consume the delivered /quit: the endpoint
+  # stays alive until the exact old driver has really stopped. The hook models
+  # the stream agent's own process observation, not composer text.
+  fake_push "$dir"
+  cat > "$dir/observe-stop" <<SH
+#!/usr/bin/env bash
+[ "\$2" = processes ] || exit 0
+if ps -ax -o pgid=,stat= | awk '\$1 == $pid && \$2 !~ /^Z/ { live=1 } END { exit !live }'; then
+  exit 0
+fi
+: > '$dir/group-stopped'
+SH
+  chmod +x "$dir/observe-stop"
+  # The request hook runs under the hub lock: publish its observation there,
+  # then update the endpoint once from outside the synchronous request.
+  (
+    for _ in $(seq 200); do
+      [ ! -d "$dir" ] && exit 1
+      [ ! -e "$dir/group-stopped" ] || break
+      /bin/sleep 0.1
+    done
+    [ -e "$dir/group-stopped" ] || exit 1
+    curl -fsS -m 5 -H "Authorization: Bearer $FM_STREAM_TOKEN" \
+      -H 'Content-Type: application/json' -X POST \
+      --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
+      "$FM_TEST_STREAM_URL/v1/test/endpoints/$(cat "$dir/fake/target" | sed 's/.*://')" >/dev/null
+  ) &
+  observer_pid=$!
+  fm_test_track_helper_pid "$observer_pid"
   out=$(FM_TEST_EXIT_WAIT=5 FM_FAKE_PROTOCOL_FIRST="$dir/protocol-first" \
+    FM_FAKE_PRIOR_PID="$pid" FM_FAKE_PRIOR_LIVE_MARKER="$dir/prior-live-at-launch" \
+    FM_FAKE_NEVER_DIES=1 FM_FAKE_ON_REQUEST="$dir/observe-stop" \
     run_control "$dir" rl-deck-live relaunch --note 'replace live driver'); rc=$?
+  wait "$observer_pid"; observer_rc=$?
+  expect_code 0 "$observer_rc" "endpoint stop observer failed"
   if kill -0 "$pid" 2>/dev/null; then
     kill -KILL -- -"$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
@@ -786,7 +859,77 @@ SH
   assert_grep 'C-c' "$dir/fake/keys" "live Deck relaunch did not interrupt through control"
   assert_grep '/quit' "$dir/fake/literal" "live Deck relaunch did not submit /quit"
   [ -e "$dir/protocol-first" ] || fail "residual stop ran before the normal Deck control protocol"
+  [ ! -e "$dir/stopped-before-protocol" ] || fail "TERM preceded protocol delivery"
+  [ -e "$dir/group-stopped" ] || fail "the recorded endpoint never observed the exact driver group stopped"
+  [ ! -e "$dir/prior-live-at-launch" ] || fail "replacement launched before the prior driver stopped"
+  assert_grep 'encode launch-brief' "$dir/fake/literal" "replacement did not launch after both stop proofs"
   pass "fm-control relaunch: Deck control protocol precedes residual process cleanup"
+}
+
+# A restart whose old host takes longer than the exit wait to shut down (its
+# Deck turn finishes its stop slowly) is waited out on the relaunch stop bound
+# and replaced, instead of being abandoned stopped with no replacement.
+test_relaunch_waits_out_a_slow_host_shutdown_and_finishes() {
+  local dir out rc gen pid observer_pid
+  dir=$(new_case slow-host-stop rl-deck-slow)
+  add_ship_task "$dir" rl-deck-slow deck
+  cat > "$dir/fakebin/deck" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import signal
+import sys
+import time
+
+def stop(*_):
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    time.sleep(3)
+    sys.exit(0)
+
+signal.signal(signal.SIGTERM, stop)
+print(json.dumps({"type": "run_started", "session": "slow-session"}), flush=True)
+open(os.environ["FM_DECK_TEST_READY"], "w").close()
+time.sleep(600)
+PY
+  chmod +x "$dir/fakebin/deck"
+  gen=$("$ROOT/bin/fm-busy-event.sh" arm "$dir/home/state" rl-deck-slow)
+  FM_DECK_TEST_READY="$dir/ready" \
+    python3 -c 'import os,sys; os.setsid(); os.execv("/bin/bash", ["fm-deck-worker"] + sys.argv[1:])' \
+    "$ROOT/bin/fm-deck-worker.sh" --id rl-deck-slow --state "$dir/home/state" \
+    --gen "$gen" --deck "$dir/fakebin/deck" -- old-brief </dev/null > "$dir/driver.out" 2>&1 &
+  pid=$!
+  for _ in $(seq 100); do [ ! -e "$dir/ready" ] || break; /bin/sleep 0.05; done
+  [ -e "$dir/ready" ] || fail "slow Deck driver never started"
+  printf deck > "$dir/fake/command"
+  printf deck > "$dir/fake/becomes"
+  fake_push "$dir"
+  # The endpoint reads the agent gone only once the driver's group has exited.
+  (
+    while ps -ax -o pgid=,stat= | awk -v g="$pid" '$1 == g && $2 !~ /^Z/ { live=1 } END { exit !live }'; do
+      [ -d "$dir" ] || exit 1
+      /bin/sleep 0.1
+    done
+    curl -fsS -m 5 -H "Authorization: Bearer $FM_STREAM_TOKEN" \
+      -H 'Content-Type: application/json' -X POST \
+      --data-binary '{"foreground":[{"pid":"","name":"bash","argv0":"bash","args":"bash"}]}' \
+      "$FM_TEST_STREAM_URL/v1/test/endpoints/$(sed 's/.*://' "$dir/fake/target")" >/dev/null
+  ) &
+  observer_pid=$!
+  fm_test_track_helper_pid "$observer_pid"
+  out=$(FM_TEST_EXIT_WAIT=1 FM_TEST_RELAUNCH_STOP_WAIT=30 FM_FAKE_NEVER_DIES=1 \
+    run_control "$dir" rl-deck-slow relaunch --note 'restart through a slow shutdown'); rc=$?
+  wait "$observer_pid" 2>/dev/null || true
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL -- -"$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    fail "relaunch left the slow Deck driver alive: $out"
+  fi
+  wait "$pid" 2>/dev/null || true
+  expect_code 0 "$rc" "a relaunch through a slow host shutdown should finish: $out"
+  [ "$(journal_field "$dir" rl-deck-slow phase)" = complete ] \
+    || fail "the relaunch journal did not reach complete: $(journal_field "$dir" rl-deck-slow phase)"
+  assert_grep 'encode launch-brief' "$dir/fake/literal" "the replacement did not launch after the slow shutdown"
+  pass "fm-control relaunch: a slow host shutdown is waited out and the replacement launched"
 }
 
 test_relaunch_onto_deck_with_effort_refuses_before_stop() {
@@ -943,7 +1086,7 @@ test_remote_relaunch_publishes_the_model_choice_with_the_route() {
 #!/usr/bin/env bash
 [ "$2" != fm-remote-doctor.sh ] || exit 0
 case "$3" in
-  relaunch) exit "${FM_TEST_REMOTE_RELAUNCH_RC:-0}" ;;
+  relaunch) printf '%s\n' "$@" > "$FM_HOME/remote-relaunch-args"; exit "${FM_TEST_REMOTE_RELAUNCH_RC:-0}" ;;
   route)
     printf '%s\n' backend=stream 'target=fixture:0123456789abcdef0123456789abcdef' \
       stream_hub=http://fixture:8328 stream_endpoint_id=0123456789abcdef0123456789abcdef \
@@ -968,8 +1111,10 @@ SH
       x_keep=preserved > "$dir/home/state/rlremotechoice.meta"
     rc=0
     out=$(FM_HOME="$dir/home" FM_TEST_REMOTE_MODEL="$route" FM_TEST_REMOTE_RELAUNCH_RC="$wanted_rc" \
-      "$dir/bin/fm-control.sh" rlremotechoice relaunch "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
+      "$dir/bin/fm-control.sh" rlremotechoice relaunch --note 'Keep the recorded restart note.' "${args[@]+"${args[@]}"}" 2>&1) || rc=$?
     expect_code "$wanted_rc" "$rc" "remote $action outcome: $out"
+    assert_equals '--note
+Keep the recorded restart note.' "$(tail -2 "$dir/home/remote-relaunch-args")" "remote $action forwards the note to its owner"
     assert_equals "$route" "$(meta_field "$dir" rlremotechoice model)" "remote $action publishes the host's model"
     assert_equals "$expected" "$(meta_field "$dir" rlremotechoice model_choice)" "remote $action publishes the matching choice"
     assert_equals preserved "$(meta_field "$dir" rlremotechoice x_keep)" "remote $action preserves unrelated metadata"
@@ -1485,8 +1630,12 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   printf 'sm1\n' > "$dir/smhome/.fm-secondmate-home"
   printf '# charter\n' > "$dir/smhome/data/charter.md"
   printf '# agents\n' > "$dir/smhome/AGENTS.md"
-  printf 'window=x:fm-c1\n' > "$dir/smhome/state/c1.meta"
-  printf 'window=x:fm-c2\n' > "$dir/smhome/state/c2.meta"
+  local n
+  for n in 1 2 3 4 5; do
+    printf 'window=x:fm-c%s\n' "$n" > "$dir/smhome/state/c$n.meta"
+  done
+  # Unrelated transient state and dangling links are not child records.
+  ln -s missing "$dir/smhome/state/unrelated-link"
   {
     fm_test_fake_dir_task "$dir/fake" "$home/state" "sm1"
     echo "worktree=$dir/smhome"
@@ -1506,14 +1655,22 @@ test_secondmate_relaunch_checkpoints_child_work_and_spares_the_charter() {
   # the note is optional there.
   out=$(run_control "$dir" sm1 relaunch); rc=$?
   expect_code 0 "$rc" "a checkpointed secondmate should relaunch"$'\n'"$out"
-  [ "$(journal_field "$dir" sm1 children)" = 2 ] \
+  [ "$(journal_field "$dir" sm1 children)" = 5 ] \
     || fail "the checkpoint must account for the secondmate's child work, got '$(journal_field "$dir" sm1 children)'"
   assert_not_contains "$out" "requires --note" "a secondmate relaunch must not demand a progress note"
   [ "$(cat "$dir/smhome/data/charter.md")" = "# charter" ] \
     || fail "a secondmate's standing charter must never be rewritten by a relaunch"
   assert_present "$dir/smhome/state/c1.meta" "child records must survive the relaunch"
   assert_present "$dir/smhome/state/c2.meta" "child records must survive the relaunch"
-  pass "fm-control relaunch: a secondmate's child work is accounted for and its charter is left alone"
+  for n in 1 2 3 4 5; do
+    [ "$(cat "$dir/smhome/state/c$n.meta")" = "window=x:fm-c$n" ] \
+      || fail "child records must remain byte-identical"
+    rm "$dir/smhome/state/c$n.meta"
+  done
+  out=$(run_control "$dir" sm1 relaunch); rc=$?
+  expect_code 0 "$rc" "an empty child set should relaunch"$'\n'"$out"
+  [ "$(journal_field "$dir" sm1 children)" = 0 ] || fail "empty state must checkpoint zero children"
+  pass "fm-control relaunch: a secondmate's five readable children and empty state are checkpointed without changing its charter"
 }
 
 test_secondmate_relaunch_refuses_an_unmarked_home() {
@@ -1569,15 +1726,38 @@ test_secondmate_checkpoint_refuses_unreadable_child_state() {
   assert_contains "$out" "not a readable regular file" "the refusal should name the unreadable child record"
   [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "child record failure must not stop the secondmate"
   rmdir "$dir/smhome/state/bad.meta"
+  ln -s missing "$dir/smhome/state/bad.meta"
+  out=$(run_control "$dir" sm5 relaunch); rc=$?
+  expect_code 1 "$rc" "a dangling child link must refuse"
+  assert_contains "$out" "not a readable regular file" "a dangling child must not be silently skipped"
+  rm "$dir/smhome/state/bad.meta"
+  printf 'window=x:fm-child\n' > "$dir/smhome/state/bad.meta"
+  cat > "$dir/fakebin/cat" <<'SH'
+#!/usr/bin/env bash
+for arg in "$@"; do
+  case "$arg" in */state/bad.meta) exit 1 ;; esac
+done
+exec /bin/cat "$@"
+SH
+  chmod +x "$dir/fakebin/cat"
+  out=$(run_control "$dir" sm5 relaunch); rc=$?
+  expect_code 1 "$rc" "a child read failure must refuse"
+  assert_contains "$out" "not a readable regular file" "a child read error must not be skipped"
+  [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "child read failure must not stop the secondmate"
+  rm "$dir/fakebin/cat" "$dir/smhome/state/bad.meta"
   cat > "$dir/fakebin/find" <<'SH'
 #!/usr/bin/env bash
-exit 1
+printf 'find: fixture traversal error\n' >&2
+exit 7
 SH
   chmod +x "$dir/fakebin/find"
   out=$(run_control "$dir" sm5 relaunch); rc=$?
   expect_code 1 "$rc" "failed child-state traversal should refuse"
   assert_contains "$out" "child records cannot be traversed" \
     "the refusal should preserve a find traversal failure"
+  assert_contains "$out" "find exit 7" "the refusal must distinguish the subprocess failure"
+  assert_contains "$out" "find: fixture traversal error" "the refusal must retain the underlying diagnostic"
+  assert_contains "$out" "$dir/smhome/state" "the refusal must identify the resolved state root"
   [ "$(cat "$dir/fake/command")" = fm-deck-worker ] || fail "child traversal failure must not stop the secondmate"
   pass "fm-control relaunch: unreadable and untraversable child state fails checkpoint"
 }
@@ -1903,9 +2083,36 @@ test_relaunch_refuses_a_held_in_flight_item_before_stopping() {
 
 
 
+test_relaunch_requires_the_recorded_endpoint_to_stop() {
+  local dir other out rc=0
+  dir=$(new_case unconfirmed-stop rl-stop-proof)
+  add_ship_task "$dir" rl-stop-proof deck
+  other=$(new_case other-endpoint rl-other-proof)
+  add_ship_task "$other" rl-other-proof deck
+  fake_push "$other"
+  fm_test_close_task_endpoint "$other/home/state/rl-other-proof.meta"
+  cp "$dir/home/data/rl-stop-proof/brief.md" "$dir/brief.prior"
+  cp "$dir/home/state/rl-stop-proof.meta" "$dir/meta.prior"
+  printf 'uncommitted work\n' > "$dir/wt/preserved"
+  git -C "$dir/wt" add preserved
+  git -C "$dir/wt" diff --cached > "$dir/staged.prior"
+  # Another task's agent-reported endpoint close is not proof for this task.
+  out=$(FM_FAKE_NEVER_DIES=1 run_control "$dir" rl-stop-proof relaunch --note 'must not launch') || rc=$?
+  expect_code 1 "$rc" "a still-live endpoint must refuse replacement: $out"
+  assert_contains "$out" 'exit=unconfirmed' "missing bounded-stop diagnostic"
+  assert_contains "$out" 'original instructions were restored' "missing preservation diagnostic"
+  cmp -s "$dir/brief.prior" "$dir/home/data/rl-stop-proof/brief.md" || fail "instructions changed on stop refusal"
+  cmp -s "$dir/meta.prior" "$dir/home/state/rl-stop-proof.meta" || fail "metadata changed on stop refusal"
+  git -C "$dir/wt" diff --cached > "$dir/staged.after"
+  cmp -s "$dir/staged.prior" "$dir/staged.after" || fail "staged work changed"
+  assert_not_contains "$(cat "$dir/fake/literal")" 'encode launch-brief' "replacement launched without stop proof"
+  pass "relaunch refuses a live recorded endpoint even after another process exits, preserving staged work"
+}
+
 # fm-model-chain sources these fixture helpers without running this suite.
 [ "${FM_MODEL_CHAIN_TEST_SKIP_RUN:-0}" != 1 ] || return 0
 
+test_relaunch_requires_the_recorded_endpoint_to_stop
 test_secondmate_relaunch_preserves_an_in_place_model_choice
 test_relaunch_model_choice_follows_launch_resolution
 test_remote_relaunch_publishes_the_model_choice_with_the_route
@@ -1927,6 +2134,7 @@ test_relaunch_onto_an_unverified_harness_is_refused
 test_relaunch_onto_verified_deck_replaces_the_agent
 test_relaunch_stops_stale_deck_driver_before_replacement_launch
 test_live_deck_relaunch_uses_control_protocol_before_residual_stop
+test_relaunch_waits_out_a_slow_host_shutdown_and_finishes
 test_relaunch_onto_deck_with_effort_refuses_before_stop
 test_secondmate_relaunch_picks_up_the_configured_harness_pin
 test_secondmate_relaunch_ignores_invalid_configured_effort_before_stop

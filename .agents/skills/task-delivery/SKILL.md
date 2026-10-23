@@ -2,7 +2,7 @@
 name: task-delivery
 description: >-
   Agent-only procedures for the dispatch, validation, ready, landing, and scout-outcome steps of a task's delivery.
-  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a scout completes, and on every heartbeat for the finished-work sweep.
+  Use before every spawn, when judging an active no-mistakes validation run's state, when the captain adds or changes the ask of a task under validation, when a worker hand-edits, commits, aborts, or restarts during its run, when a worker reports a PR or a ready local-only branch, before writing a custom watcher check, after a teardown, when a worker reports blocked, when a scout completes, and on every heartbeat for the finished-work sweep.
 user-invocable: false
 metadata:
   internal: true
@@ -24,6 +24,13 @@ A worker rebases only while its branch is still its own to rewrite, and the bran
 Once custody is settled, getting the branch current is yours to own by steering or relaunching the worker.
 A semantic conflict a worker reports is yours to decide or escalate, never to hand back.
 
+## When a worker reports blocked
+
+Follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, referenced by `AGENTS.md` section 7's "Acting within scope", when judging a reported blocker.
+If the report does not satisfy that contract, steer the worker to follow it.
+Once it does, solve what is in its way yourself - start or install the tool, free or replace the slot, grant the authority the captain already gave - and steer it to continue.
+Raise the blocker with the captain only when it is his call: a hard stop, a product decision, or a credential only he can supply.
+
 ## Scope once validation starts
 
 Once validation starts, prefer routing new requirements to follow-up work rather than expanding the current task, unless a new requirement completely invalidates the work being validated.
@@ -44,13 +51,14 @@ Judge validation by the currently attributed run step through `bin/fm-crew-state
 State derivation and uncertainty rules are owned by [`bin/fm-task-state-lib.sh`](../../../bin/fm-task-state-lib.sh); when the adapter reports parked approval or fix-review, steer the worker to follow the active gate help.
 A worker hand-editing, committing, aborting, or restarting during an active validation run duplicates pipeline ownership outside the supersession sequence above; steer it back to the gate response flow.
 The worker reports the PR when CI first becomes green rather than waiting for merge monitoring to finish.
+For a red check, follow the infrastructure triage and repair rule in [`bin/fm-dod-lib.sh`](../../../bin/fm-dod-lib.sh)'s act-within-scope section.
 
 ## PR ready
 
 For PR-based ship tasks, the ready signal depends on mode: `no-mistakes` reports `done: PR <url> checks green` after CI is green, while `direct-PR` reports `done: PR <url>` after opening the PR.
 Run `bin/fm-pr-check.sh <id> <PR url>` with the URL copied from that ready signal - it records `pr=` and the forge's `pr_head=` when available in the task's meta and arms the watcher's merge poll.
 Tell the captain the PR's full `https://...` URL copied from the worker's ready line or the task's `pr=` metadata, a concise outcome summary, and the no-mistakes risk level when applicable.
-A captain instruction to merge is explicit authority; the standing-authority paths are owned by `AGENTS.md` section 7's "Selected delivery path and merge authority".
+A captain instruction to merge is explicit authority; otherwise consult the repository's merge policy before asking, following [AGENTS.md section 7's "Selected delivery path and merge authority"](../../../AGENTS.md#selected-delivery-path-and-merge-authority).
 After an autonomous merge, give the captain a one-line full-URL or local-main outcome.
 An auto-land `check:` wake from `bin/fm-autoland.sh` reports merges, deploy outcomes, and held green PRs with their reasons; a reported PR is yours to decide in the same turn rather than leave waiting on its owner.
 
@@ -61,10 +69,15 @@ Retire a custom check only through `bin/fm-check-unregister.sh <id>` (or `bin/fm
 
 ## Finished-work sweep
 
+When a parent instruction explicitly prohibits automatic recovery pending its release, record that approval exclusion through [`bin/fm-approval-wait.sh`](../../../bin/fm-approval-wait.sh), whose header owns declaration, exact decision/instruction binding and release.
+Do not infer this disposition from an ordinary keyed blocker or substitute a timed external wait for unknown approval timing.
+The cleanup and retry instructions below apply only to workers not excluded under that contract.
+
 `AGENTS.md` section 7 records the captain's standing instruction that the mate who created a worker cleans it up once its work is done.
 Run this sweep when a ship lands, when a scout completes, and on every heartbeat, over this home's own endpoint-backed direct reports and endpoint-bound leftover records only, never another home's, and never a secondmate, which retires only on an explicit decision.
-The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup eligibility, decision cards, repeat suppression, cadence, and second-mate audit.
-Handle its decision wakes through `captain-hold-lifecycle` rather than creating a duplicate call.
+A specialist is a persistent worker, so this sweep never retires it; the [fleet snapshot header](../../../bin/fm-fleet-snapshot.sh) owns its fleet visibility and the [specialist CLI header](../../../bin/fm-specialist.sh) owns messaging, model switching, and explicit retirement.
+The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-sweep.sh), whose header owns automated cleanup and retry eligibility, first-mate handoffs, repeat suppression, cadence, and second-mate audit.
+Handle its handoffs under the stopped-worker rule below, never through a captain hold.
 
 Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
 Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
@@ -72,16 +85,23 @@ A scout kept alive to host the captain's Lavish loop, or any worker whose work i
 
 For each finished worker:
 
-1. Run `bin/fm-teardown.sh <id>`, never with `--force`.
-2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`; its help owns what it accepts, and it never proceeds past unlanded work.
-3. Treat any other refusal - unlanded or uncommitted work, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: stop, never retry around it, and hold one plain decision for the captain through `bin/fm-captain-hold.sh` naming the worker, the evidence, and the choice between cleaning it up and keeping it.
+1. Run `bin/fm-teardown.sh <id> --keep-commits`, never with `--force`; its [header](../../../bin/fm-teardown.sh) owns the preservation limits and output.
+   If the verified PR/MR URL is known only from the status ledger, supply it through the header's merged-PR input rather than relying on GitHub branch discovery.
+   Handle preserved work yourself under [the housekeeping policy](../captain-hold-lifecycle/SKILL.md#decision-cards), mentioning it as an FYI at most.
+2. If cleanup refuses only because the endpoint is on a retired backend and could never be confirmed gone, retire the record with `FM_HOME=<this home> bin/fm-retire-endpoint.sh --finished <id>`, carrying the same verified PR/MR URL when supplied to teardown; its [header](../../../bin/fm-retire-endpoint.sh) owns eligibility and forwarding to guarded cleanup.
+3. Treat any other refusal - uncommitted work, unlanded work without a merged PR, a missing report, an open captain decision, a stream endpoint that would not confirm its stop, a window still listed - as not provably finished: never force or retry around it, and decide it yourself under the rule below.
+
+Deciding a stopped or unproven worker is yours, never the captain's (his rule of 2026-10-18: "i dont want to make those decisions"):
+- Retire it when its work is done, merged, superseded or abandoned: use step 1's guarded cleanup and preservation path, respecting its documented limits.
+- Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: use [`fm-control.sh`'s relaunch path](../../../bin/fm-control.sh) with a note that tells the worker why it is restarting and what to continue.
+- If you really cannot tell, ask your own first mate (in a second mate home, one `needs-decision` line on the parent channel); the captain sees at most a one-line FYI in your chat or notes, never a card.
+[`bin/fm-idle-sweep.sh`'s header](../../../bin/fm-idle-sweep.sh) owns the automatic version of this rule.
 
 Then close this home's record-less leftovers: endpoints the hub still lists live for a task whose record here is already gone.
 Use `fm-retire-endpoint.sh`'s read-only orphan listing, then close each listed task/endpoint pair with its orphan mode and endpoint pin; its help owns invocation mechanics and listing limits, and [`fm-retire-orphan-lib.sh`'s header](../../../bin/fm-retire-orphan-lib.sh) owns eligibility and timing limits.
-Treat its refusal like step 3: never retry around it, and hold one plain decision for the captain naming the endpoint and the reason.
+Treat its refusal the same way: never retry around it, and settle it yourself or ask your first mate, never the captain.
 
-Once a worker's decision is held, later sweeps leave it to that decision rather than raising it again.
-In a secondmate home that decision reaches the captain through the parent channel, as every escalation there does.
+See the sweep header for how long handoff suppression lasts and when changed evidence becomes eligible again.
 
 On every heartbeat sweep, also run `bin/fm-pr-record-audit.sh` for this home, plus `FM_HOME=<home> bin/fm-pr-record-audit.sh` for each local secondmate home in the main home.
 Its [header](../../../bin/fm-pr-record-audit.sh) owns mismatch selection, diagnostics, and exit status.

@@ -1,0 +1,217 @@
+FM_TEST_BEGIN 2026-10-18T19:26:20Z tests/fm-idle-sweep.test.sh family=unclassified expected_gate_skip=none
+ok - fm-idle-sweep: failed, timed-out and incomplete backlog reads go to the first mate, never retry
+ok - fm-idle-sweep: unreadable PR states go to the first mate, never retry
+ok - fm-idle-sweep: lifecycle owners refuse stale retry and retirement snapshots
+not ok - still-blocked must refresh the current state (expected '2', got '3')
+FM_TEST_END 2026-10-18T19:27:14Z tests/fm-idle-sweep.test.sh exit=1 duration_ms=54244 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:27:14Z tests/fm-idle-sweep-retry-admission.test.sh family=unclassified expected_gate_skip=none
+ok - fm-idle-sweep: a reassigned slot cannot close an unfinished task
+ok - fm-control: foreign and unreadable claims refuse guarded and ordinary relaunches before stop
+ok - fm-idle-sweep: partial launch failures consume retries across replacement generations and hand off
+ok - fm-idle-sweep: unrelated replacement metadata is not charged to the failed retry
+ok - fm-idle-sweep: an intervening owner relaunch is neither counted nor handed off
+ok - fm-control: guarded relaunch defaults a kindless worker to ship
+ok - fm-idle-sweep: retirement preserves ledger-only merged MR commits without a card in manual mode
+ok - fm-idle-sweep: lifecycle owners refuse stale retry and retirement snapshots
+FM_TEST_END 2026-10-18T19:28:10Z tests/fm-idle-sweep-retry-admission.test.sh exit=0 duration_ms=56197 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:28:10Z tests/fm-retire-orphan-endpoint.test.sh family=unclassified expected_gate_skip=none
+ok - gate agents may list but cannot close orphan endpoints
+ok - listing without state is empty and leaves the home unchanged
+ok - listing propagates endpoint-read failures
+ok - registry inspection failures refuse initially and at the final check
+ok - the owned leftover closes, logged with its evidence
+ok - a local agent carrying this home's status path without a deck record is refused
+ok - another home's endpoint is refused
+ok - a name match alone is refused
+ok - an endpoint with unlanded or uncommitted work is refused
+ok - unsafe sibling slot claims refuse; proven absent and other-task claims are skipped
+ok - worktree discovery refuses broken, missing and failed Git reads but permits a non-repository
+ok - a finished scout's scratch closes; without its report it is refused
+ok - a live busy agent is refused, an idle one closes with its result persisted
+ok - final checks refuse a new turn, new message and competing lifecycle lock
+ok - a recorded task and an implicit home are refused
+ok - bin/fm-on.sh runs the close against a remote home
+tests/lib.sh: line 204: 34089 Killed: 9               python3 "$HUB_DIR/stub.py" "$HUB_DIR" "$TOKEN" > /dev/null 2>&1
+tests/lib.sh: line 204: 39429 Killed: 9               python3 -c 'import time; time.sleep(120)' fm-stream-agent serve --hub "$URL" --token-file /dev/null --machine "$MACHINE" --label fm-agentproof --cwd "$PROJECT" --status-path "$HOME_A/state/agentproof.status" --ready-file /dev/null
+FM_TEST_END 2026-10-18T19:28:32Z tests/fm-retire-orphan-endpoint.test.sh exit=0 duration_ms=21801 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:28:32Z tests/fm-teardown-endpoint-safety.test.sh family=backend-dispatch expected_gate_skip=none
+ok - fm-retire-endpoint: after lock contention only unchanged records retire; replacements and vanished records leave the backlog untouched
+ok - fm-teardown: missing, empty, malformed, ambiguous, and task-mismatched endpoints refuse before every mutation or runtime call
+ok - fm-teardown: a reassigned-slot record retires record-only on all four proofs and refuses without any of them
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+Automatic merge went well; stopped before committing as requested
+ok - reassigned retirement requires readable final tips and positive stop evidence while preserving branches
+ok - fm-teardown: a concurrent lifecycle action refuses before mutation
+ok - fm-teardown: non-pool cleanup ignores unrelated task publication locks
+ok - fm-teardown: destructive cleanup serializes with metadata writers
+ok - cleanup identity: valid tmux and Herdr records validate, a removed backend refuses, and every empty backend target refuses
+ok - process cleanup: creation-time PID identity removes only the exact child and preserves the control child
+ok - fm-teardown: exact endpoint cleanup refuses an invalid record and closes only the recorded target
+ok - fm-teardown: a still-present endpoint keeps every durable record, while a confirmed kill stays successful
+ok - fm-teardown: a plain retirement stops on a still-present endpoint and only the override proceeds
+ok - Treehouse locking resolves a bare local origin against its source project, matching the provisioned clone
+ok - fm-teardown: a pool slot named by a second task record is never returned, killed, or reset
+ok - fm-teardown: a pool slot held by another firstmate home is never returned
+ok - fm-teardown: a task that solely holds its slot still returns it
+ok - fm-teardown: only a readable reassignment claim preempts a contested slot record
+ok - fm-teardown: a pool slot claimed by another task is left alone while the task's own cleanup finishes
+ok - fm-teardown: a task's own slot claim, and an unclaimed slot, both still tear down
+ok - fm-teardown: a slot collision settled by the owner claim releases the stale record, then the owner
+ok - fm-teardown: an exact recorded endpoint still tears down after changing cwd outside its worktree
+ok - Treehouse project locking anchors at the local root for main-home, local-secondmate, and remote-seeded layouts
+ok - fm-teardown: a remote-seeded secondmate home returns its own uncontested pool slot
+ok - fm-teardown: slot ownership across a remote-seeded home and its local child still refuses
+ok - Treehouse project locking still serializes two homes across the remote-seeded boundary
+FM_TEST_END 2026-10-18T19:31:45Z tests/fm-teardown-endpoint-safety.test.sh exit=0 duration_ms=193460 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:31:45Z tests/fm-teardown.test.sh family=pr-forge expected_gate_skip=none
+ok - done-row failed ship with no PR refuses even when all commits are pushed, preserving all artifacts
+ok - only explicit operator retirement bypasses known unlanded work, preserving the copy
+ok - unset FM_HOME cannot route a fixture outcome outside its operational sandbox
+ok - local-only worktree with HEAD on a fork remote is torn down and the home summary is refreshed
+ok - teardown refuses unsafe wake-gate state before destructive cleanup
+ok - teardown preflights the optional wake-gate runtime before destructive cleanup
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 1s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ok - teardown closes its own backlog item before reporting success
+ok - teardown refuses a recorded PR that is open, closed without a reason, or unreadable
+ok - teardown gates backlog-only PRs before cleanup despite remote reachability
+ok - manual cleanup refuses unreadable rows but accepts missing rows and backlogs while gating metadata PRs
+ok - local-only landed branches still require their recorded PR to merge
+ok - teardown does not treat task titles as supersession declarations
+ok - teardown records each PR's real outcome, so a superseded PR reads as done, never merged
+ok - forced teardown records confirmed PR outcomes without inventing offline outcomes or passing --pr
+ok - scout and local-only deliveries retain their own completion and artifact across contextual PR outcomes
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+●  WATCHER DOWN - SUPERVISION IS OFF
+●  1 task(s) in flight, but no live watcher process holds this home lock (last beat: 0s ago).
+●  Trust the emitted supervision protocol for this harness; do not use shell & for watcher repair.
+●  This is a supervision warning only; the guarded operation WILL still run.
+●  repair missing watcher supervision according to the session-start block for this harness; do not use shell &.
+●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ok - teardown honors config/backlog-backend=manual and still finishes cleanly
+ok - local-only worktree with truly unpushed work is refused (safety preserved)
+ok - local-only worktree with work merged into local main is torn down (no regression)
+ok - pushed empty commit tears down because its content is already in default
+ok - no-mistakes worktree with genuinely unlanded work is refused (safety preserved)
+ok - local-only worktree with unpushed work is torn down under --force (escape hatch)
+ok - fm-pr-check publishes the PR-ready line on a secondmate's parent channel once
+ok - a secondmate home's teardown delivers the child's final line or refuses until it can
+ok - teardown completes when an exact busy-state sidecar is already absent
+ok - forced secondmate teardown holds every descendant lifecycle and metadata lock
+ok - forced secondmate teardown retains a child's identity until its endpoint is confirmed gone
+ok - forced teardown retains a nested secondmate home and its grandchild's identity when the grandchild close is unconfirmed
+ok - squash-merged + deleted-branch worktree (PR merged) is torn down (the fix)
+ok - squash-merged PR accepts a local HEAD that is an ancestor of the final PR head
+ok - teardown discovers a merged PR by branch name and records its landed outcome
+ok - squash-merged PR accepts replayed patches with an already-landed parent
+ok - replayed merged patch cannot hide an unlanded parent preserved only on a remote
+ok - merged PR does not allow teardown after a later local commit
+ok - --keep-commits saves a merged task's leftover local commits on a branch, then cleans up
+ok - --keep-commits discovers merged PR identity independently of content and refuses unproved merges
+ok - --merged-pr verifies GitHub and GitLab merges before preserving caller-identified work
+ok - finished retirement carries preservation through cleanup and reuses the same saved HEAD
+ok - --keep-commits refuses absent merge evidence, uncommitted changes and local-only work
+ok - squash-merged task whose local branch followed the pipeline rebase is torn down
+not ok - tests/fm-teardown.test.sh exceeded the per-script bound of 300s and was terminated
+FM_TEST_END 2026-10-18T19:36:46Z tests/fm-teardown.test.sh exit=124 duration_ms=300105 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:36:46Z tests/fm-mate-mail.test.sh family=unclassified expected_gate_skip=none
+ok - fm-mate-send: a local mate queues straight into the parent home's spool
+ok - crew time: busy-state events leave a history that outlives the worker
+ok - fm-report: a mate's report comes from records, read-only, from the main or a local mate home
+ok - fm-report: open decisions keep independent waits, and bad crew time is a named gap
+ok - fm-report: the fleet report adds each mate and the power left per provider, behind the bridge
+ok - fm-mate-route: a remote mate's report request is answered from records, with no model turn
+ok - fm-mate-route: a report answer is resent unchanged, and a failed one says why
+ok - fm-mate-route: archived bounces survive logged recovery and retry through the watcher with empty pending/
+ok - fm-mate-route: retained sessions prevent duplicate primary publication and carry primary reply instructions
+ok - fm-mate-route: refused and primary wakes survive logging failure without duplication
+ok - fm-mate-route: interrupted primary failure stays failed without retrying publication
+ok - fm-mate-route: a split home keeps a peer message for its restarting conversation
+ok - fm-mate-route: truncated log tails neither finish bookkeeping nor corrupt the retry
+ok - fm-mate-mail: only complete valid oversight records return their outcome
+ok - fm-mate-route: old live locks stay held, dead locks are recovered
+ok - fm-mate-route: a message already in the first mate's chat is not published again
+ok - fm-mate-route: an interrupted pass finishes its bookkeeping without repeating it
+ok - fm-procevent-remote-reply: a remote peer message goes to the spool before any document fetch, newlines intact
+ok - fm_stream_deck: a peer message wakes an idle Deck mate like a captain message
+ok - fm-mate-send: a remote mate's wire line round-trips through the spool exactly once
+delivered: 3b68d203a7bde313 dave -> cadia
+ok - fm-mate-route: delivers tagged, fire-and-forget, logged, with no reply tracking or wake
+ok - fm-mate-route: option-shaped peer text stays opaque through fm-send
+refused: beee702a5333abcc dave -> nobody: there is no second mate named nobody (second mates: cadia, dave; or primary for the first mate)
+ok - fm-mate-route: an unknown target is refused, bounced, logged, and woken
+refused: 36d8104274205f70 dave -> cadia: bridge-blocked: workload does not allow messages; the captain must allow messages on the workload bridge
+ok - fm-mate-route: a bridge without messages refuses and asks the captain
+failed: 7c342e0eb5438e4c dave -> cadia: delivery kept failing (error: transport lost)
+ok - fm-mate-route: a failing delivery retries, then fails for good with the reason
+ok - fm-mate-send: self, worker and main-home sends are refused; spooling is idempotent
+ok - fm-send: --from-mate needs a fire-and-forget corr
+FM_TEST_END 2026-10-18T19:37:39Z tests/fm-mate-mail.test.sh exit=0 duration_ms=53060 gate_skip=false
+FM_TEST_BEGIN 2026-10-18T19:37:39Z tests/fm-test-run.test.sh family=pure-contract-unit expected_gate_skip=none
+ok - exact suite coverage: --all lists every tests/*.test.sh once
+ok - family selection returns a proper subset of the suite
+ok - single-script selection lists exactly that path
+ok - changed-file selection stays conservative (never silent full suite)
+ok - a task marker refuses execution in the primary checkout and leaves worktrees and inspection alone
+ok - runner and its documentation surfaces select their curated family, not just their contract owners
+ok - shell line-ending policy selects runner coverage
+fm-test-run: no tests selected for changes vs HEAD (map is conservative; use --all for the complete suite)
+ok - changed selection covers dependents, fails closed for live unmapped source, and accepts retired unconsumed source
+ok - a bin reference selects the referencing scripts, and consumers still select their curated families
+ok - changed defaults to bounded automatic scheduling with serial override
+ok - Windows emulation exempts only synthetic POSIX modes
+ok - a plain script list defaults to bounded automatic concurrency without an automatic timeout
+ok - family proofs run concurrently only within separate family phases
+ok - a CI serial shard runs family phases concurrently, then its unproven scripts serially
+ok - empty changed selection emits deterministic text and JSON summaries
+ok - timing markers and JSON artifact are valid
+ok - aggregate exit reflects any script failure
+ok - gate-skip accounting is honest and non-failing
+ok - a gate skip records why it skipped
+ok - a script that actually ran records no skip reason
+ok - live guards are recorded as a capability class, not a bare env opt-in
+ok - fail-on-gate-skip converts tasks-axi-not-found into a hard failure
+ok - exclude-family drops the named primary family after selection
+ok - proven-isolated scheduling starts the longest measured script first
+ok - family, all, changed, and script selections ignore parallel hints
+ok - portable shard union, disjointness, and coverage guard hold
+ok - portable parallel lanes are fully hinted and packed within 5% of each other
+ok - portable serial shards are a deterministic disjoint cover of the serial lane
+ok - coverage guard reports and bounds the unmeasured portable serial share
+ok - portable serial shard lanes refuse mismatched, out-of-range, and countless names
+ok - portable serial shard assignment survives a stalled consumer and a child exit
+ok - --jobs refuses non-proven / stateful selections
+ok - --jobs admits and schedules a family with a recorded concurrent proof
+ok - an unclassified new test stays serial while the proven residual family runs concurrently
+ok - a changed shared test fixture selects its readers while an unread tests/ path still refuses
+ok - a concurrent run starts the longest-hint script first
+ok - --per-script-timeout-secs turns a hung script into a bounded failure
+ok - --max-wall-ms fails an over-budget run and refuses a malformed budget
+ok - jobs scheduler runs proven scripts; failure propagates; non-proven refused
+ok - aggregate-json merges lane timing artifacts
+ok - fm-test-run: suites cannot change or load real launchd/systemd units
+FM_TEST_END 2026-10-18T19:42:25Z tests/fm-test-run.test.sh exit=0 duration_ms=286318 gate_skip=false
+FM_TEST_SUMMARY total=7 failed=2 skipped_gate=0 duration_ms=965534
+FM_TEST_SUMMARY_FAMILY family=backend-dispatch count=1 duration_ms=193460 failed=0
+FM_TEST_SUMMARY_FAMILY family=pr-forge count=1 duration_ms=300105 failed=1
+FM_TEST_SUMMARY_FAMILY family=pure-contract-unit count=1 duration_ms=286318 failed=0
+FM_TEST_SUMMARY_FAMILY family=unclassified count=4 duration_ms=185302 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-teardown.test.sh duration_ms=300105
+FM_TEST_SLOWEST rank=2 script=tests/fm-test-run.test.sh duration_ms=286318
+FM_TEST_SLOWEST rank=3 script=tests/fm-teardown-endpoint-safety.test.sh duration_ms=193460
+FM_TEST_SLOWEST rank=4 script=tests/fm-idle-sweep-retry-admission.test.sh duration_ms=56197
+FM_TEST_SLOWEST rank=5 script=tests/fm-idle-sweep.test.sh duration_ms=54244
+FM_TEST_SLOWEST rank=6 script=tests/fm-mate-mail.test.sh duration_ms=53060
+FM_TEST_SLOWEST rank=7 script=tests/fm-retire-orphan-endpoint.test.sh duration_ms=21801
+fm-test-run: wrote timing artifact: .ci-debug/targeted-ci.json
