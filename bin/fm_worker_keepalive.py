@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""Worker keep-alive: a worker that stops making progress is acted on by its mate.
+"""Keep-alive: mates act on stuck workers and parents answer mate questions.
 
 bin/fm-worker-keepalive.sh is the public entrypoint; bin/fm-watch.sh owns the
 detached scan cadence and launch condition. In paths below, state/ denotes
 FM_STATE_OVERRIDE when nonempty, otherwise FM_HOME/state; metadata, episode records,
 the scan lock and wake queue all use that effective state directory.
-A home only watches its own direct workers (state/<id>.meta with kind ship or
-scout), so every mate, the first mate included, watches its own. Overlapping
-scans of one home exit zero quietly under a non-blocking lock at
-state/keepalive/.lock.
+A home watches only its own direct workers (state/<id>.meta with kind ship or
+scout) and second mates (kind secondmate), so every mate, the first mate included,
+watches its own. Overlapping scans of one home exit zero quietly under a
+non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
   undelivered  a done: worker without a recorded pr= is still in the fleet
@@ -62,6 +62,33 @@ wake telling its supervisor to raise it with the captain. When the condition
 clears or the worker leaves, an escalated episode is resolved the same way.
 A condition change starts a new episode.
 
+Parent-bound questions: the home also reads each second mate's channel
+(state/<id>.status of a kind=secondmate meta, where a remote mate's lines are
+ingested) through bin/fm-classify-lib.sh's open-decision fold. Every still-open
+needs-decision: or blocked: record there is a question to this home, except the
+machine escalations other owners close (keys starting keepalive-,
+pending-reply-, parked-run-, ci-stall-, child-outcome-). One unanswered for
+FM_KEEPALIVE_ASK_SECS (600) from first observation queues one check: wake per
+mate, keyed keepalive:<mate>:asks:<epoch>, listing up to five due questions and
+the total due count. It tells this home's supervisor to answer from what it
+already knows (the captain's own earlier words beat a relay; housekeeping is its
+own call) with `bin/fm-send.sh <mate> --resolve-key <key>`, or to ask the captain in
+one plain line, never to leave the mate waiting. A question on a new key gets
+its own clock and wake. Identical or reworded reposts of a still-open key retain
+its first observation, wake and escalation state. Only a fold closure followed
+by reopening starts a fresh episode, even when both happen between scans.
+Questions still open FM_KEEPALIVE_ESCALATE_SECS after their wake are raised as
+one line per mate (blocked [key=keepalive-<home>-<mate>-ask-<epoch>] from a
+second mate's home, a check: wake to raise it with the captain from the first
+mate's). The line describes the entire escalated-and-still-open set (count and
+oldest question); changes to that set or its note text refresh it (under the same
+report key on the parent channel). It resolves only when that set empties or
+the mate leaves.
+A question closes when the fold drops it (an answer sent with --resolve-key,
+the mate's own resolved line, or a captain-held transfer). Records live in
+state/keepalive/asks/<mate>.json, which also caches the fold until the channel's
+inode, size or mtime changes.
+
 Progress lives in state/keepalive/<id>.json.
 Regression coverage: tests/fm-worker-keepalive.test.sh.
 
@@ -96,6 +123,8 @@ NO_PROGRESS = env_int("FM_KEEPALIVE_NO_PROGRESS_SECS", 1200)
 STUCK = env_int("FM_KEEPALIVE_STUCK_SECS", 1200)
 DEAD = env_int("FM_KEEPALIVE_DEAD_SECS", 300)
 DONE = env_int("FM_KEEPALIVE_DONE_SECS", 2700)
+ASK = env_int("FM_KEEPALIVE_ASK_SECS", 600)
+MACHINE_KEYS = ("keepalive-", "pending-reply-", "parked-run-", "ci-stall-", "child-outcome-")
 ESCALATE = env_int("FM_KEEPALIVE_ESCALATE_SECS", 1800)
 MAX_NUDGES = env_int("FM_KEEPALIVE_MAX_NUDGES", 3)
 NOW = env_int("FM_KEEPALIVE_NOW", int(time.time()))
@@ -368,7 +397,98 @@ class Scan:
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
 
+    def questions(self, mate: str) -> dict:
+        """Still-open parent-bound questions in a second mate's channel, by identity."""
+        r = bash('. "$1/fm-classify-lib.sh"; _fm_status_open_decision_origins "$2" episode; '
+                 'printf "\\n--open--\\n"; status_open_decisions "$2"', str(SCRIPT_DIR),
+                 str(self.state / ("%s.status" % mate)))
+        origins_text, _, open_text = r.stdout.partition("\n--open--\n")
+        origins = dict(line.split("\t", 1) for line in origins_text.splitlines() if "\t" in line)
+        out = {}
+        for line in open_text.splitlines():
+            key, _, rest = line.partition("\t")
+            verb, _, note = rest.partition("\t")
+            if verb not in ("needs-decision", "blocked") or key.startswith(MACHINE_KEYS):
+                continue
+            ident = key + "-" + hashlib.sha256(note.encode()).hexdigest()[:16]
+            out[ident] = {"key": key, "note": note, "origin": origins.get(key)}
+        return out
+
+    def asks(self, mate: str) -> None:
+        directory = self.dir / "asks"
+        directory.mkdir(exist_ok=True)
+        rec_path = directory / ("%s.json" % mate)
+        rec = load(rec_path, {"asks": {}})
+        try:
+            st = (self.state / ("%s.status" % mate)).stat()
+            sig = "%d:%d:%d" % (st.st_ino, st.st_size, st.st_mtime_ns)
+        except OSError:
+            sig = ""
+        # the whole-file fold costs seconds on a long channel; reuse it while the file is unchanged
+        if sig and rec.get("sig") == sig and isinstance(rec.get("open"), dict):
+            now_open = rec["open"]
+        else:
+            now_open = self.questions(mate)
+            rec["sig"], rec["open"] = sig, now_open
+        previous = {a["key"]: a for a in rec.get("asks", {}).values()}
+        asks = rec["asks"] = {}
+        for ident, q in now_open.items():
+            a = previous.get(q["key"])
+            if a is None or int(q.get("origin") or 0) > int(a.get("origin") or 0):
+                a = {"first": NOW, "woke": 0, "escalated": False}
+            asks[ident] = a
+            a.update(q)
+        due = sorted((a for a in asks.values() if not a["woke"] and NOW - a["first"] >= ASK), key=lambda a: a["first"])
+        if due:
+            listed = "; ".join("[%s] \"%s\"" % (a["key"], a["note"][:200]) for a in due[:5])
+            more = " (and %d more)" % (len(due) - 5) if len(due) > 5 else ""
+            text = ("second mate %s has waited %d minutes for your answer to %d question%s: %s%s. Answer each now from what "
+                    "you already know - the captain's own earlier words beat a relay, and housekeeping is yours to decide - "
+                    "with bin/fm-send.sh %s --resolve-key %s '<answer>'; if one truly needs the captain, ask him in one "
+                    "plain line now; never leave the mate waiting"
+                    % (mate, minutes(NOW - due[0]["first"]), len(due), "" if len(due) == 1 else "s", listed, more, mate,
+                       due[0]["key"] if len(due) == 1 else "<key>"))
+            if self.wake("keepalive:%s:asks:%d" % (mate, due[0]["first"]), text):
+                for a in due:
+                    a["woke"] = NOW
+        escalated = {ident: a for ident, a in asks.items()
+                     if a["escalated"] or (a["woke"] and NOW - a["woke"] >= ESCALATE)}
+        esc_ids = sorted(escalated)
+        if escalated and esc_ids != rec.get("esc_ids"):
+            pending = sorted(escalated.values(), key=lambda a: a["first"])
+            first = rec.get("esc_first") or pending[0]["first"]
+            line = ("second mate %s has waited %d minutes for an answer to %d question%s and its parent did not answer; "
+                    "it needs an answer to \"%s\"%s"
+                    % (mate, minutes(NOW - pending[0]["first"]), len(pending), "" if len(pending) == 1 else "s",
+                       pending[0]["note"][:200], " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""))
+            if self.report(mate + "-ask", {"first": first}, "blocked", line):
+                rec["esc_first"], rec["esc_ids"] = first, esc_ids
+                for a in pending:
+                    a["escalated"] = True
+        elif not escalated and rec.get("esc_first"):
+            if self.report(mate + "-ask", {"first": rec["esc_first"]}, "resolved",
+                           "second mate %s's questions are answered" % mate):
+                rec.pop("esc_first")
+                rec.pop("esc_ids", None)
+        save(rec_path, rec)
+
     def scan(self) -> None:
+        mates = set()
+        for path in sorted(self.state.glob("*.meta")):
+            if meta(path).get("kind") != "secondmate":
+                continue
+            mates.add(path.stem)
+            try:
+                self.asks(path.stem)
+            except (OSError, ValueError, KeyError, subprocess.TimeoutExpired) as error:
+                print("fm-worker-keepalive: %s: %s" % (path.stem, error), file=sys.stderr)
+        for rec_path in sorted((self.dir / "asks").glob("*.json")):
+            if rec_path.stem in mates:
+                continue
+            rec = load(rec_path, {})
+            if not rec.get("esc_first") or self.report(rec_path.stem + "-ask", {"first": rec["esc_first"]}, "resolved",
+                                                       "second mate %s left the fleet" % rec_path.stem):
+                rec_path.unlink(missing_ok=True)
         live = set()
         for path in sorted(self.state.glob("*.meta")):
             m = meta(path)

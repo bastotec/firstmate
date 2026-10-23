@@ -1919,7 +1919,10 @@ $1
 EOF
 }
 
-_fm_status_open_decision_origins() {  # <status-file>
+# Return key/tab/opening-line pairs for the currently open decisions.
+# Default mode tracks the latest accepted opening; `episode` retains the first
+# opening while a key stays open, so reposts cannot restart keep-alive timers.
+_fm_status_open_decision_origins() {  # <status-file> [episode]
   local f=$1 line open='' after key verb note number=0 origins='' _FM_VERB _FM_KEY _FM_NOTE
   local resolve held
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
@@ -1938,9 +1941,11 @@ _fm_status_open_decision_origins() {  # <status-file>
           && [ "$(_fm_open_set_verb "$after" "$key")" = "$verb" ]; then
           case "$after" in
             "$key"$'\t'"$verb"$'\t'"$note"|*$'\n'"$key"$'\t'"$verb"$'\t'"$note")
-              origins=$(_fm_decision_origin_drop "$origins" "$key")
-              [ -n "$origins" ] && origins="${origins}"$'\n'
-              origins="${origins}${key}"$'\t'"${number}"
+              if [ "${2:-}" != episode ] || ! _fm_open_set_has "$open" "$key"; then
+                origins=$(_fm_decision_origin_drop "$origins" "$key")
+                [ -n "$origins" ] && origins="${origins}"$'\n'
+                origins="${origins}${key}"$'\t'"${number}"
+              fi
               ;;
           esac
         fi
