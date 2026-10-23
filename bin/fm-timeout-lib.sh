@@ -11,20 +11,23 @@
 #       to force the dependency-free fallback.
 #
 #   fm_run_timed <seconds> <command> [args...]
-#       Runs the command with a hard bound. Exit status is the command's own,
-#       except 124, which means the bound was hit (GNU timeout's convention,
-#       reproduced by the perl and bash fallbacks).
+#       Runs the command with a hard bound and preserves its exit status.
+#       Deadline exhaustion returns 124 (GNU timeout's convention, reproduced
+#       by the perl and bash fallbacks); a command's own 124 is indistinguishable.
 #
 # A non-positive bound is not a bound: `timeout 0` and the perl fallback's
 # `alarm 0` both disable the deadline, so callers must reject 0 before calling.
 #
-# All four mechanisms terminate the whole process GROUP, not just the direct
-# child, so a hung grandchild (a vendor CLI spawned by a wrapper script, a git
-# fetch spawned by a sweep) cannot outlive the bound. GNU/BSD `timeout` does
-# this by default because it does not run the command in the foreground process
-# group; the perl fallback does it explicitly with setpgrp plus a negative pid,
-# and the bash fallback uses monitor mode to give the bounded child its own
-# process group before signaling its negative pid.
+# All four mechanisms terminate the owned process GROUP, not just the direct
+# child, on timeout and after the command exits, even successfully. Otherwise a
+# descendant retaining stdout can keep command substitution blocked after the
+# bounded command has finished. Surviving members of that group receive KILL;
+# a caller needing a persistent worker must detach it into its own group.
+# GNU/BSD timeout creates the command's group without --foreground; the perl
+# fallback uses setpgrp, and bash uses monitor mode. Cleanup targets only that
+# group via its negative pid, never a process-name match or an unrelated group.
+# tests/fm-timeout.test.sh covers pipe closure, exit statuses, and isolation;
+# tests/fm-session-start.test.sh covers digest completion through the wake probe.
 set -u
 
 fm_timeout_mechanism() {

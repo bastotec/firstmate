@@ -187,13 +187,15 @@
 # Hosts without timeout, gtimeout, or perl use the shared pure-Bash watchdog, so
 # the digest never runs without the same hard bound and process-group cleanup.
 #
-# PRIVATE DIAGNOSTICS: FM_SESSION_START_DIAGNOSTICS=1 opts into a private
-# temporary directory (0700) containing stages.tsv (0600). Its path is printed
-# on stderr. Records contain only epoch seconds, fixed stage labels, and fixed
-# events (enter, complete, timeout, failed); no command output, arguments,
-# environment, home paths, or task names are captured. Retain a failed run's
-# artifact to locate slow work before changing budgets; delete it when finished.
-# This does not change the deadline or the host's completion requirement.
+# PRIVATE DIAGNOSTICS: FM_SESSION_START_DIAGNOSTICS=1 or the destination-home
+# selector (bin/fm-startup-diagnostics.sh's header) opts into a private temporary
+# directory (0700) containing stages.tsv (0600). Its path is printed on stderr.
+# Each record is TSV: v1, epoch seconds, fixed event, fixed stage label.
+# bin/fm-startup-diagnostics-lib.sh owns the allowlist, including wake-drain
+# subphases; no command output, arguments, environment, home paths, or task names
+# are captured. Retain a failed run's artifact to locate slow work before changing
+# budgets; delete the directory when finished. This does not change the deadline
+# or either Deck host's completion-marker requirement.
 #
 # Usage: fm-session-start.sh
 #   Prints the full ordered digest to stdout and always exits 0: this is a

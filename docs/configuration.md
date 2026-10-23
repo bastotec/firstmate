@@ -161,11 +161,9 @@ state/
 
 ## Private startup diagnostics
 
-For an authorized fresh start in one destination home, run `bin/fm-on.sh <mate> fm-startup-diagnostics.sh enable` before the owning lifecycle command. [`fm-startup-diagnostics.sh disable`](../bin/fm-startup-diagnostics.sh) stops recording future starts; neither operation starts, stops, or restarts a worker. The selector is the non-inherited, home-local `config/startup-diagnostics` file containing `1`, so both Deck launch paths can select diagnostics despite remote environment stripping. For local use, set `FM_HOME` to the destination home and run the same selector. Don't run a second digest beside an active session.
-
-Each opted-in start prints its private `stages.tsv` path on stderr. The directory is 0700 and the file 0600; records contain only epoch seconds and fixed event/stage labels, including `wake-record-divergence`. No command output, arguments, environment, or task names are recorded. Retain failed-start timings privately, then remove the diagnostic directory when finished. The whole-startup deadline stays 120 seconds by default, and both Deck hosts still require the completion marker.
-
-The wake-queue fixture covers a completed bounded probe whose descendant retains the output pipe. The shared timeout runner now closes its owned process group on completion as well as timeout. This reproduces a local failure mode, not proof of the remote slowdown's cause; deferred-network completion alone doesn't identify the blocking wake-drain subphase.
+For private timings on an authorized fresh start, use the destination-home selector in [`fm-startup-diagnostics.sh`](../bin/fm-startup-diagnostics.sh); its header covers local use and selection through `fm-on.sh` despite remote environment stripping.
+Don't run a second digest beside an active session.
+[`fm-session-start.sh`'s header](../bin/fm-session-start.sh) owns the environment override, private artifact contract, retention, and startup deadline; [`fm-startup-diagnostics-lib.sh`](../bin/fm-startup-diagnostics-lib.sh) owns the fixed event/stage allowlist.
 
 ## Model fallback chains (spawn-side)
 

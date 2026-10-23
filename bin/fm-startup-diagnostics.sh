@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # Select private startup timings in the destination home, including remote launches.
 # Usage: fm-startup-diagnostics.sh enable|disable
+# Local: FM_HOME=<destination-home> bin/fm-startup-diagnostics.sh enable
+# Remote: bin/fm-on.sh <mate> fm-startup-diagnostics.sh enable
+# enable atomically writes 1 to config/startup-diagnostics in that home, so
+# selection survives launch environment stripping; disable removes the selector.
 # Does not start, stop, or restart a session. Disable after the authorized start;
-# retained diagnostic directories are deleted separately by their owner.
+# selection otherwise persists for subsequent starts. Artifact format and
+# retention are owned by bin/fm-session-start.sh's header.
 set -eu
 case "${1:-}" in
   enable|disable) [ "$#" -eq 1 ] || exit 2 ;;
