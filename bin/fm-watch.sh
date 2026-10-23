@@ -173,6 +173,10 @@
 #                          records a ship, scout or second mate, has configured
 #                          but disarmed auto-land, or retains keep-alive episode
 #                          records that may need resolution
+#   check: stalled tasks digest: inspect pending questions and repair stalled implementation
+#                          surfaced once from episode-bearing stall-digest:
+#                          queue rows; bin/fm-parked-run-watch.sh's header owns
+#                          publication and receipt reconciliation
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
