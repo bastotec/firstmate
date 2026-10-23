@@ -23,7 +23,9 @@ for tool in jq python3 curl perl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "skip: $tool not found"; exit 0; }
 done
 
-TMP_ROOT=$(fm_test_tmproot fm-remote-secondmate-stream)
+# Exercise process discovery with "awk" in the fixture path, not just in the
+# discovery process's executable name.
+TMP_ROOT=$(fm_test_tmproot fm-remote-secondmate-stream-awk)
 mkdir -p "$TMP_ROOT"
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
 PARENT="$TMP_ROOT/parent"
@@ -45,9 +47,9 @@ HUB_PID=
 mkdir -p "$PARENT/data" "$PARENT/state" "$PARENT/config" "$PARENT/projects" "$REMOTE_ROOT" "$CLAIMS"
 
 stream_agent_pids() {
-  ps -eo pid,args 2>/dev/null \
+  ps -eo pid=,comm=,args= 2>/dev/null \
     | awk -v l="--label fm-$ID" -v r="$REMOTE_ROOT" \
-        'index($0, "fm-stream-agent.py") && index($0, l) && index($0, r) && !index($0, "awk") {print $1}'
+        '$2 !~ /(^|\/)awk$/ && index($0, "fm-stream-agent.py") && index($0, l) && index($0, r) {print $1}'
 }
 
 cleanup() {
