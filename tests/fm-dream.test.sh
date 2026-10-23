@@ -147,10 +147,16 @@ instructions=$(printf '%s' "$prompt" | grep -o '/[^ ]*instructions-[0-9-]*\.json
 if [ -n "$instructions" ]; then
   case "${STUB_INSTR:-none}" in
     none) printf '{"changes": [], "charters": []}' > "$instructions" ;;
+    charter-fixture) cp "$STUB_CHARTERS" "$instructions" ;;
     edit) printf 'Answer a peer with --reply-to, never on the parent channel.\n' >> AGENTS.md
           printf '{"changes": [{"path": "AGENTS.md", "what": "says how to answer a peer", "why": "a mate answered on its parent channel", "evidence": ["x"]}],
                    "charters": [{"mate": "cadia", "what": "name the kernel repo", "why": "asked twice", "evidence": ["y"]},
                                 {"mate": "finn-finance", "what": "PRIVATE CHARTER EDIT", "why": "z"}]}' > "$instructions" ;;
+    charters) printf '{"changes": [], "charters": [
+                 {"mate": "cadia", "add": ["Name the kernel repository in every kernel task.", "Never send a message to a customer without the captain."], "why": "asked twice", "evidence": ["y"]},
+                 {"mate": "bob-helper", "add": ["Answer in one paragraph."], "why": "long replies", "evidence": ["z"]},
+                 {"mate": "dave-tools", "add": ["List the repo before a fix."], "why": "wrong repo", "evidence": ["w"]},
+                 {"mate": "finn-finance", "add": ["PRIVATE CHARTER EDIT"], "why": "z"}]}' > "$instructions" ;;
     unlisted) printf 'one\n' >> AGENTS.md; printf 'two\n' >> .agents/skills/guide/SKILL.md
               printf '{"changes": [{"path": "AGENTS.md", "what": "x", "why": "y", "evidence": ["e"]}]}' > "$instructions" ;;
     noevidence) printf 'one\n' >> AGENTS.md
@@ -780,6 +786,30 @@ PY
 
 # seed_improve <case-dir>: ship-x is a task of the home, with one run spawned
 # 2 h before NOW whose PR the gh stub reports merged at NOW - 1000.
+# seed_charter_mates <case-dir>: cadia is a local mate, bob-helper a remote one whose
+# bridge allows maintenance (ssh runs the command here), dave-tools a remote one whose
+# bridge refuses it; each home has a data/charter.md. With "local", only cadia is registered.
+seed_charter_mates() {
+  local d=$1 m
+  for m in cadia bob dave; do mkdir -p "$d/mates/$m/data"; printf '# Charter\n\nOwn the domain.\n' > "$d/mates/$m/data/charter.md"; done
+  chmod 640 "$d/mates/cadia/data/charter.md"
+  printf -- '- cadia - cad (home: %s; scope: cad; projects: ; added 2026-10-01)\n- bob-helper - help (host: workload; root: /r; home: %s; scope: help; projects: ; added 2026-10-01)\n- dave-tools - tools (host: automattic; root: /r; home: %s; scope: tools; projects: ; added 2026-10-01)\n' \
+    "$d/mates/cadia" "$d/mates/bob" "$d/mates/dave" > "$d/home/data/secondmates.md"
+  [ "${2:-}" != local ] || sed -i.bak '/host: /d' "$d/home/data/secondmates.md"
+  rm -f "$d/home/data/secondmates.md.bak"
+  cat > "$d/bin/bridge" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2 $3" in "check workload maintenance"|"check "*" reports") exit 0 ;; esac; exit 1
+SH
+  cat > "$d/bin/ssh" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_CALLS/ssh"
+case "$*" in *charter.md*) exec bash -c "${@: -1}" ;; esac
+cat > /dev/null; exit 1
+SH
+  chmod +x "$d/bin/bridge" "$d/bin/ssh"
+}
+
 seed_improve() {
   local d=$1
   printf '# Backlog\n\n## In flight\n- [ ] ship-x - Do the thing (repo: firstmate) (kind: ship)\n' > "$d/home/data/backlog.md"
@@ -919,6 +949,7 @@ class Context(dream.Ctx):
             if argv[1] == 'update':
                 self.bodies[argv[2]] = pathlib.Path(argv[argv.index('--body-file') + 1]).read_text()
             if argv[1] == 'add':
+                self.bodies['dream-call-new'] = pathlib.Path(argv[argv.index('--body-file') + 1]).read_text()
                 return subprocess.CompletedProcess(argv, 0, json.dumps({'id': 'dream-call-new'}), '')
         return subprocess.CompletedProcess(argv, 0, '', '')
 
@@ -1059,6 +1090,22 @@ assert fresh['change'] in ctx.bodies['dream-call-charter'], ctx.bodies
 assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add']) for c in ctx.calls), ctx.calls
 assert dream.call_ledger(ctx)[-1]['key'] == 'dream-call-charter'
 
+ctx = ctx_with(set(), [])
+held = {'mate': 'cadia', 'what': 'Only change production with captain approval.'}
+tonight = []
+dream.raise_card(ctx, [], [held], tonight, {}, [])
+assert tonight[-1]['state'] == 'card raised', tonight
+body = ctx.bodies['dream-call-new']
+question = '- Apply this charter edit for cadia? ' + held['what']
+assert body.splitlines().count(question) == 1, body
+ctx.open_keys = {'dream-call-new'}
+ctx.facts.pop('dream_open_calls', None)
+ctx.calls = []
+dream.raise_card(ctx, [], [held], tonight, {}, [])
+assert tonight[-1]['state'] == 'already waiting on the captain as dream-call-new', tonight
+assert ctx.bodies['dream-call-new'] == body
+assert not any(c[:2] in (['fake-hold', 'hold'], ['fake-tasks', 'add'], ['fake-tasks', 'update']) for c in ctx.calls), ctx.calls
+
 for rows in ([], [{'change': fresh['change'], 'key': 'dream-call-open'}]):
     ctx = ctx_with({'dream-call-open'}, rows)
     ctx.unreadable = True
@@ -1170,7 +1217,7 @@ for broken in (b'{"change": "torn\n', b'[]\n', b'\xff\xfe\n'):
     assert dream.call_ledger(ctx) is None
     (ctx.dir / 'raised.jsonl').unlink(missing_ok=True)
     ctx.facts['improve'] = {'changes': [answered], 'tonight': []}
-    ctx.facts['charter_proposals'] = [charter]
+    ctx.facts['charter_proposals'] = [held]
     ctx.facts['triage'] = [{'title': 'Repair the inbox status display', 'repo': 'firstmate',
                             'why': 'The display is stale', 'fix': 'Refresh its status', 'evidence': ['measured']}]
     result = dream.step_file(ctx)
@@ -1314,6 +1361,373 @@ test_track_rejects_a_predecessor_deployment() {
   pass "improve: tracking retains deploy-pending when only a predecessor has deployed"
 }
 
+test_charter_lines_are_applied_to_each_mate_s_own_charter() {
+  local d log line
+  d=$(new_case charters)
+  seed_charter_mates "$d"
+  STUB_INSTR=charters FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out.json" || fail "run exited nonzero"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  line="- ($(jq -r .date "$log")) Name the kernel repository in every kernel task."
+  { grep -qxF '## Standing adjustments from fleet dreaming' "$d/mates/cadia/data/charter.md" \
+    && grep -qxF -- "$line" "$d/mates/cadia/data/charter.md"; } || fail "the local charter did not gain the line: $(cat "$d/mates/cadia/data/charter.md")"
+  grep -q 'Own the domain.' "$d/mates/cadia/data/charter.md" || fail "the charter lost its own text"
+  grep -q 'customer' "$d/mates/cadia/data/charter.md" && fail "a hard-stop line was applied without the captain"
+  python3 -c 'import os, stat, sys; sys.exit(stat.S_IMODE(os.stat(sys.argv[1]).st_mode) != 0o640)' \
+    "$d/mates/cadia/data/charter.md" || fail "the charter's mode changed"
+  [ "$(cat "$d"/mates/cadia/state/dream-charter-backups/charter-*.md)" = "$(printf '# Charter\n\nOwn the domain.')" ] \
+    || fail "no backup of the original charter"
+  { grep -qF -- '- (' "$d/mates/bob/data/charter.md" && grep -q 'Answer in one paragraph.' "$d/mates/bob/data/charter.md"; } \
+    || fail "the remote charter was not applied over the bridge"
+  grep -q 'List the repo' "$d/mates/dave/data/charter.md" && fail "a charter was changed across a bridge that refuses maintenance"
+  python3 - "$log" "$d/calls" <<'PY' || fail "charter actions wrong: $(jq -c '.charter_card, .summary' "$log")"
+import json, sys
+run = json.load(open(sys.argv[1]))
+acts = {a.get("mate"): a for a in run["charter_card"] if a["kind"] == "charter"}
+assert set(acts) == {"cadia", "bob-helper", "dave-tools"}, acts  # the excluded mate never appears
+assert acts["cadia"]["state"].startswith("applied to the charter (backup "), acts
+assert acts["bob-helper"]["state"].startswith("applied to the charter"), acts
+assert acts["dave-tools"]["state"] == "not applied: the bridge to automattic does not allow maintenance", acts
+card = [a for a in run["charter_card"] if a["kind"] == "captain"]
+assert len(card) == 1 and "charter line for cadia: Never send a message to a customer" in card[0]["what"], card
+sends = open(sys.argv[2] + "/send").read().splitlines()
+assert [l.split()[0] for l in sends] == ["cadia", "bob-helper"] and all("Re-read your charter now" in l for l in sends), sends
+assert set(open(sys.argv[2] + "/send.stream").read().split()) == {"monologue"}
+s = run["summary"]
+assert "Charter for cadia: Name the kernel repository in every kernel task. (applied to the charter" in s, s
+assert "PRIVATE CHARTER EDIT" not in json.dumps(run), "an excluded mate's charter edit leaked"
+PY
+  # a second night with the same lines adds nothing and keeps the first backup's charter
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_INSTR=charters FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out2.json" || fail "second run exited nonzero"
+  [ "$(grep -c 'Name the kernel repository' "$d/mates/cadia/data/charter.md")" = 1 ] || fail "a repeated line was added twice"
+  [ "$(jq -r '[.charter_card[] | select(.mate == "cadia" and .kind == "charter")][0].state' "$(ls "$d"/home/state/dream/runs/*.json)")" = "already in the charter" ] \
+    || fail "a repeated line was not reported as already there"
+  pass "charters: proposed lines are appended to each mate's own charter, with a backup and a nudge; hard stops go to the captain"
+}
+
+test_charter_deduplication_and_section_placement() {
+  local d log
+  d=$(new_case charter-sections)
+  seed_charter_mates "$d"
+  python3 - "$d" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+head = '## Standing adjustments from fleet dreaming'
+text = ('# Charter\n\nDo not recommend "Use pytest." for JavaScript repositories.\n'
+        'Explain the scope.\n- Prefer "Name the repository." in examples.\n'
+        '- Keep   results\tconcise.\n\n' + head + '\n\n'
+        '- (2026-01-01) Name   each\tcheck.\n')
+suffix = '\n## Domain exceptions\n\nKeep this section unchanged.\n'
+for mate, tail in (('cadia', suffix), ('bob', '')):
+    charter = root / 'mates' / mate / 'data/charter.md'
+    charter.write_text(text + tail)
+    (root / (mate + '-original.md')).write_text(text + tail)
+lines = ['Use pytest.', 'Explain the scope.', 'Name the repository.',
+         'Keep results concise.', 'Name each check.']
+json.dump({'changes': [], 'charters': [{'mate': mate, 'add': lines}
+          for mate in ('cadia', 'bob-helper')]}, open(root / 'proposals.json', 'w'))
+PY
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out.json" || fail "section charter run failed"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d" <<'PY' || fail "charter rule equality or section boundary was wrong"
+import json, pathlib, sys
+run = json.load(open(sys.argv[1]))
+root = pathlib.Path(sys.argv[2])
+added = ['Use pytest.', 'Explain the scope.', 'Name the repository.']
+block = ''.join('- (%s) %s\n' % (run['date'], line) for line in added)
+for mate, home in (('cadia', 'cadia'), ('bob-helper', 'bob')):
+    action = next(a for a in run['charter_card'] if a.get('mate') == mate)
+    assert action['add'] == added and action['state'].startswith('applied to the charter'), action
+    original = (root / (home + '-original.md')).read_text()
+    boundary = original.find('## Domain exceptions')
+    boundary = len(original) if boundary < 0 else boundary
+    expected = original[:boundary] + block + original[boundary:]
+    charter = root / 'mates' / home / 'data/charter.md'
+    assert charter.read_text() == expected, charter.read_text()
+    assert pathlib.Path(action['backup']).read_text() == original
+PY
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect instructions file > "$d/out2.json" || fail "section charter rerun failed"
+  python3 - "$d" <<'PY' || fail "normalized duplicate rules changed the charter on rerun"
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+run = json.load(open(next((root / 'home/state/dream/runs').glob('*.json'))))
+assert {a.get('mate') for a in run['charter_card']} == {'cadia', 'bob-helper'}, run
+for action in run['charter_card']:
+    assert action['state'] == 'already in the charter', action
+for home in ('cadia', 'bob'):
+    original = (root / (home + '-original.md')).read_text()
+    block = ''.join('- (%s) %s\n' % (run['date'], line)
+                    for line in ('Use pytest.', 'Explain the scope.', 'Name the repository.'))
+    boundary = original.find('## Domain exceptions')
+    boundary = len(original) if boundary < 0 else boundary
+    assert (root / 'mates' / home / 'data/charter.md').read_text() == original[:boundary] + block + original[boundary:]
+PY
+  pass "charters: only complete normalized bullets deduplicate and additions stay inside the dreaming section"
+}
+
+test_charter_validation_limits_and_reporting() {
+  local d log
+  d=$(new_case charter-bounds)
+  seed_charter_mates "$d" local
+  printf '# Charter\n\n- Own the domain.\n' > "$d/mates/cadia/data/charter.md"
+  python3 - "$d/proposals.json" <<'PY'
+import json, sys
+lines = ['Name each repository clearly: ' + 'a' * 140, 'Describe each check clearly: ' + 'b' * 140]
+json.dump({'changes': [], 'charters': [{'mate': 'cadia', 'add': ['Own the domain.'] + lines}]}, open(sys.argv[1], 'w'))
+PY
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    run_dream "$d" --only collect instructions file track > "$d/out.json" || fail "initial charter run failed"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d" "$ROOT/bin" <<'PY' || fail "actual charter lines or summaries wrong"
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[3])
+import fm_dream as dream
+run = json.load(open(sys.argv[1]))
+d = pathlib.Path(sys.argv[2])
+lines = json.load(open(d / 'proposals.json'))['charters'][0]['add'][1:]
+actions = [a for a in run['charter_card'] if a['kind'] == 'charter']
+assert len(actions) == 1 and actions[0]['add'] == lines, actions
+assert run['steps']['track']['acted'] == 1, run['steps']
+for summary in (run['summary'], dream.improve_summary({'measurement_error': 'fixture', 'tonight': actions})):
+    for line in lines:
+        assert line + ' (' + actions[0]['state'] + ')' in summary, summary
+    assert 'Own the domain.' not in summary, summary
+artifact = (d / 'home/state/dream' / ('charters-' + run['date'] + '.md')).read_text()
+assert all('cadia: ' + line in artifact for line in lines), artifact
+assert '- cadia: None' not in artifact, artifact
+PY
+  rm -f "$d"/home/state/dream/runs/*.json
+  python3 - "$d/proposals.json" <<'PY'
+import json, sys
+old = json.load(open(sys.argv[1]))['charters'][0]['add'][1:]
+lines = ['Name the repository for check %d.' % n for n in range(12)]
+held = ['Use a clear checklist ' + 'c' * 310 + ' only with captain approval.',
+        'Use a clear checklist ' + 'd' * 310 + ' ghp_' + 'A' * 24]
+long = 'Describe each result ' + 'e' * 310
+json.dump({'changes': [], 'charters': [
+    {'mate': 'cadia', 'add': old + lines[:6]},
+    {'mate': 'cadia', 'add': lines[6:] + held + [long]},
+    {'mate': 'cadia', 'what': 'Name the legacy checklist.'}]}, open(sys.argv[1], 'w'))
+PY
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    run_dream "$d" --only collect instructions file track > "$d/out2.json" || fail "bounded charter run failed"
+  log=$(ls "$d"/home/state/dream/runs/*.json)
+  python3 - "$log" "$d" "$ROOT/bin" <<'PY' || fail "charter validation or nightly bound failed"
+import json, pathlib, stat, sys
+sys.path.insert(0, sys.argv[3])
+import fm_dream as dream
+run = json.load(open(sys.argv[1]))
+d = pathlib.Path(sys.argv[2])
+charter = d / 'mates/cadia/data/charter.md'
+text = charter.read_text()
+assert sum(l.startswith('- (' + run['date'] + ') ') for l in text.splitlines()) == 6, text
+assert text.count('## Standing adjustments from fleet dreaming') == 1, text
+assert stat.S_IMODE(charter.stat().st_mode) == 0o640
+backup = d / 'mates/cadia/state/dream-charter-backups' / ('charter-' + run['date'] + '.md')
+assert backup.read_text() == '# Charter\n\n- Own the domain.\n', backup.read_text()
+assert stat.S_IMODE(backup.stat().st_mode) == 0o600
+actions = [a for a in run['charter_card'] if a['kind'] == 'charter']
+applied = [a for a in actions if a['state'].startswith('applied to the charter')]
+expected = ['Name the repository for check %d.' % n for n in range(4)]
+assert len(applied) == 1 and applied[0]['add'] == expected, applied
+assert any(a['state'] == 'not applied: line exceeds 300 characters' for a in actions), actions
+assert any('nightly limit' in a['state'] for a in actions), actions
+proposals = json.load(open(d / 'proposals.json'))['charters']
+held = proposals[1]['add'][6:8]
+body = '\n'.join(p.read_text() for p in (d / 'calls').glob('body.*.md'))
+assert all(line in body for line in held), body
+assert all(line not in text and line[:300] not in text for line in held + [proposals[1]['add'][-1]]), text
+assert 'Name the legacy checklist.' not in text, text
+artifact = (d / 'home/state/dream' / ('charters-' + run['date'] + '.md')).read_text()
+assert 'cadia: Name the legacy checklist.' in artifact, artifact
+for summary in (run['summary'], dream.improve_summary({'measurement_error': 'fixture', 'tonight': actions})):
+    assert all(line + ' (' + applied[0]['state'] + ')' in summary for line in expected), summary
+assert run['steps']['track']['acted'] == 2, run['steps']
+PY
+  rm -f "$d"/home/state/dream/runs/*.json
+  STUB_INSTR=charter-fixture STUB_CHARTERS="$d/proposals.json" \
+    run_dream "$d" --only collect instructions file > "$d/out3.json" || fail "same-night charter rerun failed"
+  python3 - "$d" <<'PY' || fail "same-night rerun changed the charter or its backup"
+import json, pathlib, sys
+d = pathlib.Path(sys.argv[1])
+run = json.load(open(next((d / 'home/state/dream/runs').glob('*.json'))))
+text = (d / 'mates/cadia/data/charter.md').read_text()
+assert sum(l.startswith('- (' + run['date'] + ') ') for l in text.splitlines()) == 6, text
+assert not any(a['state'].startswith('applied to the charter') for a in run['charter_card']), run
+backup = d / 'mates/cadia/state/dream-charter-backups' / ('charter-' + run['date'] + '.md')
+assert backup.read_text() == '# Charter\n\n- Own the domain.\n', backup.read_text()
+PY
+  pass "charters: full-line validation, grouped nightly limits, original backups and concrete per-line reports survive reruns"
+}
+
+test_charter_backup_publication_survives_failed_copies() {
+  local d
+  d=$(new_case charter-backup-failures)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "a failed charter backup was published or accepted on retry"
+import contextlib, io, os, pathlib, sys
+from unittest import mock
+sys.path.insert(0, sys.argv[2])
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+original = '# Charter\n\nOwn the domain.\n'
+line = 'Name the repository in each checklist.'
+day = '2026-10-21'
+fdopen = os.fdopen
+
+for failure in ('write', 'close', 'fsync'):
+    home = root / failure
+    path = home / 'data/charter.md'
+    backup = home / 'state/dream-charter-backups' / ('charter-' + day + '.md')
+    path.parent.mkdir(parents=True)
+    path.write_text(original)
+    path.chmod(0o640)
+    argv = ['-', str(path), str(backup), day, '["' + line + '"]']
+
+    class FailedCopy:
+        def __init__(self, fd, *args, **kw):
+            self.fh = fdopen(fd, *args, **kw)
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            self.fh.close()
+            if failure == 'close':
+                raise OSError('fixture backup close failed')
+        def write(self, text):
+            if failure == 'write':
+                self.fh.write(text[:8])
+                raise OSError('fixture disk full')
+            return self.fh.write(text)
+        def flush(self):
+            return self.fh.flush()
+        def fileno(self):
+            return self.fh.fileno()
+
+    def apply():
+        with mock.patch.object(sys, 'argv', argv), contextlib.redirect_stdout(io.StringIO()) as output:
+            exec(dream.CHARTER_PY, {})
+        return output.getvalue()
+
+    fault = (mock.patch('os.fsync', side_effect=OSError('fixture sync failed')) if failure == 'fsync'
+             else mock.patch('os.fdopen', FailedCopy))
+    with fault:
+        try:
+            apply()
+        except OSError:
+            pass
+        else:
+            raise AssertionError('backup failure did not stop application: ' + failure)
+    assert path.read_text() == original, failure
+    assert not backup.exists(), (failure, backup.read_text())
+    assert list(backup.parent.iterdir()) == [], list(backup.parent.iterdir())
+    synced = []
+    fsync, link = os.fsync, os.link
+
+    def sync(fd):
+        fsync(fd)
+        synced.append(os.fstat(fd).st_ino)
+
+    def publish(src, dst):
+        assert os.stat(src).st_ino in synced, 'backup published before fsync'
+        assert pathlib.Path(src).read_text() == original
+        assert not pathlib.Path(dst).exists()
+        link(src, dst)
+
+    with mock.patch('os.fsync', sync), mock.patch('os.link', publish):
+        result = apply()
+    assert line in path.read_text() and '"added": ["' + line + '"]' in result, result
+    assert backup.read_text() == original
+    assert path.stat().st_mode & 0o777 == 0o640
+    assert list(backup.parent.iterdir()) == [backup]
+    inode = backup.stat().st_ino
+    argv[-1] = '["List each check result separately."]'
+    apply()
+    assert backup.read_text() == original and backup.stat().st_ino == inode
+    assert 'List each check result separately.' in path.read_text()
+    assert list(backup.parent.iterdir()) == [backup]
+PY
+  pass "charters: failed backup writes, closes and syncs leave no final backup; retries publish complete copies without clobbering"
+}
+
+test_charter_failures_preserve_application_and_held_lines() {
+  local d
+  d=$(new_case charter-failures)
+  seed_charter_mates "$d"
+  STUB_CALLS="$d/calls" FM_DREAM_SEND="$d/bin/send" FM_DREAM_TASKS="$d/bin/tasks" \
+    FM_DREAM_HOLD="$d/bin/hold" FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    python3 - "$d" "$ROOT" <<'PY' || fail "charter failures lost applied state or held lines"
+import json, os, pathlib, subprocess, sys
+os.environ['ROOT'] = sys.argv[2]
+sys.path.insert(0, str(pathlib.Path(sys.argv[2]) / 'bin'))
+import fm_dream as dream
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        if pathlib.Path(argv[0]).name == self.failing_tool:
+            if self.failure in ('lost-ack', 'timeout-after-apply', 'malformed-ack'):
+                result = super().run(argv, **kw)
+                assert result.returncode == 0, result
+                if self.failure == 'lost-ack':
+                    return subprocess.CompletedProcess(argv, 255, '', 'fixture connection lost')
+                if self.failure == 'malformed-ack':
+                    return subprocess.CompletedProcess(argv, 0, 'fixture unreadable result', '')
+                raise subprocess.TimeoutExpired(argv, 1)
+            if self.failure == 'timeout':
+                raise subprocess.TimeoutExpired(argv, 1)
+            raise OSError('fixture unavailable')
+        return super().run(argv, **kw)
+
+d = pathlib.Path(sys.argv[1])
+for n, (tool, failure, mate) in enumerate((('send', 'timeout', 'cadia'), ('send', 'oserror', 'cadia'),
+                                         ('bridge', 'timeout', 'bob-helper'), ('ssh', 'oserror', 'bob-helper'),
+                                         ('ssh', 'lost-ack', 'bob-helper'), ('ssh', 'timeout-after-apply', 'bob-helper'),
+                                         ('ssh', 'malformed-ack', 'bob-helper'))):
+    ctx = Context(d / 'home', False)
+    ctx.failing_tool, ctx.failure = tool, failure
+    safe = 'Name each check in checklist %d.' % n
+    held = 'Only change production with captain approval for checklist %d.' % n
+    ctx.facts['charter_proposals'] = [{'mate': mate, 'add': [safe, held]}]
+    errors = []
+    sends = (d / 'calls/send').read_bytes() if (d / 'calls/send').exists() else b''
+    dream.file_improvements(ctx, [], [], errors)
+    actions = ctx.facts['charter_card']
+    action = next(a for a in actions if a['kind'] == 'charter')
+    cards = [a for a in actions if a['kind'] == 'captain']
+    assert len(cards) == 1 and cards[0]['state'] == 'card raised', (cards, errors)
+    body = '\n'.join(p.read_text() for p in (d / 'calls').glob('body.*.md'))
+    assert held in body, body
+    charter = d / 'mates' / ('cadia' if mate == 'cadia' else 'bob') / 'data/charter.md'
+    assert held not in charter.read_text()
+    if tool == 'send':
+        assert safe in charter.read_text()
+        assert action['state'].startswith('applied to the charter (backup '), action
+        assert 'the mate was not told' in action['state'], action
+        assert pathlib.Path(action['backup']).read_text() == '# Charter\n\nOwn the domain.\n', action
+        assert action['add'] == [safe], action
+        assert dream.step_track(ctx)['acted'] == 2, actions
+    elif failure in ('lost-ack', 'timeout-after-apply', 'malformed-ack'):
+        assert safe in charter.read_text(), charter.read_text()
+        assert action['state'].startswith('applied state unconfirmed:'), action
+        assert 'not applied' not in action['state'], action
+        assert not action.get('backup'), action
+        assert ((d / 'calls/send').read_bytes() if (d / 'calls/send').exists() else b'') == sends, 'unconfirmed application sent a nudge'
+        backup = charter.parent.parent / 'state/dream-charter-backups' / ('charter-' + ctx.day + '.md')
+        assert backup.read_text() == '# Charter\n\nOwn the domain.\n'
+        assert dream.step_track(ctx)['acted'] == 1, actions
+    else:
+        assert safe not in charter.read_text()
+        assert action['state'].startswith('not applied:'), action
+        assert dream.step_track(ctx)['acted'] == 1, actions
+PY
+  pass "charters: failed nudges keep applied state; lost remote results remain unconfirmed without nudging; pre-write failures stay not applied"
+}
+
 test_improve_acts_on_every_kind_of_change() {
   local d log
   d=$(new_case improve)
@@ -1355,19 +1769,21 @@ send = open(calls + "/send").read()
 assert send.startswith("dave-tools Priority from fleet dreaming: %s" % key) and "Dispatch a worker on it now" in send, send
 assert open(calls + "/send.stream").read().split() == ["monologue"], "the dispatch order did not go to the operational lane"
 assert [r["key"] for r in run["raised"]] == [key] and run["raised"][0]["mate"] == "dave-tools", run["raised"]
-# captain: one plain card, with the charter proposal on it
+# captain: one plain card for the captain-only change
 card = tonight["captain"]
 assert card["state"] == "card raised" and card["key"], card
 hold = open(calls + "/hold").read()
 assert hold.startswith("hold %s --reason Decide whether mates may merge medium-risk PRs" % card["key"]), hold
-assert "charter edit for cadia: name the kernel repo" in card["what"], card
+assert "charter" not in card["what"], card  # cadia's charter line is applied, not carded
+charter = [a for a in life["tonight"] if a["kind"] == "charter"]
+assert charter and charter[0]["state"] == "not applied: cadia is not a registered included mate", charter
 payload = json.load(open(calls + "/captain-card.json"))
 assert payload["project"] == "firstmate" and payload["recommended"] == "1", payload
 assert [o["key"] for o in payload["options"]] == ["1", "2"], payload
 assert all(card["key"] in o["instruction"] for o in payload["options"]), payload
 body = open(calls + "/body.%s.md" % card["key"][len("dream-k"):]).read()
 assert "Decide whether mates may merge medium-risk PRs" in body and "3 PRs waited for a merge" in body, body
-assert "Apply this charter edit for cadia? name the kernel repo" in body, body
+assert "charter" not in body, body
 s = run["summary"]
 assert "Improve: 1 mate task (1 merged, 0 open), start to merge median 1.7h (p90 1.7h) (-13m vs 2026-10-01)" in s, s
 assert "Tonight: AGENTS.md: says how to answer a peer (https://github.com/bastotec/firstmate/pull/990, merged and deployed)" in s, s
@@ -1425,18 +1841,29 @@ test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night() {
   [ ! -e "$d/calls/send" ] || fail "a duplicate got a dispatch order"
   [ "$(jq -r '.steps.track.status' "$log")" = "nothing changed" ] || fail "an unacted night read as done: $(jq -c .steps.track "$log")"
   d=$(new_case improve-quiet)
+  seed_charter_mates "$d" local
   sqlite3 "$d/nm.sqlite" "DELETE FROM runs"
-  STUB_INSTR=edit run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
+  mkdir -p "$d/home/state/autoland"
+  printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
+    "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
+  STUB_INSTR=edit FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" --only collect improve instructions file track > "$d/out.json" || fail "quiet run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
   python3 - "$log" <<'PY' || fail "quiet night wrong: $(jq -c '.steps, .summary' "$log")"
 import json, sys
 run = json.load(open(sys.argv[1]))
-assert run["steps"]["improve"]["status"] == "quiet day" and run["steps"]["track"]["status"] == "quiet day", run["steps"]
-card = run["charter_card"]
-assert len(card) == 1 and card[0]["state"] == "card raised" and "cadia: name the kernel repo" in card[0]["what"], card
-assert "Captain card %s for the charter edits (card raised)." % card[0]["key"] in run["summary"], run["summary"]
+assert run["steps"]["improve"]["status"] == "quiet day", run["steps"]
+charter = [a for a in run["charter_card"] if a["kind"] == "charter"]
+assert len(charter) == 1 and charter[0]["state"].startswith("applied to the charter"), charter
+assert "Charter for cadia: name the kernel repo (applied to the charter" in run["summary"], run["summary"]
+# the instructions PR from the collected sessions is still followed to its deploy and kept for tomorrow
+pr = [a for a in run["charter_card"] if a["kind"] == "instructions"]
+assert len(pr) == 1 and pr[0]["pr"].endswith("/pull/990") and pr[0]["state"] == "merged and deployed", pr
+assert "Instructions PR https://github.com/bastotec/firstmate/pull/990: merged and deployed." in run["summary"], run["summary"]
+assert run["steps"]["track"]["status"] == "done" and run["steps"]["track"]["acted"] == 2, run["steps"]["track"]
 PY
-  pass "improve: a change already open is not filed again, and a quiet night still cards its charter proposals"
+  grep -q 'name the kernel repo' "$d/mates/cadia/data/charter.md" || fail "the quiet night did not apply the charter line"
+  pass "improve: a change already open is not filed again, and a quiet night still applies its charter lines"
 }
 
 test_an_unavailable_improve_model_is_named_and_never_replaced() {
@@ -1486,7 +1913,7 @@ assert st["status"] == "pr opened" and st["pr"].endswith("/pull/990") and st["ri
 assert run["instructions"]["lines"] == 3 and run["instructions"]["proposed_lines"] == 1, run["instructions"]
 assert run["instructions"]["files"] == ["AGENTS.md"], run["instructions"]
 assert "Instructions: PR holds 3 lines in AGENTS.md; proposed AGENTS.md: says how to answer a peer (PR https://github.com/bastotec/firstmate/pull/990, rated Low)" in run["summary"], run["summary"]
-assert run["charter_proposals"] == [{"mate": "cadia", "what": "name the kernel repo"}], run["charter_proposals"]
+assert [(c["mate"], c["add"]) for c in run["charter_proposals"]] == [("cadia", ["name the kernel repo"])], run["charter_proposals"]
 PY
   grep -q -- '--yes --intent Nightly fleet dreaming instructions change' "$d/calls/nm" || fail "the change did not go through the gate"
   git -C "$d/firstmate" log -1 --format=%s "fm/dream-instructions-$(jq -r .date "$log")" | grep -q 'Improves fleet instructions' \
@@ -1662,11 +2089,13 @@ PY
 test_measurement_failure_preserves_independent_actions() {
   local d log
   d=$(new_case improve-unread-actions)
+  seed_charter_mates "$d" local
   printf 'not a sqlite database\n' > "$d/nm.sqlite"
   mkdir -p "$d/home/state/autoland"
   printf '%s autoland: merged https://github.com/bastotec/firstmate/pull/990 (deploy follows)\n%s autoland: deployed firstmate abcdef0: homes at abcdef0\n' \
     "$(iso $((NOW - 100)))" "$(iso $((NOW - 50)))" > "$d/home/state/autoland/report.log"
-  STUB_INSTR=edit STUB_NO_TRIAGE=1 STUB_SKILLS=none run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
+  STUB_INSTR=edit STUB_NO_TRIAGE=1 STUB_SKILLS=none FM_DREAM_BRIDGE="$d/bin/bridge" FM_DREAM_SSH="$d/bin/ssh" \
+    run_dream "$d" > "$d/out.json" || fail "run exited nonzero"
   log=$(ls "$d"/home/state/dream/runs/*.json)
   python3 - "$log" "$d/home/state/dream" <<'PY' || fail "measurement failure lost successful actions: $(cat "$log")"
 import json, pathlib, sys
@@ -1680,13 +2109,13 @@ assert life['changes'] == [] and life['measurement_error'], life
 instructions, card = life['tonight']
 assert instructions['kind'] == 'instructions' and instructions['state'] == 'merged and deployed', instructions
 assert instructions['pr'].endswith('/pull/990'), instructions
-assert card['kind'] == 'captain' and card['state'] == 'card raised' and card['key'], card
+assert card['kind'] == 'charter' and card['state'].startswith('applied to the charter') and card['mate'] == 'cadia', card
 rows = [json.loads(l) for l in (root / 'improve-actions.jsonl').read_text().splitlines()]
 assert rows == [dict(a, date=run['date']) for a in life['tonight']], rows
 assert not (root / 'improve.jsonl').exists(), 'failed measurements were persisted as metrics'
 summary = run['summary']
 assert 'Improve: measurement incomplete:' in summary and '. Tonight: AGENTS.md:' in summary, summary
-assert instructions['pr'] + ', merged and deployed' in summary and 'captain card ' + card['key'] in summary, summary
+assert instructions['pr'] + ', merged and deployed' in summary and 'charter for cadia: name the kernel repo (applied' in summary, summary
 PY
   [ ! -e "$d/calls/reflect.0" ] || fail "failed measurements called the reflection model"
   pass "improve: failed measurements stay partial but independent PRs and cards are tracked, recorded and summarized"
@@ -1835,6 +2264,11 @@ test_track_rejects_a_predecessor_deployment
 test_collect_builds_a_private_digest_of_the_day
 test_each_relaunch_is_counted_once
 test_an_interrupted_night_stops_the_gate_and_keeps_the_pr
+test_charter_lines_are_applied_to_each_mate_s_own_charter
+test_charter_deduplication_and_section_placement
+test_charter_validation_limits_and_reporting
+test_charter_backup_publication_survives_failed_copies
+test_charter_failures_preserve_application_and_held_lines
 test_improve_acts_on_every_kind_of_change
 test_improve_reports_last_night_s_changes_and_their_targets
 test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night
