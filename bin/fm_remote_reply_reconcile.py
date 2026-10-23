@@ -69,10 +69,10 @@ def prove(state, mate, sequence, result, offset, prefix_hash):
     if regular(canonical.with_suffix(".adapter")) != b"remote-reply\n":
         return False
     old, payload, _ = delta(canonical)
-    accepted = []
+    receipts = []
     for path in inbox.glob(f"remote-reply-{mate}.*.result"):
         match = re.fullmatch(r"remote-reply-" + re.escape(mate) + r"\.([0-9]+)\.result", path.name)
-        if not match or int(match[1]) <= int(sequence):
+        if not match:
             continue
         try:
             fields, data, raw = delta(path)
@@ -81,25 +81,37 @@ def prove(state, mate, sequence, result, offset, prefix_hash):
             receipt = state / "remote-replies" / f"{mate}.{match[1]}.ingested"
             if regular(receipt) != f"result_sha256={digest(raw)}\n".encode():
                 continue
-            accepted.append((fields, data))
+            receipts.append((int(match[1]), fields, data))
         except (OSError, ValueError, KeyError, UnicodeError):
             continue
+    prefixes = {(0, digest(b"")): b""}
+    while True:
+        previous = len(prefixes)
+        for _, fields, data in receipts:
+            prefix = prefixes.get(point(fields))
+            if prefix is not None:
+                full = prefix + data
+                if digest(full) == fields["to_prefix_sha256"]:
+                    prefixes[point(fields, True)] = full
+        if len(prefixes) == previous:
+            break
+    accepted = [(fields, data) for seq, fields, data in receipts
+                if seq > int(sequence)]
     # The captured delta itself commits its bytes and boundary identities, just
     # as on normal ingest. A receipt-backed successor anchored at its exact end
     # proves this generation belongs before current progress, not to a rewrite.
     # Ingest still applies every pending line; a successor receipt alone is NOT
     # a receipt for the pending generation.
     reachable = {point(old, True)}
-    for fields, data in accepted:
-        if fields["from_offset"] == 0 and fields["to_offset"] >= old["to_offset"]:
+    for fields, _ in accepted:
+        if (fields["from_offset"] <= old["from_offset"]
+                and fields["to_offset"] >= old["to_offset"]):
+            full = prefixes.get(point(fields, True))
             start, end = old["from_offset"], old["to_offset"]
-            if (data[start:end] == payload
-                    and digest(data[:start]) == old["from_prefix_sha256"]
-                    and digest(data[:end]) == old["to_prefix_sha256"]):
+            if (full is not None and full[start:end] == payload
+                    and digest(full[:start]) == old["from_prefix_sha256"]
+                    and digest(full[:end]) == old["to_prefix_sha256"]):
                 reachable.add(point(fields, True))
-        elif (point(fields) == point(old) and data == payload
-              and point(fields, True) == point(old, True)):
-            reachable.add(point(fields, True))
     # Strictly increasing offsets make the closure finite, even with duplicates.
     while True:
         expanded = reachable | {point(fields, True) for fields, _ in accepted

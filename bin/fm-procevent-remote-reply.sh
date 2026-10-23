@@ -19,9 +19,8 @@
 # cursor-anchored source. A pending delta without a receipt can reconcile only
 # from canonical remote-reply captures whose exact receipts prove a contiguous
 # offset/hash path from its end to the current cursor, or byte coverage followed
-# by that path. Longer covering deltas must start
-# at offset zero so both pending prefix digests can be independently checked;
-# equal-length coverage requires matching start and end identities. Reconciliation
+# by that path. Covering prefixes must be reconstructible from receipt-backed
+# captures rooted at offset zero to check both pending prefix digests. Reconciliation
 # runs ordinary deduplicated ingestion, writes the pending capture's own receipt,
 # and never rewinds later progress. Unproven ancestry still refuses continuity.
 # Recovery requires reason truncated or prefix-changed,
