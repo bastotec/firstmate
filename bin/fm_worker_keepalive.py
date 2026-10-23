@@ -313,6 +313,10 @@ def minutes(secs: int) -> int:
     return max(0, secs) // 60
 
 
+def timestamp(epoch: int) -> str:
+    return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(epoch))
+
+
 def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: str = "") -> str:
     quote = (text[:160] + "...") if len(text) > 160 else text
     relaunch = "relaunch it (bin/fm-spawn.sh --relaunch %s), replace it, or close it" % wid
@@ -437,9 +441,9 @@ class Scan:
         if rec["woke"]:
             # only the condition clearing counts; a steer or relay is not a fix
             if NOW - rec["woke"] >= self.escalate_after:
-                line = ("worker %s has been stuck (%s) for %d minutes and %s; it needs %s - act on it now: "
+                line = ("worker %s has been stuck (%s) since %s and %s; it needs %s - act on it now: "
                         "steer the mate with the concrete fix or do it yourself; an acknowledgment is not a fix"
-                        % (wid, cond, minutes(NOW - rec["first"]),
+                        % (wid, cond, timestamp(rec["first"]),
                            "I could not unstick it" if self.primary
                            else "its mate did not fix it within %d minutes of the keep-alive wake" % minutes(FOLLOW),
                            unstick(cond)))
@@ -487,7 +491,7 @@ class Scan:
         except OSError:
             sig = ""
         # the whole-file fold costs seconds on a long channel; reuse it while the file is unchanged
-        if sig and rec.get("sig") == sig and isinstance(rec.get("open"), dict):
+        if sig and rec.get("sig") == sig and isinstance(rec.get("open"), dict) and "relays" in rec:
             now_open = rec["open"]
         else:
             now_open = self.questions(mate)
@@ -522,9 +526,11 @@ class Scan:
         if escalated and esc_ids != rec.get("esc_ids"):
             pending = sorted(escalated.values(), key=lambda a: a["first"])
             first = rec.get("esc_first") or pending[0]["first"]
-            line = ("second mate %s has waited %d minutes for an answer to %d question%s and its parent did not answer; "
+            line = ("second mate %s has waited %s for an answer to %d question%s and its parent did not answer; "
                     "it needs an answer to \"%s\"%s"
-                    % (mate, minutes(NOW - pending[0]["first"]), len(pending), "" if len(pending) == 1 else "s",
+                    % (mate, "since %s" % timestamp(pending[0]["first"]) if self.primary
+                       else "%d minutes" % minutes(NOW - pending[0]["first"]),
+                       len(pending), "" if len(pending) == 1 else "s",
                        pending[0]["note"][:200], " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""))
             if self.report(mate + "-ask", {"first": first}, "blocked", line):
                 rec["esc_first"], rec["esc_ids"] = first, esc_ids
@@ -546,8 +552,8 @@ class Scan:
             r["note"] = q["note"]
             relays[ident] = r
             if not r["up"] and NOW - r["first"] >= ESCALATE:
-                line = ("second mate %s escalated this %d minutes ago and it is still stuck: %s"
-                        % (mate, minutes(NOW - r["first"]), q["note"][:600]))
+                line = ("second mate %s escalated this (first seen %s) and it is still stuck: %s"
+                        % (mate, timestamp(r["first"]), q["note"][:600]))
                 if self.report("%s-up-%s" % (mate, ident[-8:]), r, "blocked", line):
                     r["up"] = True
         for ident, r in previous.items():

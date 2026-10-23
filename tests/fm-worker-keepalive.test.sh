@@ -153,25 +153,56 @@ test_spawn_refusal_in_the_first_mates_home_reaches_the_captain() {
 }
 
 test_captain_notification_retries_a_failed_supervisor_wake() {
-  local dir record
-  dir=$(make_home wake-retry ship)
-  record="$dir/home/state/keepalive/w1.json"
-  status "$dir" "$T0" 'blocked: spawn refused; needs a relaunch'
-  scan "$dir" $((T0 + 1200))
-  mkdir "$dir/home/state/bad-queue"
-  FM_WAKE_QUEUE="$dir/home/state/bad-queue" scan "$dir" $((T0 + 3000))
-  assert_equals 1 "$(notice_count "$dir" .)" "the captain notification did not succeed before the wake failed"
-  assert_equals 1 "$(wake_count "$dir")" "the failed wake unexpectedly reached the supervisor"
-  jq -e '.escalated == false' "$record" >/dev/null || fail "a failed supervisor wake was marked escalated"
-  scan "$dir" $((T0 + 3001))
-  assert_equals 2 "$(notice_count "$dir" .)" "the failed notification-and-wake operation was not retried"
-  assert_equals 2 "$(wake_count "$dir")" "the supervisor wake was not retried"
-  assert_contains "$(wakes "$dir")" 'the captain was told in one line' "the retry did not tell the supervisor the captain knows"
-  jq -e '.escalated == true' "$record" >/dev/null || fail "a successful retry was not marked escalated"
-  scan "$dir" $((T0 + 3100))
-  assert_equals 2 "$(notice_count "$dir" .)" "a successful retry kept notifying the captain"
-  assert_equals 2 "$(wake_count "$dir")" "a successful retry kept waking the supervisor"
-  pass "captain notification success does not suppress retry of a failed supervisor wake"
+  local dir record kind deadline prior_wakes state_filter offset now
+  for kind in worker relay question; do
+    prior_wakes=1
+    case "$kind" in
+      worker)
+        dir=$(make_home wake-retry-worker ship)
+        record="$dir/home/state/keepalive/w1.json"
+        state_filter='.escalated'
+        deadline=$((T0 + 3000))
+        status "$dir" "$T0" 'blocked: spawn refused; needs a relaunch'
+        scan "$dir" $((T0 + 1200))
+        ;;
+      relay|question)
+        dir=$(make_parent "wake-retry-$kind" finn)
+        record="$dir/home/state/keepalive/asks/finn.json"
+        if [ "$kind" = relay ]; then
+          state_filter='.relays | all(.[]; .up)'
+          deadline=$((T0 + 1800))
+          prior_wakes=0
+          ask "$dir" finn "blocked [key=keepalive-finn-helper-ask-$T0]: waiting for an answer"
+        else
+          state_filter='.asks | all(.[]; .escalated)'
+          deadline=$((T0 + 2400))
+          ask "$dir" finn 'needs-decision [key=budget-sheet]: which month should the new tab cover?'
+        fi
+        scan "$dir" "$T0"
+        scan "$dir" $((T0 + 600))
+        ;;
+    esac
+    printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$ROOT/bin/fm-notify.sh" > "$dir/bin/notify"
+    mkdir "$dir/home/state/bad-queue"
+    for offset in 0 300 600; do
+      now=$((deadline + offset))
+      FM_NOTIFY_NOW="$now" FM_WAKE_QUEUE="$dir/home/state/bad-queue" scan "$dir" "$now"
+      assert_equals 1 "$(jq -s 'length' "$dir/home/state/notices"/nt-*.json)" "$kind wake retries published duplicate captain notices"
+      assert_equals "$prior_wakes" "$(wake_count "$dir")" "the failed $kind wake unexpectedly reached the supervisor"
+      jq -e "($state_filter) == false" "$record" >/dev/null || fail "a failed $kind supervisor wake was marked escalated"
+    done
+    now=$((deadline + 900))
+    FM_NOTIFY_NOW="$now" scan "$dir" "$now"
+    assert_equals 1 "$(jq -s 'length' "$dir/home/state/notices"/nt-*.json)" "the successful $kind retry duplicated the captain notice"
+    assert_equals "$((prior_wakes + 1))" "$(wake_count "$dir")" "the $kind supervisor wake was not retried"
+    assert_contains "$(wakes "$dir")" 'the captain was told in one line' "the retry did not tell the supervisor the captain knows"
+    jq -e "($state_filter) == true" "$record" >/dev/null || fail "a successful $kind retry was not marked escalated"
+    now=$((deadline + 1200))
+    FM_NOTIFY_NOW="$now" scan "$dir" "$now"
+    assert_equals 1 "$(jq -s 'length' "$dir/home/state/notices"/nt-*.json)" "a successful $kind retry kept notifying the captain"
+    assert_equals "$((prior_wakes + 1))" "$(wake_count "$dir")" "a successful $kind retry kept waking the supervisor"
+  done
+  pass "worker, relay and question escalations retry failed wakes without duplicate captain notices"
 }
 
 # Case 6 (bob-helper, 2026-10-23): the worker's PR step was refused by the PR
@@ -213,7 +244,7 @@ test_pr_guard_refusal_the_mate_only_acknowledges_climbs_to_the_captain() {
   assert_equals 0 "$(notice_count "$parent" .)" "the captain was told before the first mate had 30 minutes"
   FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 1900 + 1800)) FM_KEEPALIVE_LIVENESS="$parent/bin/liveness" \
     FM_KEEPALIVE_NOTIFY="$parent/bin/notify" FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
-  assert_equals 1 "$(notice_count "$parent" 'second mate bob-helper escalated this 30 minutes ago and it is still stuck')" \
+  assert_equals 1 "$(notice_count "$parent" 'second mate bob-helper escalated this (first seen')" \
     "a stuck worker the first mate did not fix never reached the captain"
   assert_equals 1 "$(notice_count "$parent" 'worker w1 has been stuck (blocked)')" "the captain line does not say what is stuck"
   status "$dir" $((T0 + 4000)) 'working: PR body sanitized; PR opened by hand'
@@ -471,6 +502,32 @@ ask() {  # <dir> <mate> <line>
   printf '%s\n' "$3" >> "$1/home/state/$2.status"
 }
 
+test_legacy_fold_cache_discovers_keepalive_relays() {
+  local dir record
+  dir=$(make_parent legacy-cache finn)
+  record="$dir/home/state/keepalive/asks/finn.json"
+  ask "$dir" finn "blocked [key=keepalive-finn-helper-ask-$T0]: waiting for an answer"
+  mkdir -p "$(dirname "$record")"
+  python3 - "$dir/home/state/finn.status" "$record" <<'PY'
+import json, pathlib, sys
+st = pathlib.Path(sys.argv[1]).stat()
+pathlib.Path(sys.argv[2]).write_text(json.dumps({
+    "sig": f"{st.st_ino}:{st.st_size}:{st.st_mtime_ns}", "open": {}, "asks": {}
+}))
+PY
+  scan "$dir" "$T0"
+  jq -e --argjson first "$T0" '
+    .relays | length == 1 and all(.[]; .first == $first and .up == false)
+  ' "$record" >/dev/null || fail "the legacy fold cache hid an unchanged open relay"
+  scan "$dir" $((T0 + 1799))
+  assert_equals 0 "$(notice_count "$dir" .)" "the upgraded relay escalated early"
+  scan "$dir" $((T0 + 1800))
+  assert_equals 1 "$(notice_count "$dir" 'escalated this')" "the upgraded relay did not reach the captain"
+  scan "$dir" $((T0 + 2100))
+  assert_equals 1 "$(notice_count "$dir" .)" "the upgraded relay escalated repeatedly"
+  pass "legacy fold caches are recomputed before tracking unchanged keepalive relays"
+}
+
 test_refreshed_keepalive_relays_preserve_the_episode() {
   local dir key record note
   dir=$(make_parent refreshed-relay finn)
@@ -484,7 +541,7 @@ test_refreshed_keepalive_relays_preserve_the_episode() {
   scan "$dir" $((T0 + 1799))
   assert_equals 0 "$(notice_count "$dir" .)" "a refreshed relay escalated early"
   scan "$dir" $((T0 + 1800))
-  assert_equals 1 "$(notice_count "$dir" 'escalated this 30 minutes ago')" "a refreshed relay missed its original deadline"
+  assert_equals 1 "$(notice_count "$dir" 'escalated this (first seen 2027-01-15 08:00:00 UTC)')" "a refreshed relay missed its original deadline"
   assert_equals 1 "$(notice_count "$dir" "$note")" "the escalation omitted the refreshed note"
   note='waiting for an answer to 1 remaining question'
   ask "$dir" finn "blocked [key=$key]: $note"
@@ -699,6 +756,7 @@ test_accepted_task_without_a_delivered_result_wakes_the_mate
 test_repeated_episodes_have_distinct_parent_keys
 test_supervisor_declared_wait_defers_stalls_until_expiry
 test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence
+test_legacy_fold_cache_discovers_keepalive_relays
 test_refreshed_keepalive_relays_preserve_the_episode
 test_unanswered_mate_question_wakes_the_parent
 test_a_question_the_parent_never_answers_reaches_the_captain_once
