@@ -11,11 +11,17 @@ watches its own. Overlapping scans of one home exit zero quietly under a
 non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
-  undelivered  a done: worker without a recorded pr= is still in the fleet
-               FM_KEEPALIVE_DONE_SECS (2700) after its done line, past
-               bin/fm-idle-sweep.sh's cleanup cadence: its result may never have
-               reached whoever waits on it. A done: worker with a PR is left to
-               the PR and CI watchers, regardless of agent liveness.
+  undelivered  the worker's backlog item is done (accepted, read once per
+               scan through bin/fm-tasks-axi.sh list --state done), or its last status line is done: with
+               no recorded pr=, and the worker is still in the fleet
+               FM_KEEPALIVE_DONE_SECS (600) later: its result may never have
+               reached the conversation that asked for it, and an accepted
+               worker should be retired. The wake names the conversations the
+               captain wrote to through this home (state/captain-direct/) and
+               when a result was last sent to each (state/captain-direct.log), so
+               a result sent before the acceptance shows as stale. A done:
+               worker with a PR and an open backlog item is left to the PR and
+               CI watchers, regardless of agent liveness.
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
@@ -92,8 +98,9 @@ inode, size or mtime changes.
 Progress lives in state/keepalive/<id>.json.
 Regression coverage: tests/fm-worker-keepalive.test.sh.
 
-FM_HOME is required. Tests set FM_KEEPALIVE_NOW (epoch) and FM_KEEPALIVE_LIVENESS
-(an executable printing the busy classification for <id>).
+FM_HOME is required. Tests set FM_KEEPALIVE_NOW (epoch), FM_KEEPALIVE_LIVENESS
+(an executable printing the busy classification for <id>) and FM_KEEPALIVE_TASKS
+(an executable standing in for bin/fm-tasks-axi.sh).
 """
 
 from __future__ import annotations
@@ -122,7 +129,7 @@ def env_int(name: str, default: int) -> int:
 NO_PROGRESS = env_int("FM_KEEPALIVE_NO_PROGRESS_SECS", 1200)
 STUCK = env_int("FM_KEEPALIVE_STUCK_SECS", 1200)
 DEAD = env_int("FM_KEEPALIVE_DEAD_SECS", 300)
-DONE = env_int("FM_KEEPALIVE_DONE_SECS", 2700)
+DONE = env_int("FM_KEEPALIVE_DONE_SECS", 600)
 ASK = env_int("FM_KEEPALIVE_ASK_SECS", 600)
 MACHINE_KEYS = ("keepalive-", "pending-reply-", "parked-run-", "ci-stall-", "child-outcome-")
 ESCALATE = env_int("FM_KEEPALIVE_ESCALATE_SECS", 1800)
@@ -265,20 +272,57 @@ def liveness(h: Path, state: Path, wid: str) -> str:
     return (r.stdout.strip().split() or ["unknown"])[0]
 
 
+def backlog_done_ids(h: Path) -> set:
+    """Task ids this home's backlog records as done (one tasks-axi read per scan)."""
+    try:
+        r = subprocess.run([os.environ.get("FM_KEEPALIVE_TASKS") or str(SCRIPT_DIR / "fm-tasks-axi.sh"),
+                            "list", "--state", "done", "--limit", "1000"],
+                           capture_output=True, text=True, timeout=60, env=dict(os.environ, FM_HOME=str(h)))
+    except (OSError, subprocess.TimeoutExpired):
+        return set()
+    if r.returncode != 0:
+        return set()
+    return set(re.findall(r"(?m)^\s+([A-Za-z0-9._-]+),done,", r.stdout))
+
+
+def result_trail(state: Path) -> str:
+    """Where the captain is waiting: each captain-direct conversation and its last result sent."""
+    targets = {}
+    try:
+        for entry in (state / "captain-direct").iterdir():
+            if entry.is_file() and "." not in entry.name:
+                t = meta(entry).get("task_id")
+                if t:
+                    targets.setdefault(t, "")
+    except OSError:
+        pass
+    if not targets:
+        return ""
+    try:
+        for line in (state / "captain-direct.log").read_text(errors="replace").splitlines():
+            m = re.match(r"^(\S+) result-sent .*\btask=(\S+)", line)
+            if m and m.group(2) in targets:
+                targets[m.group(2)] = m.group(1)
+    except OSError:
+        pass
+    return " (the captain wrote through this home to %s)" % ", ".join(
+        "%s, last result sent %s" % (t, when or "never") for t, when in sorted(targets.items()))
+
+
 def minutes(secs: int) -> int:
     return max(0, secs) // 60
 
 
-def instruction(wid: str, cond: str, age: int, verb: str, text: str) -> str:
+def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: str = "") -> str:
     quote = (text[:160] + "...") if len(text) > 160 else text
     relaunch = "relaunch it (bin/fm-spawn.sh --relaunch %s), replace it, or close it" % wid
     if cond == "dead":
         return ("worker %s has had no live agent for %d minutes: %s now; never leave it waiting"
                 % (wid, minutes(age), relaunch))
     if cond == "undelivered":
-        return ("worker %s finished %d minutes ago (\"%s\") and is still in the fleet: make sure its result reached "
-                "whoever waits on it - resend the report path with bin/fm-send.sh --result if a send was suppressed - "
-                "then clean it up" % (wid, minutes(age), quote))
+        return ("worker %s finished %d minutes ago (\"%s\") and is still in the fleet: send its result to the "
+                "conversation that asked for it now with bin/fm-send.sh <conversation> --result '<outcome and report "
+                "path>'%s, then retire the worker (cleanup); never leave it idle" % (wid, minutes(age), quote, waiting))
     if cond == "blocked":
         return ("worker %s has been %s for %d minutes (\"%s\"): unblock it in this turn - answer it and send it back "
                 "to the deliverable, retry a transient failure, %s; raise a captain call only for a decision "
@@ -332,6 +376,8 @@ class Scan:
         """(cond, since, verb, text) for this worker now; cond None when healthy."""
         status = self.state / ("%s.status" % wid)
         verb, text = last_status(status)
+        if wid in self.done_ids:
+            return "undelivered", NOW, "accepted", text or "its backlog item is done"
         if verb == "done":
             return ("done" if m.get("pr") else "undelivered"), min(NOW, mtime(status) or NOW), verb, text
         if liveness(self.h, self.state, wid) == "dead":
@@ -392,7 +438,8 @@ class Scan:
                     rec["escalated"] = True
             save(rec_path, rec)
             return
-        if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text)):
+        waiting = result_trail(self.state) if cond == "undelivered" else ""
+        if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text, waiting)):
             rec.update(woke=NOW, steer=inbox, gen=gen, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
@@ -473,6 +520,8 @@ class Scan:
         save(rec_path, rec)
 
     def scan(self) -> None:
+        self.done_ids = backlog_done_ids(self.h) if any(
+            meta(p).get("kind") in ("ship", "scout") for p in self.state.glob("*.meta")) else set()
         mates = set()
         for path in sorted(self.state.glob("*.meta")):
             if meta(path).get("kind") != "secondmate":
