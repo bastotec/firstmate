@@ -122,11 +122,17 @@ fm_task_inbox_handled_dir() {  # <state-dir> <task-id>
 }
 
 # Numeric sequence of one record basename, or fail for a non-record name.
-fm_task_inbox_seq_of() {  # <basename>
-  local n=${1%.msg}
-  [ "$n" != "$1" ] || return 1
-  case "$n" in ''|*[!0-9]*) return 1 ;; esac
-  printf '%s' "$((10#$n))"
+# An output variable avoids a subshell per record during locked history scans.
+fm_task_inbox_seq_of() {  # <basename> [output-variable]
+  local parsed_seq=${1%.msg}
+  [ "$parsed_seq" != "$1" ] || return 1
+  case "$parsed_seq" in ''|*[!0-9]*) return 1 ;; esac
+  parsed_seq=$((10#$parsed_seq))
+  if [ "$#" -gt 1 ]; then
+    printf -v "$2" '%s' "$parsed_seq"
+  else
+    printf '%s' "$parsed_seq"
+  fi
 }
 
 # Next unused sequence, scanning the inbox root AND handled/ so an
@@ -136,7 +142,7 @@ fm_task_inbox_next_seq() {  # <inbox-dir>
   for d in "$dir" "$dir/handled"; do
     for f in "$d"/*.msg; do
       [ -e "$f" ] || continue
-      n=$(fm_task_inbox_seq_of "${f##*/}") || continue
+      fm_task_inbox_seq_of "${f##*/}" n || continue
       [ "$n" -le "$max" ] || max=$n
     done
   done

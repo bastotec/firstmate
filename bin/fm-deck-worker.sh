@@ -774,8 +774,6 @@ watch_start() {
 WAKE_PREAMBLE='The home watcher has an actionable wake. Drain bin/fm-wake-drain.sh first, handle every emitted wake and open decision, and acknowledge only after handling. Watcher output:'
 watch_doorbell() (
   local record pending
-  # shellcheck source=bin/fm-task-inbox-lib.sh
-  . "$SCRIPT_DIR/fm-task-inbox-lib.sh"
   pending=$(cat "$WATCH_PUBLICATION") || exit 1
   record=$(FM_TASK_INBOX_STREAM=monologue fm_task_inbox_write_idempotent "$STATE" "$ID" "Watcher publication: $GEN:${WORK##*/}:$WATCH_PUBLICATION_SEQ
 $WAKE_PREAMBLE
