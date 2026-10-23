@@ -248,7 +248,44 @@ for owner in ('gate', 'parked-run', 'status'):
     assert not call(18610, current, 'new\tneeds-decision\tA reopened question?')['notify']
     timing.unlink()
     record.unlink()
+# A watcher publishing gate timing later enriches, rather than reopens, an ask.
+status = meta.with_suffix('.status')
+status.write_text('needs-decision [key=review]: Which behavior should be retained?\n')
+os.utime(status, (10000, 10000))
+r = call(15000, parked, question)
+original_episode = r['episode']
+assert r['since'] == 10000 and r['notify']
+call(15001, parked, question, '--ack')
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=15002)))
+before = record.read_bytes()
+r = call(20000, parked, question, mode='')
+assert r['since'] == 10000 and r['episode'] == original_episode and not r['notify']
+assert record.read_bytes() == before
+assert call(20001, parked, '', '--reported-run')
+r = call(20002, parked, question)
+assert r['since'] == 10000 and r['episode'] == original_episode and not r['notify']
+assert not call(24000, parked, question)['notify']
+# Once both gate stamps are known, a new stamp proves a genuinely recreated gate.
+gate.write_text(json.dumps(dict(run=run, step='review', parked_since=24001)))
+r = call(28002, parked, question)
+assert r['since'] == 24001 and r['episode'] != original_episode and r['notify']
+gate.unlink()
+status.unlink()
+record.unlink()
 head = 'a' * 40
+# Ledger fallback aliases identify a head, not a unique run on that head.
+ledger_retry = working + f' · evidence: last-run=ledger-{head}; last-run-created=10000; last-run-head={head}'
+assert call(18001, ledger_retry)['notify']
+call(18002, ledger_retry, mode='--ack')
+newer_retry = ledger_retry.replace('created=10000;', 'created=20000;')
+r = call(20300, newer_retry)
+assert r['last_run_seen'] == 20000 and r['since'] == 20000 and not r['notify']
+assert call(20301, ledger_retry)['last_run_seen'] == 20000  # stale fallback cannot roll back
+assert call(27200, newer_retry)['state'] == 'observing'
+assert call(27201, newer_retry)['notify']
+call(27202, newer_retry, mode='--ack')
+assert not call(28000, newer_retry)['notify']
+record.unlink()
 ledger = working + f' · evidence: last-run=ledger-{head}; last-run-created=21960; last-run-head={head}'
 primary = working + f' · evidence: last-run=terminal-run; last-run-created=22000; last-run-head={head}'
 replacement = primary.replace(working, 'state: working · source: run-step · resumed') + \

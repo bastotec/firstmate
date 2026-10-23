@@ -21,13 +21,17 @@ for a terminal same-branch run whose head is an ancestor of the task's current
 head; it does not relax current-state attribution or add timing persistence.
 last_run_seen retains attributed creation timing across observations; reconciling
 the same run from minute- and second-precision sources preserves its wait and
-acknowledgment rather than creating another episode.
+acknowledgment rather than creating another episode. Ledger aliases identify a
+commit, so only matching creation minutes reconcile them; a demonstrably newer
+same-head retry starts another validation clock.
 Unknown observations withhold notification without discarding episode evidence.
 Declared waits end observation.
 Missing, corrupt, future or generation-mismatched observation records recover
 from valid entry evidence when available, otherwise start a fresh observation.
 Episode identity includes metadata contents, phase, folded pending questions and,
 for decisions, the attributed run, step and current gate's parked_since.
+First publication of matching gate timing enriches the existing parked episode;
+a changed already-known gate timestamp identifies a recreated gate.
 A proven phase transition or new question starts another episode; removing only
 some pending questions preserves the surviving questions' wait and acknowledgment.
 The first question after a parked-only observation recovers entry evidence;
@@ -203,7 +207,11 @@ def main():
     parked = fields_file(timing_meta.with_suffix('.parked-run'))
     parked_since = matching_stamp(parked, 'since', run, step, args.now)
     parked_episode = dict(run=run, step=step, gate_since=gate_since)
-    same_parked_run = (old.get('parked_episode') == parked_episode
+    previous_parked = old.get('parked_episode')
+    enriching_gate = bool(state == 'parked' and run and step and gate_since is not None
+                          and isinstance(previous_parked, dict)
+                          and previous_parked == dict(run=run, step=step, gate_since=None))
+    same_parked_run = (enriching_gate or previous_parked == parked_episode
                        or (old.get('phase') == 'needs-decision'
                            and old.get('signature') == episode_signature(
                                identity, 'needs-decision', old.get('questions', []),
@@ -245,10 +253,11 @@ def main():
             continue
         run_id = run if key == 'run-created' else evidence(args.current, 'last-run')
         run_head = evidence(args.current, 'last-run-head') if key == 'last-run-created' else ''
+        ledger_alias = run_id.startswith('ledger-') or last_run_id.startswith('ledger-')
         same_run = bool(run_id and last_run_id and (
-            run_id == last_run_id or (
-                (run_id.startswith('ledger-') or last_run_id.startswith('ledger-'))
-                and run_head and run_head == last_run_head
+            (run_id == last_run_id and not ledger_alias) or (
+                ledger_alias and (run_id == last_run_id or (
+                    run_head and run_head == last_run_head))
                 and last_run is not None and stamp // 60 == last_run // 60)))
         if same_run:
             if last_run_id.startswith('ledger-') and not run_id.startswith('ledger-'):
