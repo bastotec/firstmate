@@ -106,6 +106,7 @@ test_held_on_the_mate_wakes_then_escalates_once() {
   scan "$dir" $((T0 + 6000))
   assert_equals 1 "$(wc -l < "$channel" | tr -d ' ')" "the escalation repeated"
   status "$dir" $((T0 + 6100)) 'working [key=breadboard-plugin-trial]: hold released - resuming the build'
+  echo 'fn build() {}' > "$dir/wt/build.rs"
   scan "$dir" $((T0 + 6200))
   assert_grep "resolved [key=keepalive-bob-helper-w1-$T0]" "$channel" "a resumed worker did not resolve its escalation"
   pass "a worker held on its mate wakes the mate at 20 minutes and tells its parent 10 minutes later"
@@ -147,8 +148,9 @@ test_spawn_refusal_in_the_first_mates_home_reaches_the_captain() {
   scan "$dir" $((T0 + 6000))
   assert_equals 1 "$(notice_count "$dir" .)" "the captain line repeated"
   status "$dir" $((T0 + 6100)) 'working: relaunched, spawn succeeded'
+  echo 'fn spawn() {}' > "$dir/wt/spawn.rs"
   scan "$dir" $((T0 + 6200))
-  assert_equals 1 "$(notice_count "$dir" 'worker w1 is no longer blocked')" "the captain was not told it moved again"
+  assert_equals 1 "$(notice_count "$dir" 'worker w1 is moving again')" "the captain was not told it moved again"
   pass "a refused spawn the first mate only steers reaches the captain 30 minutes after the wake"
 }
 
@@ -248,6 +250,7 @@ test_pr_guard_refusal_the_mate_only_acknowledges_climbs_to_the_captain() {
     "a stuck worker the first mate did not fix never reached the captain"
   assert_equals 1 "$(notice_count "$parent" 'worker w1 has been stuck (blocked)')" "the captain line does not say what is stuck"
   status "$dir" $((T0 + 4000)) 'working: PR body sanitized; PR opened by hand'
+  printf 'pr=https://github.com/o/r/pull/7\n' >> "$dir/home/state/w1.meta"
   scan "$dir" $((T0 + 4100))
   assert_grep "resolved [key=keepalive-bob-helper-w1-$T0]" "$channel" "the fixed worker did not resolve its escalation"
   FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 4200)) FM_KEEPALIVE_LIVENESS="$parent/bin/liveness" \
@@ -742,7 +745,82 @@ test_escalation_tracks_all_still_open_questions() {
   pass "escalations keep one current blocker across additions and partial answers"
 }
 
+test_stall_condition_changes_keep_the_original_deadline() {
+  local dir channel record
+  dir=$(make_home stall-transitions ship)
+  make_secondmate "$dir" bob-helper
+  channel="$dir/parent/state/bob-helper.status"
+  record="$dir/home/state/keepalive/w1.json"
+  status "$dir" "$T0" 'blocked: PR guard refused the generated text'
+  scan "$dir" "$T0"
+  status "$dir" $((T0 + 300)) 'working: acknowledged; preserving evidence'
+  scan "$dir" $((T0 + 300))
+  jq -e --argjson since "$T0" '.cond == "no-progress" and .since == $since and .woke == 0' "$record" >/dev/null \
+    || fail "a status-only acknowledgment cleared the stall before its wake"
+  status "$dir" $((T0 + 600)) 'blocked: PR guard still refuses the text'
+  scan "$dir" $((T0 + 1200))
+  status "$dir" $((T0 + 1700)) 'paused: preserving evidence pending your release'
+  scan "$dir" $((T0 + 1799))
+  assert_equals 1 "$(wake_count "$dir")" "a hold acknowledgment restarted the wake"
+  assert_absent "$channel" "a condition change escalated early"
+  jq -e --argjson since "$T0" --argjson woke "$((T0 + 1200))" '
+    .cond == "held" and .since == $since and .first == $since and .woke == $woke and .escalated == false
+  ' "$record" >/dev/null || fail "a hold acknowledgment reset the stall episode"
+  scan "$dir" $((T0 + 1800))
+  assert_grep "blocked [key=keepalive-bob-helper-w1-$T0]: worker w1 has been stuck (held)" "$channel" "the hold did not escalate on the original deadline"
+  status "$dir" $((T0 + 1900)) 'blocked: PR guard still needs corrected text'
+  scan "$dir" $((T0 + 1900))
+  status "$dir" $((T0 + 2000)) 'working: acknowledged; preserving evidence'
+  scan "$dir" $((T0 + 2000))
+  jq -e --argjson since "$T0" --argjson woke "$((T0 + 1200))" '
+    .cond == "no-progress" and .since == $since and .first == $since and .woke == $woke and .escalated == true
+  ' "$record" >/dev/null || fail "a status-only change reset the escalated episode"
+  assert_equals 1 "$(wc -l < "$channel" | tr -d ' ')" "a status-only change falsely resolved the parent key"
+  echo 'fn corrected() {}' > "$dir/wt/fix.rs"
+  scan "$dir" $((T0 + 2100))
+  assert_grep "resolved [key=keepalive-bob-helper-w1-$T0]: worker w1 is moving again" "$channel" "real progress did not resolve the original key"
+  pass "blocked, held and no-progress transitions preserve the wake deadline and parent key"
+}
+
+test_legacy_escalations_notify_the_captain_once() {
+  local dir record kind
+  for kind in worker question; do
+    if [ "$kind" = worker ]; then
+      dir=$(make_home legacy-worker ship)
+      record="$dir/home/state/keepalive/w1.json"
+      status "$dir" "$T0" 'blocked: spawn refused; needs a relaunch'
+      scan "$dir" "$T0"
+      scan "$dir" $((T0 + 1200))
+      jq '.escalated = true | del(.captain_notified)' "$record" > "$record.fixture"
+    else
+      dir=$(make_parent legacy-question finn)
+      record="$dir/home/state/keepalive/asks/finn.json"
+      ask "$dir" finn 'needs-decision [key=budget-sheet]: which month should the new tab cover?'
+      scan "$dir" "$T0"
+      scan "$dir" $((T0 + 600))
+      jq --argjson first "$T0" '
+        .asks |= with_entries(.value.escalated = true) |
+        .esc_ids = (.asks | keys | sort) | .esc_first = $first | del(.captain_notified, .relays)
+      ' "$record" > "$record.fixture"
+    fi
+    mv "$record.fixture" "$record"
+    printf '#!/usr/bin/env bash\nexit 1\n' > "$dir/bin/notify"
+    scan "$dir" $((T0 + 3300))
+    jq -e '.captain_notified != true' "$record" >/dev/null || fail "a failed legacy $kind notification was marked delivered"
+    make_notify "$dir"
+    scan "$dir" $((T0 + 3600))
+    assert_equals 1 "$(notice_count "$dir" .)" "a legacy $kind escalation bypassed captain notification"
+    assert_contains "$(wakes "$dir")" 'the captain was told in one line' "the legacy $kind escalation did not wake the supervisor"
+    jq -e '.captain_notified == true' "$record" >/dev/null || fail "the legacy $kind escalation was not marked delivered"
+    scan "$dir" $((T0 + 3900))
+    assert_equals 1 "$(notice_count "$dir" .)" "the migrated $kind escalation repeatedly notified the captain"
+  done
+  pass "legacy worker and question escalations retry captain notification and migrate once"
+}
+
 test_held_on_the_mate_wakes_then_escalates_once
+test_stall_condition_changes_keep_the_original_deadline
+test_legacy_escalations_notify_the_captain_once
 test_external_wait_is_left_to_the_declared_wait_cadence
 test_spawn_refusal_in_the_first_mates_home_reaches_the_captain
 test_captain_notification_retries_a_failed_supervisor_wake

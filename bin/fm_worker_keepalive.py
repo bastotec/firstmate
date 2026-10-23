@@ -66,8 +66,9 @@ a second mate appends "blocked [key=keepalive-<home>-<id>-<first-epoch>]: ..."
 to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
 parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
 wake and then tells the captain (see Captain lines). When the condition clears
-or the worker leaves, an escalated episode is resolved the same way. A
-condition change starts a new episode.
+or the worker leaves, an escalated episode is resolved the same way. Changes
+between blocked, held and no-progress retain the episode; dead and undelivered
+start new episodes.
 
 Escalations from below: every still-open keepalive- blocked record on a second
 mate's channel is this home's to act on. One still open FM_KEEPALIVE_ESCALATE_SECS
@@ -140,6 +141,7 @@ def env_int(name: str, default: int) -> int:
 
 NO_PROGRESS = env_int("FM_KEEPALIVE_NO_PROGRESS_SECS", 1200)
 STUCK = env_int("FM_KEEPALIVE_STUCK_SECS", 1200)
+STALL_CONDITIONS = ("blocked", "held", "no-progress")
 DEAD = env_int("FM_KEEPALIVE_DEAD_SECS", 300)
 DONE = env_int("FM_KEEPALIVE_DONE_SECS", 600)
 ASK = env_int("FM_KEEPALIVE_ASK_SECS", 600)
@@ -414,11 +416,14 @@ class Scan:
     def one(self, wid: str, m: dict) -> None:
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
+        if rec.get("cond") in STALL_CONDITIONS:
+            rec.setdefault("episode_fp", rec.get("fp"))
         fp = fingerprint(self.state, wid, m)
         if rec.get("fp") != fp:
             rec["fp"], rec["fp_since"] = fp, NOW
         cond, since, verb, text = self.condition(wid, m, rec)
-        if cond == "no-progress" and NOW - since < NO_PROGRESS:
+        if cond == "no-progress" and NOW - since < NO_PROGRESS and (
+                rec.get("cond") not in STALL_CONDITIONS or fp != rec.get("episode_fp")):
             cond = None
         if cond in (None, "done"):
             if rec.get("cond") and not self.resolve(wid, rec, "is moving again"):
@@ -427,20 +432,23 @@ class Scan:
             rec = {"fp": rec["fp"], "fp_since": rec["fp_since"]}
             save(rec_path, rec)
             return
-        if rec.get("cond") != cond:
+        if rec.get("cond") in STALL_CONDITIONS and cond in STALL_CONDITIONS:
+            rec["cond"] = cond
+        elif rec.get("cond") != cond:
             if rec.get("cond") and not self.resolve(wid, rec, "is no longer %s" % rec["cond"]):
                 save(rec_path, rec)
                 return
-            rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "cond": cond, "since": since,
+            rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "episode_fp": rec["fp"], "cond": cond, "since": since,
                    "woke": 0, "nudges": 0, "escalated": False}
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE}.get(cond, STUCK)
         age = NOW - rec["since"]
-        if rec.get("escalated") or age < bound:
+        if (rec.get("escalated") and (not self.primary or rec.get("captain_notified"))) or (
+                not rec["woke"] and age < bound):
             save(rec_path, rec)
             return
-        if rec["woke"]:
+        if rec["woke"] or rec.get("escalated"):
             # only the condition clearing counts; a steer or relay is not a fix
-            if NOW - rec["woke"] >= self.escalate_after:
+            if rec.get("escalated") or NOW - rec["woke"] >= self.escalate_after:
                 line = ("worker %s has been stuck (%s) since %s and %s; it needs %s - act on it now: "
                         "steer the mate with the concrete fix or do it yourself; an acknowledgment is not a fix"
                         % (wid, cond, timestamp(rec["first"]),
@@ -449,6 +457,8 @@ class Scan:
                            unstick(cond)))
                 if self.report(wid, rec, "blocked", line):
                     rec["escalated"] = True
+                    if self.primary:
+                        rec["captain_notified"] = True
             save(rec_path, rec)
             return
         waiting = result_trail(self.state) if cond == "undelivered" else ""
@@ -523,7 +533,7 @@ class Scan:
         escalated = {ident: a for ident, a in asks.items()
                      if a["escalated"] or (a["woke"] and NOW - a["woke"] >= ESCALATE)}
         esc_ids = sorted(escalated)
-        if escalated and esc_ids != rec.get("esc_ids"):
+        if escalated and (esc_ids != rec.get("esc_ids") or (self.primary and not rec.get("captain_notified"))):
             pending = sorted(escalated.values(), key=lambda a: a["first"])
             first = rec.get("esc_first") or pending[0]["first"]
             line = ("second mate %s has waited %s for an answer to %d question%s and its parent did not answer; "
@@ -534,6 +544,8 @@ class Scan:
                        pending[0]["note"][:200], " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""))
             if self.report(mate + "-ask", {"first": first}, "blocked", line):
                 rec["esc_first"], rec["esc_ids"] = first, esc_ids
+                if self.primary:
+                    rec["captain_notified"] = True
                 for a in pending:
                     a["escalated"] = True
         elif not escalated and rec.get("esc_first"):
@@ -541,6 +553,7 @@ class Scan:
                            "second mate %s's questions are answered" % mate):
                 rec.pop("esc_first")
                 rec.pop("esc_ids", None)
+                rec.pop("captain_notified", None)
         save(rec_path, rec)
 
     def relays(self, mate: str, rec: dict, now_open: dict) -> None:
