@@ -36,7 +36,8 @@ Each scan reads one condition per worker, first match wins:
                mate itself can decide: it awaits a release, hold, approval,
                steer, decision or answer, names the mate ("your", "mate",
                "owner"), or holds a retry or housekeeping step (retry, relaunch,
-               re-spawn, install, cleanup). A paused: line that names a UTC
+               re-spawn, install, cleanup), or mentions custody, evidence,
+               authority, waiver or a supported path. A paused: line that names a UTC
                `until` time, or either pause verb naming none of those keywords,
                is left to bin/fm-watch.sh's declared-wait cadence;
   no-progress  any other live, unfinished worker whose real progress has not
@@ -54,32 +55,39 @@ use FM_KEEPALIVE_STUCK_SECS (1200), initially measured from the status file's
 mtime when the condition is observed. Undelivered uses FM_KEEPALIVE_DONE_SECS
 from first observation of backlog acceptance, or the status file's mtime for
 an unaccepted done: worker without a PR.
-Later status edits do not restart an unchanged condition's clock. Its text is a
-concrete instruction - decide and resume it, relaunch it with
+Later status edits and transitions between blocked, held and no-progress
+retain the episode's clock, wake, escalation state and parent key; a change to
+dead or undelivered starts a new episode. The wake's text is a concrete
+instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
-Only the condition clearing resolves a wake. A steer, an acknowledgment or a
-relay upward is not a fix (2026-10-23: a mate answered a worker's PR-guard
-refusal with seven "hold and preserve evidence" steers for two hours), so the
-inbox is not read. A worker still stuck FM_KEEPALIVE_FOLLOW_SECS (600) after
+A steer, an acknowledgment or a relay upward is not a fix, so the inbox is not
+read. A worker still stuck FM_KEEPALIVE_FOLLOW_SECS (600) after
 the wake escalates one plain line to the mate's parent, telling it to act:
 a second mate appends "blocked [key=keepalive-<home>-<id>-<first-epoch>]: ..."
 to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
 parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
-wake and then tells the captain (see Captain lines). When the condition clears
-or the worker leaves, an escalated episode is resolved the same way. Changes
-between blocked, held and no-progress retain the episode; dead and undelivered
-start new episodes.
+wake and then tells the captain (see Captain lines). A stall clears when the
+worker resumes with real progress, reports done: with a PR, or enters an
+external or non-mate-decidable wait under the precedence rules above. An
+escalated episode's resolution is published through the same route when it
+clears or the worker leaves.
 
 Escalations from below: every still-open keepalive- blocked record on a second
 mate's channel is this home's to act on. One still open FM_KEEPALIVE_ESCALATE_SECS
 after this home first saw it goes one level up: a second mate's home appends its
 own blocked line to its parent channel, and the first mate's home tells the
-captain. It resolves when the record closes or the mate leaves.
+captain. The channel key and fold origin identify the episode: note refreshes
+retain its first-seen time and escalation state; closure followed by reopening
+starts fresh. It resolves when the record closes or the mate leaves.
 
 Captain lines: the first mate's home publishes one plain notice through
 bin/fm-notify.sh (FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
 check: wake telling its supervisor the captain was told and to keep fixing it;
-the resolution is one more notice.
+the resolution is one more notice. Failed publication or wake delivery is
+retried; notice text uses episode timestamps rather than the scan's elapsed
+minutes so fm-notify can suppress duplicate retries of an unchanged escalation.
+Still-open legacy worker and question escalations without captain_notified are
+reported through this path on the next scan and marked after successful delivery.
 
 Parent-bound questions: the home also reads each second mate's channel
 (state/<id>.status of a kind=secondmate meta, where a remote mate's lines are
@@ -104,8 +112,9 @@ report key on the parent channel). It resolves only when that set empties or
 the mate leaves.
 A question closes when the fold drops it (an answer sent with --resolve-key,
 the mate's own resolved line, or a captain-held transfer). Records live in
-state/keepalive/asks/<mate>.json, which also caches the fold until the channel's
-inode, size or mtime changes.
+state/keepalive/asks/<mate>.json alongside relayed escalation episodes. The record
+also caches the fold until the channel's inode, size or mtime changes; legacy
+caches without the relays field are recomputed before reuse.
 
 Progress lives in state/keepalive/<id>.json.
 Regression coverage: tests/fm-worker-keepalive.test.sh.

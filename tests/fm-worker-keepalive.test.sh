@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Behavior tests for bin/fm-worker-keepalive.sh: a worker that is held on its
-# mate, blocked, without a live agent, or not making real progress wakes its mate
-# with a concrete instruction within minutes. A steer or acknowledgment is not a
-# fix: still stuck 10 minutes after the wake, the mate's parent is told to act,
-# and 30 minutes after that the captain gets one plain line.
+# Behavior tests for bin/fm-worker-keepalive.sh; bin/fm_worker_keepalive.py's
+# docstring owns conditions, recovery deadlines, and upward escalation.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091

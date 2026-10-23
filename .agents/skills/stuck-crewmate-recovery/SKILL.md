@@ -56,7 +56,7 @@ Read the two authoritative sources yourself before believing the claim:
 
 A refused connection or missing socket from `daemon status` is positive daemon-down evidence, even if the persisted run record still says running or fixing; that record can be stale after the daemon exits.
 Start the stopped daemon with `no-mistakes daemon start`, confirm with `no-mistakes daemon status`, and steer the worker to retry from its own worktree once it is reachable.
-Escalate daemon-down evidence to the captain only if the daemon still will not start, naming the start attempt and its error.
+If the daemon still will not start, apply [AGENTS.md's own-blocker default](../../../AGENTS.md#1-identity-and-prime-directives) to the start error rather than treating daemon-down evidence alone as a captain call.
 Otherwise, if the run is still running or fixing with recent activity, the claim is wrong: steer the crewmate to reattach with `no-mistakes axi run` from its own worktree, which is safe and idempotent while the run still matches its `HEAD`, and tell it a timeout is not daemon death.
 Nothing reaches the captain when recovery succeeds or the run is still alive.
 
@@ -77,4 +77,4 @@ Escalate in order:
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
    The worktree and commits persist, so relaunch is cheap.
 5. If relaunch fails, inspect its diagnostic and reconcile the recorded agent and validation-run state before deciding what can safely change; never repeat an identical restart blindly.
-   If recovery remains blocked, record the failure in the backlog and tell the captain the plain failure, preserved work, and consequence using `AGENTS.md` section 9; do not mention metadata, harness, window, or worktree unless the path itself is needed for action.
+   If recovery remains blocked, record the failure in the backlog and keep working under the own-blocker default linked above; only a captain call goes through `AGENTS.md` section 9, with the plain failure, preserved work, and consequence, omitting metadata, harness, window, or worktree unless the path itself is needed for action.

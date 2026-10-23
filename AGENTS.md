@@ -161,8 +161,7 @@ When the tasks-axi backlog gate applies, the spawn moves the work item to In fli
 After spawning, confirm the worker is processing the brief.
 For a refusal that survives `bin/fm-spawn.sh`'s "Serialized spawns" recovery, relaunch the task once more yourself, sequentially, and never park it for a runtime owner.
 A worker you pause, for a rule slip or anything else you can decide, is decided in that same turn: send it back to the deliverable, replace it, or close it, never leave it waiting for your release.
-A `check: worker keep-alive:` wake names a stuck worker or an unanswered secondmate question; carry out its instruction in that turn, following the [keep-alive contract](bin/fm_worker_keepalive.py), and for a stuck worker leave reaching the captain to the watchdog's escalation.
-Only the worker moving again clears it: a steer, acknowledgment or relay does not, and the watchdog then hands it to your parent mate, or from the first mate to the captain.
+A `check: worker keep-alive:` wake names stuck work or an unanswered secondmate question; carry out its instruction in that turn, following the [keep-alive contract](bin/fm_worker_keepalive.py), and for a stuck worker leave reaching the captain to the watchdog's escalation.
 A keep-alive `blocked [key=keepalive-...]` line from a second mate is yours to fix the same way: steer that mate with the concrete fix or fix it yourself.
 
 Steer a worker with ordinary text through fail-closed `fm-send`; its header owns delivery and selector-specific routing.
