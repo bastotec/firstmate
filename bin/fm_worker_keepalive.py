@@ -392,7 +392,7 @@ class Scan:
 
     def questions(self, mate: str) -> dict:
         """Still-open parent-bound questions in a second mate's channel, by identity."""
-        r = bash('. "$1/fm-classify-lib.sh"; _fm_status_open_decision_origins "$2"; '
+        r = bash('. "$1/fm-classify-lib.sh"; _fm_status_open_decision_origins "$2" episode; '
                  'printf "\\n--open--\\n"; status_open_decisions "$2"', str(SCRIPT_DIR),
                  str(self.state / ("%s.status" % mate)))
         origins_text, _, open_text = r.stdout.partition("\n--open--\n")
@@ -423,13 +423,14 @@ class Scan:
         else:
             now_open = self.questions(mate)
             rec["sig"], rec["open"] = sig, now_open
-        asks = rec.setdefault("asks", {})
-        for ident in [i for i in asks if i not in now_open]:
-            del asks[ident]
+        previous = {a["key"]: a for a in rec.get("asks", {}).values()}
+        asks = rec["asks"] = {}
         for ident, q in now_open.items():
-            if ident not in asks or asks[ident].get("origin") != q.get("origin"):
-                asks[ident] = {"first": NOW, "woke": 0, "escalated": False}
-            asks[ident].update(q)
+            a = previous.get(q["key"])
+            if a is None or int(q.get("origin") or 0) > int(a.get("origin") or 0):
+                a = {"first": NOW, "woke": 0, "escalated": False}
+            asks[ident] = a
+            a.update(q)
         due = sorted((a for a in asks.values() if not a["woke"] and NOW - a["first"] >= ASK), key=lambda a: a["first"])
         if due:
             listed = "; ".join("[%s] \"%s\"" % (a["key"], a["note"][:200]) for a in due[:5])

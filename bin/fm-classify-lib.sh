@@ -1938,9 +1938,11 @@ _fm_status_open_decision_origins() {  # <status-file>
           && [ "$(_fm_open_set_verb "$after" "$key")" = "$verb" ]; then
           case "$after" in
             "$key"$'\t'"$verb"$'\t'"$note"|*$'\n'"$key"$'\t'"$verb"$'\t'"$note")
-              origins=$(_fm_decision_origin_drop "$origins" "$key")
-              [ -n "$origins" ] && origins="${origins}"$'\n'
-              origins="${origins}${key}"$'\t'"${number}"
+              if [ "${2:-}" != episode ] || ! _fm_open_set_has "$open" "$key"; then
+                origins=$(_fm_decision_origin_drop "$origins" "$key")
+                [ -n "$origins" ] && origins="${origins}"$'\n'
+                origins="${origins}${key}"$'\t'"${number}"
+              fi
               ;;
           esac
         fi

@@ -482,16 +482,18 @@ test_a_question_the_parent_never_answers_reaches_the_captain_once() {
   pass "a question the parent never answers reaches the captain as one line and clears when answered"
 }
 
-test_reopened_and_reworded_questions_get_fresh_deadlines() {
+test_reopened_questions_get_fresh_deadlines() {
   local dir mode note
-  for mode in same reopened reworded; do
+  for mode in same reopened held; do
     dir=$(make_parent "reask-$mode" finn)
     note='which route should I take?'
     ask "$dir" finn "needs-decision [key=route]: $note"
     scan "$dir" "$T0"
     scan "$dir" $((T0 + 600))
     scan "$dir" $((T0 + 2400))
-    if [ "$mode" != reworded ]; then
+    if [ "$mode" = held ]; then
+      ask "$dir" finn 'captain-held [key=route]: the captain must choose the route'
+    else
       ask "$dir" finn 'resolved [key=route]: answered: take the local route'
     fi
     if [ "$mode" != same ]; then
@@ -510,7 +512,48 @@ test_reopened_and_reworded_questions_get_fresh_deadlines() {
     scan "$dir" $((T0 + 5100))
     assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "a $mode question did not escalate exactly once"
   done
-  pass "same-key reopenings between scans and reworded asks get fresh wake and escalation deadlines"
+  pass "same-key reopenings between scans get fresh wake and escalation deadlines"
+}
+
+test_open_question_reposts_preserve_the_episode() {
+  local dir mode note channel folded record
+  for mode in identical reworded; do
+    dir=$(make_parent "repost-$mode" finn)
+    make_secondmate "$dir" parent-mate
+    channel="$dir/parent/state/parent-mate.status"
+    record="$dir/home/state/keepalive/asks/finn.json"
+    note='which route should I take?'
+    ask "$dir" finn "needs-decision [key=route]: $note"
+    scan "$dir" "$T0"
+    if [ "$mode" = reworded ]; then
+      note='which local route should I take?'
+    fi
+    ask "$dir" finn "needs-decision [key=route]: $note"
+    scan "$dir" $((T0 + 300))
+    scan "$dir" $((T0 + 600))
+    assert_equals 1 "$(wake_count "$dir")" "a $mode repost postponed the first wake"
+    assert_contains "$(wakes "$dir")" "$note" "the wake omitted the current question"
+    scan "$dir" $((T0 + 2400))
+    assert_equals 1 "$(grep -c '^blocked ' "$channel")" "the question did not escalate on its original deadline"
+    if [ "$mode" = reworded ]; then
+      note='which local route should I take next?'
+    fi
+    ask "$dir" finn "needs-decision [key=route]: $note"
+    scan "$dir" $((T0 + 2600))
+    scan "$dir" $((T0 + 3200))
+    jq -e --argjson first "$T0" --argjson woke "$((T0 + 600))" --arg note "$note" '
+      .asks | length == 1 and all(.[];
+        .first == $first and .woke == $woke and .escalated == true and .note == $note)
+    ' "$record" >/dev/null || fail "a $mode repost reset the episode after escalation"
+    assert_equals 1 "$(wake_count "$dir")" "a $mode repost woke the parent again"
+    assert_equals 0 "$(grep -c '^resolved ' "$channel" || true)" "a $mode repost falsely reported the question answered"
+    folded=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+    assert_contains "$folded" "$note" "the unanswered question disappeared from the parent blocker"
+    ask "$dir" finn 'resolved [key=route]: take the local route'
+    scan "$dir" $((T0 + 3300))
+    assert_equals 1 "$(grep -c '^resolved ' "$channel")" "an actual answer did not close the escalation"
+  done
+  pass "identical and reworded open-key reposts preserve wake and escalation state"
 }
 
 test_escalation_tracks_all_still_open_questions() {
@@ -575,5 +618,6 @@ test_supervisor_declared_wait_defers_stalls_until_expiry
 test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence
 test_unanswered_mate_question_wakes_the_parent
 test_a_question_the_parent_never_answers_reaches_the_captain_once
-test_reopened_and_reworded_questions_get_fresh_deadlines
+test_reopened_questions_get_fresh_deadlines
+test_open_question_reposts_preserve_the_episode
 test_escalation_tracks_all_still_open_questions
