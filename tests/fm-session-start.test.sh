@@ -1688,6 +1688,62 @@ SH
   pass "the portable timeout path force-kills a command that ignores TERM"
 }
 
+test_private_startup_diagnostics() {
+  local rec root home fakebin out artifact diagnostic_dir record
+  rec=$(new_world private-diagnostics)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+  mkdir -p "$home/private-tmp"
+
+  # Opt-out must not even create the artifact or honor an inherited destination.
+  out=$(TMPDIR="$home/private-tmp" FM_SESSION_START_DIAGNOSTIC_FILE="$home/should-not-exist" \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" 2>&1)
+  assert_not_contains "$out" 'STARTUP DIAGNOSTICS:' "diagnostics were not opt-in"
+  assert_absent "$home/should-not-exist" "an inherited diagnostic path was written"
+  [ -z "$(ls -A "$home/private-tmp")" ] || fail "opt-out created private artifacts"
+
+  out=$(TMPDIR="$home/private-tmp" FM_SESSION_START_DIAGNOSTICS=1 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH" 2>&1)
+  artifact=$(printf '%s\n' "$out" | sed -n 's/^STARTUP DIAGNOSTICS: //p')
+  [ -f "$artifact" ] || fail "opt-in did not retain a diagnostic artifact"
+  diagnostic_dir=${artifact%/*}
+  python3 - "$diagnostic_dir" "$artifact" <<'PY'
+import os, stat, sys
+assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o700
+assert stat.S_IMODE(os.stat(sys.argv[2]).st_mode) == 0o600
+PY
+  record=$(cat "$artifact")
+  assert_contains "$record" "$(printf '\tcomplete\tnext-step')" "healthy completion not recorded"
+  assert_contains "$record" "$(printf '\tenter\twake-queue-lock')" "queue lock subphase not recorded"
+  assert_contains "$record" "$(printf '\tenter\twake-snapshot')" "status snapshot subphase not recorded"
+  assert_contains "$record" "$(printf '\tenter\twake-liveness')" "liveness subphase not recorded"
+  # The serialized diagnostic contract is allowlisted, not a redacted shell trace.
+  awk -F '\t' '
+    NF != 4 || $1 != "v1" || $2 !~ /^[0-9]+$/ { exit 1 }
+    $3 !~ /^(enter|complete|timeout|failed)$/ { exit 1 }
+    $4 !~ /^(harness|tasks-compatibility|lock|trace-context|home-summary|network-launch|bootstrap|decision-cards|wake-queue|supervision-instructions|read-once|fleet-state|network-checks|context|next-step|wake-queue-lock|wake-queue-read|wake-presentation-lock|wake-snapshot|wake-annotations|wake-sections|wake-receipt|wake-possible-asks|wake-liveness)$/ { exit 1 }
+  ' "$artifact" || fail "diagnostics captured data outside the fixed-label contract"
+  assert_contains "$out" 'NEXT STEP' "instrumentation broke the digest"
+
+  # A probe that hangs BEFORE the old first stage must be named, not unknown.
+  make_hanging_tool "$fakebin" tasks-axi
+  mkdir -p "$home/early-tmp" "$home/early-home"
+  out=$(TMPDIR="$home/early-tmp" FM_HOME="$home/early-home" FM_ROOT_OVERRIDE="$root" \
+    PATH="$fakebin:$BASE_PATH" FM_SESSION_START_DIAGNOSTICS=1 FM_SESSION_START_TIMEOUT=2 \
+    "$SESSION_START" 2>&1)
+  artifact=$(printf '%s\n' "$out" | sed -n 's/^STARTUP DIAGNOSTICS: //p')
+  record=$(cat "$artifact")
+  assert_contains "$out" 'stopped during the "tasks-compatibility" stage' "early hung probe was misattributed"
+  assert_contains "$out" 'tasks-compatibility lock bootstrap' "early timeout omitted unvisited stages"
+  assert_contains "$record" "$(printf '\ttimeout\ttasks-compatibility')" "timeout diagnostic was lost"
+  assert_not_contains "$record" "$(printf '\tcomplete\t')" "a truncated digest claimed completion"
+  assert_absent "$home/early-home/state/.session-start-complete" "an early timeout wrote a completion marker"
+  pass "opt-in private fixed-label diagnostics survive early probe timeout without weakening completeness"
+}
+
 test_runtime_bound_leaves_a_healthy_digest_untouched() {
   local rec root home fakebin out
   rec=$(new_world runtime-bound-healthy)
@@ -2068,6 +2124,7 @@ test_next_step_afk_legacy_empty_flag_defaults_away
 test_supervision_block_exactly_one_for_deck
 test_runtime_bound_truncates_loudly_and_exits_zero
 test_portable_timeout_escalates_term_resistant_process
+test_private_startup_diagnostics
 test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
 

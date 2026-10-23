@@ -21,6 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/fm-line-cap-lib.sh"
 # shellcheck source=bin/fm-timeout-lib.sh
 . "$SCRIPT_DIR/fm-timeout-lib.sh"
+# shellcheck source=bin/fm-startup-diagnostics-lib.sh
+. "$SCRIPT_DIR/fm-startup-diagnostics-lib.sh"
 
 DRAIN_TMP=
 DRAIN_VIEW_TMP=
@@ -189,6 +191,7 @@ esac
 # mid-turn; the persistent model requires the live identity-matched watcher.
 # Never let a guard hiccup change the drain's exit status.
 assert_watcher_liveness() {
+  startup_diagnostic enter wake-liveness
   "$SCRIPT_DIR/fm-guard.sh" || true
 }
 
@@ -433,6 +436,7 @@ EOF
 }
 
 print_status_sections() {
+  startup_diagnostic enter wake-sections
   local snapshot=${1:-} fully_presented=${2:-} acknowledged prepared
   if [ -z "$snapshot" ]; then snapshot=$(status_presentation_snapshot "$STATE") || return 1; fi
   [ -n "$snapshot" ] || return 0
@@ -454,6 +458,7 @@ print_status_sections() {
     rm -f -- "$prepared"
     return 1
   fi
+  startup_diagnostic enter wake-receipt
   if ! status_commit_presentation_snapshot "$STATE" "$acknowledged"; then
     rm -f -- "$prepared"
     return 1
@@ -464,6 +469,7 @@ print_status_sections() {
 print_status_presentation() {  # [<deduped-raw-rows>]
   local rows=${1:-} lock="$STATE/.status-presentation-lock" snapshot annotation_manifest fully_presented='' rc=0
   local lock_rc holder_pid
+  startup_diagnostic enter wake-presentation-lock
   if fm_lock_acquire_wait_bounded "$lock" "$PRESENTATION_LOCK_TIMEOUT"; then
     :
   else
@@ -477,11 +483,13 @@ print_status_presentation() {  # [<deduped-raw-rows>]
     fi
     return 1
   fi
+  startup_diagnostic enter wake-snapshot
   snapshot=$(status_presentation_snapshot "$STATE") || {
     printf 'STATUS PRESENTATION INCOMPLETE: status snapshot could not be read.\n'
     rc=1
   }
   if [ "$rc" -eq 0 ] && [ -n "$rows" ]; then
+    startup_diagnostic enter wake-annotations
     fm_wake_print_annotations "$rows" "$snapshot" || rc=1
     if [ "$rc" -eq 0 ]; then
       annotation_manifest=$(fm_wake_annotation_manifest "$rows") || rc=1
@@ -498,6 +506,7 @@ print_status_presentation() {  # [<deduped-raw-rows>]
 # wake path, so no drain ever waits on its network call, and a failure here
 # leaves the rest of the drain exactly as it was.
 print_possible_asks() {
+  startup_diagnostic enter wake-possible-asks
   FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-ask-triage.sh" present </dev/null 2>/dev/null || true
 }
 
@@ -516,6 +525,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+startup_diagnostic enter wake-queue-lock
 if [ -n "$ACK_THROUGH" ]; then
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
 elif fm_lock_acquire_wait_bounded "$FM_WAKE_QUEUE_LOCK" "$PRESENTATION_LOCK_TIMEOUT"; then
@@ -531,6 +541,7 @@ else
   exit 1
 fi
 DRAIN_LOCK_HELD=true
+startup_diagnostic enter wake-queue-read
 retire_unconsumable_rows_locked
 
 if [ -n "$ACK_THROUGH" ]; then

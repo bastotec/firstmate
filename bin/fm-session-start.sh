@@ -187,6 +187,14 @@
 # Hosts without timeout, gtimeout, or perl use the shared pure-Bash watchdog, so
 # the digest never runs without the same hard bound and process-group cleanup.
 #
+# PRIVATE DIAGNOSTICS: FM_SESSION_START_DIAGNOSTICS=1 opts into a private
+# temporary directory (0700) containing stages.tsv (0600). Its path is printed
+# on stderr. Records contain only epoch seconds, fixed stage labels, and fixed
+# events (enter, complete, timeout, failed); no command output, arguments,
+# environment, home paths, or task names are captured. Retain a failed run's
+# artifact to locate slow work before changing budgets; delete it when finished.
+# This does not change the deadline or the host's completion requirement.
+#
 # Usage: fm-session-start.sh
 #   Prints the full ordered digest to stdout and always exits 0: this is a
 #   reporting command, not a gate. A lock refusal is reported as a loud
@@ -220,11 +228,15 @@ done
 # The ordered stage list is the contract behind the truncation banner: the child
 # names the stage it is entering, and the parent reports every stage at or after
 # that one as never emitted. Keep it in the exact order the digest prints.
-SESSION_START_STAGES='lock bootstrap wake-queue supervision-instructions read-once fleet-state network-checks context next-step'
+SESSION_START_STAGES='harness tasks-compatibility lock bootstrap wake-queue supervision-instructions read-once fleet-state network-checks context next-step'
+
+# shellcheck source=bin/fm-startup-diagnostics-lib.sh
+. "$SCRIPT_DIR/fm-startup-diagnostics-lib.sh"
 
 stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
   [ -n "${FM_SESSION_START_STAGE_FILE:-}" ] || return 0
   printf '%s\n' "$1" > "$FM_SESSION_START_STAGE_FILE" 2>/dev/null || true
+  startup_diagnostic enter "$1"
 }
 
 # shellcheck source=bin/fm-timeout-lib.sh
@@ -233,6 +245,17 @@ stage() {  # <stage-name>: breadcrumb for the parent's truncation banner
 . "$SCRIPT_DIR/fm-session-lock-lib.sh"
 
 if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
+  # Never inherit an arbitrary diagnostic destination from the launch environment.
+  unset FM_SESSION_START_DIAGNOSTIC_FILE
+  if [ "${FM_SESSION_START_DIAGNOSTICS:-0}" = 1 ]; then
+    SESSION_START_DIAGNOSTIC_DIR=$(umask 077; mktemp -d "${TMPDIR:-/tmp}/fm-startup-diagnostics.XXXXXX" 2>/dev/null) || SESSION_START_DIAGNOSTIC_DIR=
+    if [ -n "$SESSION_START_DIAGNOSTIC_DIR" ]; then
+      FM_SESSION_START_DIAGNOSTIC_FILE="$SESSION_START_DIAGNOSTIC_DIR/stages.tsv"
+      (umask 077; : > "$FM_SESSION_START_DIAGNOSTIC_FILE")
+      export FM_SESSION_START_DIAGNOSTIC_FILE
+      printf 'STARTUP DIAGNOSTICS: %s\n' "$FM_SESSION_START_DIAGNOSTIC_FILE" >&2
+    fi
+  fi
   SESSION_START_BUDGET=${FM_SESSION_START_TIMEOUT:-120}
   # A non-positive or non-numeric budget is not a budget (`timeout 0` disables
   # the deadline outright), so an unusable value falls back to the default
@@ -248,9 +271,10 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     env FM_SESSION_START_STAGE_FILE="$SESSION_START_STAGE_FILE" \
     "$SCRIPT_DIR/fm-session-start.sh"
   SESSION_START_RC=$?
+  SESSION_START_LAST_STAGE=$(cat "$SESSION_START_STAGE_FILE" 2>/dev/null) || SESSION_START_LAST_STAGE=
+  [ -n "$SESSION_START_LAST_STAGE" ] || SESSION_START_LAST_STAGE=unknown
   if [ "$SESSION_START_RC" -eq 124 ]; then
-    SESSION_START_LAST_STAGE=$(cat "$SESSION_START_STAGE_FILE" 2>/dev/null) || SESSION_START_LAST_STAGE=
-    [ -n "$SESSION_START_LAST_STAGE" ] || SESSION_START_LAST_STAGE=unknown
+    startup_diagnostic timeout "$SESSION_START_LAST_STAGE"
     SESSION_START_PENDING=$(
       printf '%s\n' "$SESSION_START_STAGES" | tr ' ' '\n' |
         awk -v from="$SESSION_START_LAST_STAGE" '$0 == from {seen = 1} seen' | tr '\n' ' '
@@ -263,15 +287,21 @@ if [ -z "${FM_SESSION_START_STAGE_FILE:-}" ]; then
     printf '●  only up to that point.\n'
     printf '●  RECONCILE these stages before acting on anything they would have shown:\n'
     printf '●    %s\n' "${SESSION_START_PENDING% }"
-    printf '●  Rerun bin/fm-session-start.sh now to finish taking the helm. If it truncates\n'
-    printf '●  again, raise FM_SESSION_START_TIMEOUT and report the slow stage - a stage that\n'
-    printf '●  cannot finish inside the bound is a fleet problem, not a reporting detail.\n'
+    printf '●  The session host must reject this incomplete digest. Inspect the slow stage\n'
+    printf '●  before retrying through the owning host; do not run another digest beside\n'
+    printf '●  an active session. FM_SESSION_START_DIAGNOSTICS=1 retains private fixed-label\n'
+    printf '●  timings on the next authorized start. Raising the budget alone is not a fix.\n'
     printf '%s\n' "$BAR"
+  elif [ "$SESSION_START_RC" -eq 0 ]; then
+    startup_diagnostic complete "$SESSION_START_LAST_STAGE"
+  else
+    startup_diagnostic failed "$SESSION_START_LAST_STAGE"
   fi
   rm -f "$SESSION_START_STAGE_FILE" 2>/dev/null || true
   exit 0
 fi
 
+stage harness
 PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 
 # shellcheck source=bin/fm-backend.sh
@@ -295,6 +325,7 @@ PRIMARY_HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
 # child collapses six subprocesses to three. fm-tasks-axi-lib.sh owns both reuse
 # layers and the one-hop consumption rule that keeps the verdict out of any
 # agent's environment.
+stage tasks-compatibility
 if fm_tasks_axi_compatible; then
   TASKS_AXI_COMPATIBLE=1
 else
@@ -511,10 +542,12 @@ if [ "$LOCK_RC" -ne 0 ]; then
 fi
 if [ "$READ_ONLY" -eq 0 ]; then
   rm -f "$COMPLETION_FILE" 2>/dev/null || true
+  startup_diagnostic enter trace-context
   fm_trace_context_session_start "$CONFIG" "$STATE/.trace-context-effective"
   # A full locked start publishes this home's current structured summary.
   # Publication is side-band and best-effort, so it can never change the
   # session-start result.
+  startup_diagnostic enter home-summary
   "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
@@ -522,6 +555,7 @@ if [ "$READ_ONLY" -eq 0 ]; then
   # finished, without ever waiting. A read-only session starts nothing at all:
   # it holds no mutation authority for the sweeps, and it must not spawn,
   # steer, or merge anyway, so it has no action left for an auth verdict to gate.
+  startup_diagnostic enter network-launch
   "$SCRIPT_DIR/fm-startup-network.sh" start \
     --locked 1 --harvest-pid $$ >/dev/null 2>&1 || true
 fi
@@ -549,6 +583,7 @@ fi
 # rely on a heartbeat wake to discover pre-card calls, so startup supplies
 # that discovery boundary without changing bootstrap's sweep inventory.
 subsection "DECISION CARDS"
+startup_diagnostic enter decision-cards
 if [ "$TASKS_AXI_COMPATIBLE" -ne 1 ]; then
   printf 'skipped - compatible tasks-axi is unavailable, so captain calls could not be listed.\n'
 else
@@ -604,6 +639,7 @@ if [ "$READ_ONLY" -eq 1 ]; then
   [ -n "$GUARD_OUT" ] && printf '%s\n' "$GUARD_OUT"
 else
   DRAIN_OUT=$("$SCRIPT_DIR/fm-wake-drain.sh" 2>&1)
+  startup_diagnostic complete wake-queue
   if [ -n "$DRAIN_OUT" ]; then
     printf '%s\n' "$DRAIN_OUT"
   else
