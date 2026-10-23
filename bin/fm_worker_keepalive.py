@@ -57,23 +57,28 @@ an unaccepted done: worker without a PR.
 Later status edits do not restart an unchanged condition's clock. Its text is a
 concrete instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
-The mate acted when the highest steer sequence in the worker's inbox
-(state/<id>.inbox/NNN.msg written by bin/fm-send.sh, counted in handled/ too, so
-a steer the worker already acknowledged still counts; delivery bookkeeping
-never does) is above the `steer` baseline saved at the wake, or its spawn_gen=
-changes: a still-stuck worker then starts a fresh waiting period and is woken
-again after another bound, retaining the episode's first epoch and nudge count.
-A woken record without `steer` adopts the current sequence on its first eligible
-scan; legacy mtime-valued `inbox` fields are not compared. Baseline adoption
-alone leaves the wake time and escalation deadline unchanged.
-When the mate did not act within FM_KEEPALIVE_ESCALATE_SECS (1800) of the wake, or the
-worker is still stuck after FM_KEEPALIVE_MAX_NUDGES (3) wakes, the scan raises
-one plain line naming what is stuck and what would unstick it: a second mate
-appends "blocked [key=keepalive-<home>-<id>-<first-epoch>]: ..." to its parent channel
-(bin/fm-parent-channel-lib.sh), the first mate's own home queues one check:
-wake telling its supervisor to raise it with the captain. When the condition
-clears or the worker leaves, an escalated episode is resolved the same way.
-A condition change starts a new episode.
+Only the condition clearing resolves a wake. A steer, an acknowledgment or a
+relay upward is not a fix (2026-10-23: a mate answered a worker's PR-guard
+refusal with seven "hold and preserve evidence" steers for two hours), so the
+inbox is not read. A worker still stuck FM_KEEPALIVE_FOLLOW_SECS (600) after
+the wake escalates one plain line to the mate's parent, telling it to act:
+a second mate appends "blocked [key=keepalive-<home>-<id>-<first-epoch>]: ..."
+to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
+parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
+wake and then tells the captain (see Captain lines). When the condition clears
+or the worker leaves, an escalated episode is resolved the same way. A
+condition change starts a new episode.
+
+Escalations from below: every still-open keepalive- blocked record on a second
+mate's channel is this home's to act on. One still open FM_KEEPALIVE_ESCALATE_SECS
+after this home first saw it goes one level up: a second mate's home appends its
+own blocked line to its parent channel, and the first mate's home tells the
+captain. It resolves when the record closes or the mate leaves.
+
+Captain lines: the first mate's home publishes one plain notice through
+bin/fm-notify.sh (FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
+check: wake telling its supervisor the captain was told and to keep fixing it;
+the resolution is one more notice.
 
 Parent-bound questions: the home also reads each second mate's channel
 (state/<id>.status of a kind=secondmate meta, where a remote mate's lines are
@@ -92,8 +97,7 @@ its first observation, wake and escalation state. Only a fold closure followed
 by reopening starts a fresh episode, even when both happen between scans.
 Questions still open FM_KEEPALIVE_ESCALATE_SECS after their wake are raised as
 one line per mate (blocked [key=keepalive-<home>-<mate>-ask-<epoch>] from a
-second mate's home, a check: wake to raise it with the captain from the first
-mate's). The line describes the entire escalated-and-still-open set (count and
+second mate's home, a captain line from the first mate's). The line describes the entire escalated-and-still-open set (count and
 oldest question); changes to that set or its note text refresh it (under the same
 report key on the parent channel). It resolves only when that set empties or
 the mate leaves.
@@ -106,8 +110,9 @@ Progress lives in state/keepalive/<id>.json.
 Regression coverage: tests/fm-worker-keepalive.test.sh.
 
 FM_HOME is required. Tests set FM_KEEPALIVE_NOW (epoch), FM_KEEPALIVE_LIVENESS
-(an executable printing the busy classification for <id>) and FM_KEEPALIVE_TASKS
-(an executable standing in for bin/fm-tasks-axi.sh).
+(an executable printing the busy classification for <id>), FM_KEEPALIVE_TASKS
+(an executable standing in for bin/fm-tasks-axi.sh) and FM_KEEPALIVE_NOTIFY
+(an executable standing in for bin/fm-notify.sh).
 """
 
 from __future__ import annotations
@@ -140,7 +145,7 @@ DONE = env_int("FM_KEEPALIVE_DONE_SECS", 600)
 ASK = env_int("FM_KEEPALIVE_ASK_SECS", 600)
 MACHINE_KEYS = ("keepalive-", "pending-reply-", "parked-run-", "ci-stall-", "child-outcome-")
 ESCALATE = env_int("FM_KEEPALIVE_ESCALATE_SECS", 1800)
-MAX_NUDGES = env_int("FM_KEEPALIVE_MAX_NUDGES", 3)
+FOLLOW = env_int("FM_KEEPALIVE_FOLLOW_SECS", 600)
 NOW = env_int("FM_KEEPALIVE_NOW", int(time.time()))
 LIVENESS = os.environ.get("FM_KEEPALIVE_LIVENESS") or ""
 
@@ -149,7 +154,8 @@ UNTIL_RE = re.compile(r"\buntil\s+\d{4}-\d{2}-\d{2}T\d{2}:\d{2}", re.I)
 MATE_DECIDABLE_RE = re.compile(
     r"\b(your|you|mate|owner|release[ds]?|hold|held|approv\w*|go-ahead|permission|"
     r"steer\w*|decid\w*|decision|confirm\w*|answer|sign-off|instruction\w*|"
-    r"retry\w*|relaunch\w*|re-?spawn\w*|re-?run|install\w*|clean-?up|housekeeping)\b",
+    r"retry\w*|relaunch\w*|re-?spawn\w*|re-?run|install\w*|clean-?up|housekeeping|"
+    r"custody|evidence|authori\w*|waiv\w*|supported)\b",
     re.I)
 REPORT_RE = re.compile(
     r"(\.(md|txt|log)$|(^|/)(\.superpowers|\.scratch|\.no-mistakes|reports?|notes?)/)", re.I)
@@ -192,19 +198,6 @@ def mtime(path: Path) -> int:
         return int(path.stat().st_mtime)
     except OSError:
         return 0
-
-
-def steer_seq(path: Path) -> int:
-    """Highest steer sequence delivered to an inbox, handled or not."""
-    best = 0
-    for folder in (path, path / "handled"):
-        try:
-            for child in folder.iterdir():
-                if re.fullmatch(r"[0-9]+\.msg", child.name) and child.is_file():
-                    best = max(best, int(child.name[:-4]))
-        except OSError:
-            pass
-    return best
 
 
 def last_status(path: Path):
@@ -321,6 +314,12 @@ def minutes(secs: int) -> int:
 
 
 def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: str = "") -> str:
+    return instruction_text(wid, cond, age, verb, text, waiting) + (
+        ". A steer, acknowledgment or relay is not a fix: if it is still stuck in %d minutes your parent is told to act"
+        % minutes(FOLLOW))
+
+
+def instruction_text(wid: str, cond: str, age: int, verb: str, text: str, waiting: str = "") -> str:
     quote = (text[:160] + "...") if len(text) > 160 else text
     relaunch = "relaunch it (bin/fm-spawn.sh --relaunch %s), replace it, or close it" % wid
     if cond == "dead":
@@ -331,9 +330,10 @@ def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: st
                 "conversation that asked for it now with bin/fm-send.sh <conversation> --result '<outcome and report "
                 "path>'%s, then retire the worker (cleanup); never leave it idle" % (wid, minutes(age), quote, waiting))
     if cond == "blocked":
-        return ("worker %s has been %s for %d minutes (\"%s\"): unblock it in this turn - answer it and send it back "
-                "to the deliverable, retry a transient failure, %s; raise a captain call only for a decision "
-                "that is truly the captain's" % (wid, verb, minutes(age), quote, relaunch))
+        return ("worker %s has been %s for %d minutes (\"%s\"): unblock it in this turn - a refusal from the fleet's "
+                "own tooling (a PR guard, a spawn, a pipeline step) is yours to fix: retry it, fix the input, repair the "
+                "tool or do the step by hand; answer it and send it back to the deliverable, %s; raise a captain call "
+                "only for a decision that is truly the captain's" % (wid, verb, minutes(age), quote, relaunch))
     if cond == "held":
         return ("worker %s has been %s for %d minutes on something you can decide (\"%s\"): decide it now - "
                 "release it back to the deliverable with bin/fm-send.sh, %s; never wait for a release"
@@ -357,6 +357,20 @@ class Scan:
         self.state = state
         self.dir = self.state / "keepalive"
         self.dir.mkdir(parents=True, exist_ok=True)
+        marker = h / ".fm-secondmate-home"
+        self.primary = not (marker.exists() or marker.is_symlink())
+
+    def tell_captain(self, key: str, text: str, after: str) -> bool:
+        notify = os.environ.get("FM_KEEPALIVE_NOTIFY") or str(SCRIPT_DIR / "fm-notify.sh")
+        try:
+            r = subprocess.run([notify, "--title", "Stuck work", text], capture_output=True, text=True, timeout=60,
+                               env=dict(os.environ, FM_HOME=str(self.h)))
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if r.returncode != 0:
+            return False
+        self.wake(key, text + after)
+        return True
 
     def wake(self, key: str, text: str) -> bool:
         return bash('. "$1/fm-wake-lib.sh"; fm_wake_append check "$2" "$3"', str(SCRIPT_DIR), key,
@@ -367,11 +381,11 @@ class Scan:
         script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
                   'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
         rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, str(rec["first"]), text, timeout=120).returncode
-        if rc == 1:  # the first mate's own home: tell its supervisor
+        if rc == 1:  # the first mate's own home: its parent is the captain
             if verb == "blocked":
-                return self.wake("keepalive:%s:escalate:%d" % (wid, NOW),
-                                 text + "; raise it with the captain in one plain line")
-            return self.wake("keepalive:%s:resolved:%d" % (wid, NOW), text + "; clear its blocker")
+                return self.tell_captain("keepalive:%s:escalate:%d" % (wid, NOW), text,
+                                         "; the captain was told in one line - keep fixing it")
+            return self.tell_captain("keepalive:%s:resolved:%d" % (wid, NOW), text, "; the captain was told")
         return rc == 0
 
     def resolve(self, wid: str, rec: dict, why: str) -> bool:
@@ -423,31 +437,25 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False}
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE}.get(cond, STUCK)
         age = NOW - rec["since"]
-        inbox = steer_seq(self.state / ("%s.inbox" % wid))
-        gen = m.get("spawn_gen", "")
         if rec.get("escalated") or age < bound:
             save(rec_path, rec)
             return
         if rec["woke"]:
-            rec.setdefault("steer", inbox)
-            acted = inbox > rec["steer"] or gen != rec.get("gen", "")
-            if acted and rec["nudges"] < MAX_NUDGES:
-                # the mate acted and the worker is still stuck: a fresh episode
-                rec.update(since=NOW, woke=0, steer=inbox, gen=gen)
-                save(rec_path, rec)
-                return
-            if acted or NOW - rec["woke"] >= ESCALATE:
-                line = ("worker %s has been stuck (%s) for %d minutes and its mate %s; it needs %s"
+            # only the condition clearing counts; a steer or relay is not a fix
+            if NOW - rec["woke"] >= (ESCALATE if self.primary else FOLLOW):
+                line = ("worker %s has been stuck (%s) for %d minutes and %s; it needs %s - act on it now: "
+                        "steer the mate with the concrete fix or do it yourself; an acknowledgment is not a fix"
                         % (wid, cond, minutes(NOW - rec["first"]),
-                           "could not unstick it after %d tries" % rec["nudges"] if acted
-                           else "did not act on the keep-alive wake", unstick(cond)))
+                           "I could not unstick it" if self.primary
+                           else "its mate did not fix it within %d minutes of the keep-alive wake" % minutes(FOLLOW),
+                           unstick(cond)))
                 if self.report(wid, rec, "blocked", line):
                     rec["escalated"] = True
             save(rec_path, rec)
             return
         waiting = result_trail(self.state) if cond == "undelivered" else ""
         if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text, waiting)):
-            rec.update(woke=NOW, steer=inbox, gen=gen, nudges=rec["nudges"] + 1)
+            rec.update(woke=NOW, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
 
@@ -462,10 +470,13 @@ class Scan:
         for line in open_text.splitlines():
             key, _, rest = line.partition("\t")
             verb, _, note = rest.partition("\t")
-            if verb not in ("needs-decision", "blocked") or key.startswith(MACHINE_KEYS):
+            relay = verb == "blocked" and key.startswith("keepalive-")
+            if verb not in ("needs-decision", "blocked") or (key.startswith(MACHINE_KEYS) and not relay):
                 continue
             ident = key + "-" + hashlib.sha256(note.encode()).hexdigest()[:16]
             out[ident] = {"key": key, "note": note, "origin": origins.get(key)}
+            if relay:
+                out[ident]["relay"] = True
         return out
 
     def asks(self, mate: str) -> None:
@@ -484,9 +495,12 @@ class Scan:
         else:
             now_open = self.questions(mate)
             rec["sig"], rec["open"] = sig, now_open
+        self.relays(mate, rec, {i: q for i, q in now_open.items() if q.get("relay")})
         previous = {a["key"]: a for a in rec.get("asks", {}).values()}
         asks = rec["asks"] = {}
         for ident, q in now_open.items():
+            if q.get("relay"):
+                continue
             a = previous.get(q["key"])
             if a is None or int(q.get("origin") or 0) > int(a.get("origin") or 0):
                 a = {"first": NOW, "woke": 0, "escalated": False}
@@ -526,6 +540,26 @@ class Scan:
                 rec.pop("esc_ids", None)
         save(rec_path, rec)
 
+    def relays(self, mate: str, rec: dict, now_open: dict) -> None:
+        """Keep-alive escalations from a second mate: this home acts, else one level up."""
+        previous = rec.get("relays", {})
+        relays = rec["relays"] = {}
+        for ident, q in now_open.items():
+            r = previous.get(ident) or {"first": NOW, "up": False}
+            r["note"] = q["note"]
+            relays[ident] = r
+            if not r["up"] and NOW - r["first"] >= ESCALATE:
+                line = ("second mate %s escalated this %d minutes ago and it is still stuck: %s"
+                        % (mate, minutes(NOW - r["first"]), q["note"][:600]))
+                if self.report("%s-up-%s" % (mate, ident[-8:]), r, "blocked", line):
+                    r["up"] = True
+        for ident, r in previous.items():
+            if ident in relays or not r.get("up"):
+                continue
+            if not self.report("%s-up-%s" % (mate, ident[-8:]), r, "resolved",
+                               "second mate %s's stuck work is moving again" % mate):
+                relays[ident] = r
+
     def scan(self) -> None:
         self.done_ids = backlog_done_ids(self.h) if any(
             meta(p).get("kind") in ("ship", "scout") for p in self.state.glob("*.meta")) else set()
@@ -542,6 +576,10 @@ class Scan:
             if rec_path.stem in mates:
                 continue
             rec = load(rec_path, {})
+            self.relays(rec_path.stem, rec, {})
+            if any(r.get("up") for r in rec["relays"].values()):
+                save(rec_path, rec)
+                continue
             if not rec.get("esc_first") or self.report(rec_path.stem + "-ask", {"first": rec["esc_first"]}, "resolved",
                                                        "second mate %s left the fleet" % rec_path.stem):
                 rec_path.unlink(missing_ok=True)

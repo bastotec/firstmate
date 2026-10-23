@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Behavior tests for bin/fm-worker-keepalive.sh: a worker that is held on its
 # mate, blocked, without a live agent, or not making real progress wakes its mate
-# with a concrete instruction within minutes, and only a mate that does not or
-# cannot unstick it raises one plain line toward the captain.
+# with a concrete instruction within minutes. A steer or acknowledgment is not a
+# fix: still stuck 10 minutes after the wake, the mate's parent is told to act,
+# and 30 minutes after that the captain gets one plain line.
 set -u
 
 # shellcheck source=tests/lib.sh disable=SC1091
@@ -30,7 +31,14 @@ make_home() {  # <name> <kind>
 cat "$dir/liveness"
 EOF
   chmod +x "$dir/bin/liveness"
+  make_notify "$dir"
   printf '%s\n' "$dir"
+}
+
+# A stand-in for bin/fm-notify.sh that records each captain line in $dir/notices.
+make_notify() {  # <dir>
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "%s/notices"\n' "$1" > "$1/bin/notify"
+  chmod +x "$1/bin/notify"
 }
 
 # A second mate home named <mate> whose parent channel is a local parent home.
@@ -55,7 +63,12 @@ steer() {  # <dir> <epoch>: the mate writes to the worker's inbox (bin/fm-send.s
 
 scan() {  # <dir> <now>
   FM_HOME="$1/home" FM_KEEPALIVE_NOW="$2" FM_KEEPALIVE_LIVENESS="$1/bin/liveness" \
+    FM_KEEPALIVE_NOTIFY="$1/bin/notify" \
     FM_KEEPALIVE_TASKS="${FM_KEEPALIVE_TASKS:-/usr/bin/false}" "$KEEPALIVE" scan
+}
+
+notice_count() {  # <dir> <pattern>: captain lines matching <pattern>
+  cat "$1/notices" 2>/dev/null | grep -c -- "$2" || true
 }
 
 wakes() { cut -f4- "$1/home/state/.wake-queue" 2>/dev/null; }
@@ -81,11 +94,12 @@ test_held_on_the_mate_wakes_then_escalates_once() {
   assert_contains "$(wakes "$dir")" 'decide it now' "the wake is not a concrete instruction"
   assert_contains "$(wakes "$dir")" 'never wait for a release' "the wake allows waiting for a release"
   assert_contains "$(wakes "$dir")" 'bin/fm-spawn.sh --relaunch w1' "the wake does not name the relaunch"
-  scan "$dir" $((T0 + 1800))
+  scan "$dir" $((T0 + 1799))
   assert_equals 1 "$(wake_count "$dir")" "the same episode woke the mate twice"
-  assert_absent "$channel" "the captain was reached before the mate had 30 minutes"
-  scan "$dir" $((T0 + 1200 + 1800))
+  assert_absent "$channel" "the parent was told before the mate had 10 minutes"
+  scan "$dir" $((T0 + 1200 + 600))
   assert_grep "blocked [key=keepalive-bob-helper-w1-$T0]: worker w1 has been stuck (held)" "$channel" "an ignored wake was not escalated"
+  assert_grep 'act on it now' "$channel" "the escalation does not tell the parent to act"
   assert_grep 'releasing its hold' "$channel" "the escalation does not say what would unstick it"
   assert_equals 1 "$(wc -l < "$channel" | tr -d ' ')" "the escalation is more than one line"
   scan "$dir" $((T0 + 6000))
@@ -93,7 +107,7 @@ test_held_on_the_mate_wakes_then_escalates_once() {
   status "$dir" $((T0 + 6100)) 'working [key=breadboard-plugin-trial]: hold released - resuming the build'
   scan "$dir" $((T0 + 6200))
   assert_grep "resolved [key=keepalive-bob-helper-w1-$T0]" "$channel" "a resumed worker did not resolve its escalation"
-  pass "a worker held on its mate wakes the mate at 20 minutes and escalates once when ignored"
+  pass "a worker held on its mate wakes the mate at 20 minutes and tells its parent 10 minutes later"
 }
 
 test_external_wait_is_left_to_the_declared_wait_cadence() {
@@ -107,111 +121,85 @@ test_external_wait_is_left_to_the_declared_wait_cadence() {
 }
 
 # Case 2 (docana-delivery, 2026-10-22): a blocked worker asked for a "runtime
-# owner". The mate is told to unblock it; a mate that steers but cannot unstick
-# it is escalated after the bounded number of tries, from the first mate's own
-# home as a check: wake.
-test_blocked_worker_is_retried_by_the_mate_then_escalated() {
-  local dir i now
-  dir=$(make_home blocked ship)
-  status "$dir" "$T0" 'blocked [key=nm-publication]: Needs tooling-owner recovery. Waiting for supported tooling-owner continuation through mate'
+# owner" after a transient spawn refusal. In the first mate's own home the mate
+# is told to unblock it, its steers do not count as a fix, and a worker still
+# blocked 30 minutes after the wake reaches the captain as one plain line.
+test_spawn_refusal_in_the_first_mates_home_reaches_the_captain() {
+  local dir
+  dir=$(make_home spawn-refusal ship)
+  status "$dir" "$T0" 'blocked [key=spawn]: fm-spawn refused (endpoint superseded); waiting for the runtime owner to approve a relaunch'
   scan "$dir" $((T0 + 1200))
   assert_equals 1 "$(wake_count "$dir")" "a blocked worker did not wake its mate"
   assert_contains "$(wakes "$dir")" 'unblock it in this turn' "the blocked wake is not an instruction"
-  assert_contains "$(wakes "$dir")" 'retry a transient failure' "the blocked wake does not offer a retry"
-  now=$((T0 + 1200))
-  for i in 2 3; do
-    steer "$dir" $((now + 60))
-    scan "$dir" $((now + 120))
-    assert_equals $((i - 1)) "$(wake_count "$dir")" "the mate's steer was answered with another wake at once"
-    now=$((now + 120 + 1200))
-    scan "$dir" "$now"
-    assert_equals "$i" "$(wake_count "$dir")" "a worker still blocked after the mate acted was not woken again"
-  done
-  assert_no_grep 'raise it with the captain' "$dir/home/state/.wake-queue" "escalated before the mate ran out of tries"
-  steer "$dir" $((now + 60))
-  scan "$dir" $((now + 120))
-  assert_grep 'raise it with the captain in one plain line' "$dir/home/state/.wake-queue" "a mate that could not unstick it was not escalated"
-  assert_grep 'could not unstick it after 3 tries' "$dir/home/state/.wake-queue" "the escalation does not say the mate tried"
-  pass "a blocked worker wakes its mate each episode and escalates after three tries"
-}
-
-test_a_steer_the_worker_already_handled_counts_as_the_mate_acting() {
-  local dir inbox rec
-  dir=$(make_home steer-handled ship)
-  make_secondmate "$dir" handled
-  status "$dir" "$T0" 'blocked: needs a retry'
-  scan "$dir" $((T0 + 1200))
-  assert_equals 1 "$(wake_count "$dir")" "setup: a blocked worker did not wake its mate"
+  assert_contains "$(wakes "$dir")" 'is yours to fix: retry it' "the wake does not say the tooling refusal is the mate's to fix"
+  assert_contains "$(wakes "$dir")" 'bin/fm-spawn.sh --relaunch w1' "the wake does not name the relaunch"
+  assert_contains "$(wakes "$dir")" 'A steer, acknowledgment or relay is not a fix' "the wake lets an acknowledgment pass as a fix"
   steer "$dir" $((T0 + 1300))
-  inbox="$dir/home/state/w1.inbox"
-  mkdir -p "$inbox/handled"
-  for rec in "$inbox"/*.msg; do mv "$rec" "$inbox/handled/"; done
-  scan "$dir" $((T0 + 1400))
-  jq -e '.since == '$((T0 + 1400))' and .woke == 0' "$dir/home/state/keepalive/w1.json" >/dev/null \
-    || fail "a steer the worker acknowledged before the scan was not counted as the mate acting"
-  scan "$dir" $((T0 + 3200))
-  [ ! -e "$dir/parent/state/handled.status" ] \
-    || assert_no_grep 'did not act on the keep-alive wake' "$dir/parent/state/handled.status" \
-      "a mate that steered was reported as ignoring the wake"
-  pass "a steer the worker already handled counts as the mate acting"
-}
-
-test_inbox_bookkeeping_does_not_count_as_the_mate_acting() {
-  local dir inbox file
-  dir=$(make_home inbox-bookkeeping ship)
-  make_secondmate "$dir" bookkeeping
-  status "$dir" "$T0" 'blocked: needs a retry'
-  steer "$dir" $((T0 + 1100))
-  inbox="$dir/home/state/w1.inbox"
-  scan "$dir" $((T0 + 1200))
-  assert_equals 1 "$(wake_count "$dir")" "setup: a blocked worker did not wake its mate"
-  for file in .ring-state .ring.log .escalated not-a-sequence.msg; do
-    echo bookkeeping > "$inbox/$file"
-    at $((T0 + 1400)) "$inbox/$file"
-  done
-  mkdir -p "$inbox/999.msg"
-  mv "$inbox/001.msg" "$inbox/handled/001.msg"
-  at $((T0 + 1400)) "$inbox/handled/001.msg"
-  at $((T0 + 1400)) "$inbox/handled"
-  at $((T0 + 1400)) "$inbox"
-  scan "$dir" $((T0 + 1500))
-  jq -e '.since == '$T0' and .woke == '$((T0 + 1200)) \
-    "$dir/home/state/keepalive/w1.json" >/dev/null || fail "bookkeeping restarted the ignored-wake episode"
+  steer "$dir" $((T0 + 2000))
+  scan "$dir" $((T0 + 2999))
+  assert_equals 1 "$(wake_count "$dir")" "a steer restarted the episode"
+  assert_equals 0 "$(notice_count "$dir" .)" "the captain was told before the first mate had 30 minutes"
   scan "$dir" $((T0 + 3000))
-  assert_grep 'did not act on the keep-alive wake' "$dir/parent/state/bookkeeping.status" \
-    "bookkeeping delayed escalation or was reported as mate action"
-  pass "only newly delivered numeric steering records count as mate action"
+  assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck (blocked)')" "a worker the first mate only steered did not reach the captain"
+  assert_contains "$(wakes "$dir")" 'the captain was told in one line - keep fixing it' "the first mate was not told the captain knows"
+  scan "$dir" $((T0 + 6000))
+  assert_equals 1 "$(notice_count "$dir" .)" "the captain line repeated"
+  status "$dir" $((T0 + 6100)) 'working: relaunched, spawn succeeded'
+  scan "$dir" $((T0 + 6200))
+  assert_equals 1 "$(notice_count "$dir" 'worker w1 is no longer blocked')" "the captain was not told it moved again"
+  pass "a refused spawn the first mate only steers reaches the captain 30 minutes after the wake"
 }
 
-test_legacy_wake_adopts_the_current_steer_baseline() {
-  local dir rec channel nudges
-  for nudges in 1 3; do
-    dir=$(make_home "legacy-wake-$nudges" ship)
-    make_secondmate "$dir" legacy
-    channel="$dir/parent/state/legacy.status"
-    status "$dir" "$T0" 'blocked: needs a retry'
-    steer "$dir" $((T0 + 1100))
-    scan "$dir" $((T0 + 1200))
-    assert_equals 1 "$(wake_count "$dir")" "setup: a blocked worker did not wake its mate"
-    rec="$dir/home/state/keepalive/w1.json"
-    jq --argjson inbox "$((T0 + 1100))" --argjson nudges "$nudges" \
-      'del(.steer) | .inbox = $inbox | .nudges = $nudges' "$rec" > "$rec.tmp"
-    mv "$rec.tmp" "$rec"
-    mv "$dir/home/state/w1.inbox/001.msg" "$dir/home/state/w1.inbox/handled/001.msg"
-    scan "$dir" $((T0 + 1500))
-    jq -e --argjson since "$T0" --argjson woke "$((T0 + 1200))" --argjson nudges "$nudges" \
-      '.steer == 1 and .since == $since and .woke == $woke and .nudges == $nudges and .escalated == false' \
-      "$rec" >/dev/null || fail "an existing steer changed the legacy wake episode"
-    assert_absent "$channel" "an existing steer escalated a legacy wake before its deadline"
-    scan "$dir" $((T0 + 1800))
-    jq -e --argjson woke "$((T0 + 1200))" '.steer == 1 and .woke == $woke' "$rec" >/dev/null \
-      || fail "the adopted steer baseline did not survive another scan"
-    scan "$dir" $((T0 + 3000))
-    assert_grep 'did not act on the keep-alive wake' "$channel" \
-      "baseline adoption delayed the ignored-wake escalation or claimed mate action"
-    assert_no_grep 'could not unstick it' "$channel" "an existing steer counted as a new attempt"
+# Case 6 (bob-helper, 2026-10-23): the worker's PR step was refused by the PR
+# guard over an internal run id; the mate answered with seven "hold, preserve
+# evidence, no retry" steers and acknowledgments for two hours. Steers are not a
+# fix: 10 minutes after the wake the first mate is told to act, and when it does
+# not fix it either, the captain gets one plain line 30 minutes later.
+test_pr_guard_refusal_the_mate_only_acknowledges_climbs_to_the_captain() {
+  local dir channel parent i
+  dir=$(make_home sidebar ship)
+  make_secondmate "$dir" bob-helper
+  channel="$dir/parent/state/bob-helper.status"
+  parent="$dir/parent"
+  mkdir -p "$parent/bin"
+  printf 'kind=secondmate\n' > "$parent/state/bob-helper.meta"
+  make_notify "$parent"
+  printf '#!/usr/bin/env bash\necho busy\n' > "$parent/bin/liveness"
+  chmod +x "$parent/bin/liveness"
+  status "$dir" "$T0" 'blocked: HOLD remains at supported terminal boundary. Run 01M5 failed PR guard because its rendered Review history includes the internal run ID; no supported redaction/publication retry established'
+  scan "$dir" $((T0 + 1200))
+  assert_equals 1 "$(wake_count "$dir")" "the PR-guard refusal did not wake the mate"
+  assert_contains "$(wakes "$dir")" 'a PR guard' "the wake does not name a PR-guard refusal as the mate's to fix"
+  assert_contains "$(wakes "$dir")" 'do the step by hand' "the wake does not offer doing the step by hand"
+  for i in 1 2 3 4 5 6 7; do
+    steer "$dir" $((T0 + 1200 + i * 60))
   done
-  pass "legacy wakes adopt existing steer sequences without changing escalation deadlines"
+  status "$dir" $((T0 + 1700)) 'blocked: 010 acknowledged; stopped with evidence/current branch preserved'
+  scan "$dir" $((T0 + 1799))
+  assert_absent "$channel" "the parent was told before the mate had 10 minutes"
+  scan "$dir" $((T0 + 1800))
+  assert_grep "blocked [key=keepalive-bob-helper-w1-$T0]: worker w1 has been stuck (blocked)" "$channel" "seven steers kept the episode from the parent"
+  assert_grep 'its mate did not fix it' "$channel" "the escalation does not say the mate did not fix it"
+  assert_grep 'an acknowledgment is not a fix' "$channel" "the escalation lets the parent acknowledge it"
+  assert_equals 1 "$(wake_count "$dir")" "the mate was woken again instead of the parent being told"
+  FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 1900)) FM_KEEPALIVE_LIVENESS="$parent/bin/liveness" \
+    FM_KEEPALIVE_NOTIFY="$parent/bin/notify" FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+  FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 1900 + 1799)) FM_KEEPALIVE_LIVENESS="$parent/bin/liveness" \
+    FM_KEEPALIVE_NOTIFY="$parent/bin/notify" FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+  assert_equals 0 "$(notice_count "$parent" .)" "the captain was told before the first mate had 30 minutes"
+  FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 1900 + 1800)) FM_KEEPALIVE_LIVENESS="$parent/bin/liveness" \
+    FM_KEEPALIVE_NOTIFY="$parent/bin/notify" FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+  assert_equals 1 "$(notice_count "$parent" 'second mate bob-helper escalated this 30 minutes ago and it is still stuck')" \
+    "a stuck worker the first mate did not fix never reached the captain"
+  assert_equals 1 "$(notice_count "$parent" 'worker w1 has been stuck (blocked)')" "the captain line does not say what is stuck"
+  status "$dir" $((T0 + 4000)) 'working: PR body sanitized; PR opened by hand'
+  scan "$dir" $((T0 + 4100))
+  assert_grep "resolved [key=keepalive-bob-helper-w1-$T0]" "$channel" "the fixed worker did not resolve its escalation"
+  FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 4200)) FM_KEEPALIVE_LIVENESS="$parent/bin/liveness" \
+    FM_KEEPALIVE_NOTIFY="$parent/bin/notify" FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+  assert_equals 1 "$(notice_count "$parent" "second mate bob-helper's stuck work is moving again")" "the captain was not told it moved again"
+  assert_equals 2 "$(notice_count "$parent" .)" "the captain got more than one line each way"
+  pass "a PR-guard refusal the mate only acknowledges reaches the first mate in 10 minutes and the captain 30 minutes later"
 }
 
 test_state_override_owns_scans_locks_records_and_wakes() {
@@ -245,11 +233,11 @@ PY
     assert_absent "$dir/home/state/keepalive" "the scan used the default state directory"
     assert_absent "$dir/home/state/.wake-queue" "the wake used the default state directory"
     FM_STATE_OVERRIDE="$state" scan "$dir" $((T0 + 3000))
-    assert_grep 'did not act on the keep-alive wake' "$state/.wake-queue" "override escalation was not delivered"
+    assert_grep 'I could not unstick it' "$state/.wake-queue" "override escalation was not delivered"
     rm "$state/w1.meta"
     FM_STATE_OVERRIDE="$state" scan "$dir" $((T0 + 3100))
     assert_absent "$state/keepalive/w1.json" "a departure kept its override episode"
-    assert_grep 'left the fleet; clear its blocker' "$state/.wake-queue" "override resolution was not delivered"
+    assert_grep 'left the fleet; the captain was told' "$state/.wake-queue" "override resolution was not delivered"
   done
   pass "the effective state directory owns metadata, lock, episode records and wakes"
 }
@@ -451,6 +439,7 @@ make_parent() {  # <name> <mate>
   printf 'kind=secondmate\n' > "$dir/home/state/$2.meta"
   printf '#!/usr/bin/env bash\necho busy\n' > "$dir/bin/liveness"
   chmod +x "$dir/bin/liveness"
+  make_notify "$dir"
   printf '%s\n' "$dir"
 }
 
@@ -480,7 +469,8 @@ test_unanswered_mate_question_wakes_the_parent() {
   assert_equals 1 "$(wake_count "$dir")" "the same question woke the parent twice"
   ask "$dir" bob-helper 'resolved [key=default]: answered: KiCad Breadboard Builder, per the captain'
   scan "$dir" $((T0 + 3000))
-  assert_equals 1 "$(wake_count "$dir")" "an answered question escalated"
+  assert_equals 1 "$(wakes "$dir" | grep -c 'for your answer to')" "an answered question escalated"
+  assert_equals 0 "$(notice_count "$dir" 'which breadboard tool')" "an answered question reached the captain"
   jq -e '.asks == {}' "$dir/home/state/keepalive/asks/bob-helper.json" >/dev/null || fail "an answered question stayed open"
   pass "an unanswered second mate question wakes its parent at 10 minutes and an answer closes it"
 }
@@ -496,16 +486,16 @@ test_a_question_the_parent_never_answers_reaches_the_captain_once() {
   scan "$dir" $((T0 + 1300))
   assert_equals 2 "$(wake_count "$dir")" "a later question did not get its own wake"
   scan "$dir" $((T0 + 600 + 1800))
-  assert_equals 1 "$(wakes "$dir" | grep -c 'raise it with the captain in one plain line')" "an ignored question was not escalated once"
-  assert_contains "$(wakes "$dir")" 'which month should the new tab cover' "the escalation does not name the question"
+  assert_equals 1 "$(notice_count "$dir" .)" "an ignored question was not escalated once"
+  assert_equals 1 "$(notice_count "$dir" 'which month should the new tab cover')" "the escalation does not name the question"
   scan "$dir" $((T0 + 1300 + 1800))
-  assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "the later question was not escalated in its turn"
+  assert_equals 2 "$(notice_count "$dir" 'has waited')" "the later question was not escalated in its turn"
   scan "$dir" $((T0 + 6000))
-  assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "an escalation repeated"
+  assert_equals 2 "$(notice_count "$dir" 'has waited')" "an escalation repeated"
   ask "$dir" finn 'resolved [key=budget-sheet]: answered: November'
   ask "$dir" finn 'resolved [key=bank-item]: answered: Inter'
   scan "$dir" $((T0 + 6100))
-  assert_contains "$(wakes "$dir")" "second mate finn's questions are answered; clear its blocker" "answered questions did not clear the escalation"
+  assert_equals 1 "$(notice_count "$dir" "second mate finn's questions are answered")" "answered questions did not clear the escalation"
   pass "a question the parent never answers reaches the captain as one line and clears when answered"
 }
 
@@ -534,10 +524,10 @@ test_reopened_questions_get_fresh_deadlines() {
     assert_equals 2 "$(wakes "$dir" | grep -c 'for your answer to')" "a $mode question inherited the previous wake"
     assert_contains "$(wakes "$dir" | grep 'for your answer to' | tail -1)" "$note" "the fresh wake omitted the current question"
     scan "$dir" $((T0 + 4999))
-    assert_equals 1 "$(wakes "$dir" | grep -c 'raise it with the captain')" "a $mode question inherited the previous escalation deadline"
+    assert_equals 1 "$(notice_count "$dir" 'has waited')" "a $mode question inherited the previous escalation deadline"
     scan "$dir" $((T0 + 5000))
     scan "$dir" $((T0 + 5100))
-    assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "a $mode question did not escalate exactly once"
+    assert_equals 2 "$(notice_count "$dir" 'has waited')" "a $mode question did not escalate exactly once"
   done
   pass "same-key reopenings between scans get fresh wake and escalation deadlines"
 }
@@ -631,10 +621,8 @@ test_escalation_tracks_all_still_open_questions() {
 
 test_held_on_the_mate_wakes_then_escalates_once
 test_external_wait_is_left_to_the_declared_wait_cadence
-test_blocked_worker_is_retried_by_the_mate_then_escalated
-test_inbox_bookkeeping_does_not_count_as_the_mate_acting
-test_a_steer_the_worker_already_handled_counts_as_the_mate_acting
-test_legacy_wake_adopts_the_current_steer_baseline
+test_spawn_refusal_in_the_first_mates_home_reaches_the_captain
+test_pr_guard_refusal_the_mate_only_acknowledges_climbs_to_the_captain
 test_state_override_owns_scans_locks_records_and_wakes
 test_worker_without_a_live_agent_is_relaunched
 test_no_real_progress_counts_code_not_reports

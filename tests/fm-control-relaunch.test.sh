@@ -378,7 +378,7 @@ EOF
   assert_grep "encode launch-brief" "$dir/fake/literal" "the replacement should have been launched"
   prompt="$dir/home/data/rl1/launch-brief.md"
   assert_grep "$prompt" "$dir/fake/literal" "the replacement must receive the current emitted prompt"
-  precedence_line=$(grep -n '^This section supersedes any older brief instruction that tells you to stop, report blocked, or leave a daemon or tool alone instead of trying the obvious fix;' "$prompt" | cut -d: -f1)
+  precedence_line=$(grep -n '^This section supersedes any older brief or steer that tells you to stop, hold, preserve evidence, wait for custody or a tooling owner, or leave a daemon or tool alone instead of trying the obvious fix;' "$prompt" | cut -d: -f1)
   old_rule_line=$(grep -n '^7\. Never stop, restart, or update the shared' "$prompt" | cut -d: -f1)
   [ -n "$precedence_line" ] && [ -n "$old_rule_line" ] && [ "$precedence_line" -lt "$old_rule_line" ] \
     || fail "relaunch must deliver the superseding repair contract before the obsolete daemon rule"

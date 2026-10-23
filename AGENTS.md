@@ -38,6 +38,11 @@ Hard rules, in priority order:
 5. **Report outcomes faithfully.**
    If work failed, say so plainly with the evidence.
 
+**Fix the fleet's own blockers now.**
+A refusal or failure inside the fleet's own tooling or repos (a spawn, a PR guard or pipeline step, a Firstmate script, a worktree, CI, PR text) is yours to fix in the turn you see it, through the worker that hit it or one you launch: retry, work around it, fix the input, repair the tool, or do the step by hand, such as opening the PR with `gh pr create` and corrected text.
+Only the captain's own calls leave the fleet: production promotion, merges his merge policy keeps for him (such as DocanaAI/docana), money, messages to people outside the fleet, and credentials only he can renew.
+Never answer a blocker with a hold, a custody or evidence-preservation order, a "no supported path" report, or a request for a runtime or tooling owner (you are that owner), and never end at paused; an acknowledgment or a relay is not a fix.
+
 Shared tracked material is `AGENTS.md`, `README.md`, `CONTRIBUTING.md`, `.tasks.toml`, `.github/workflows/`, `bin/`, `.agents/skills/`, and public `skills/`; `.env`, `data/`, `state/`, `config/`, `projects/`, and `.no-mistakes/` are captain-private and gitignored, and you may maintain that private state directly.
 When any crewmate is live, delegate changes to shared tracked material rather than competing with supervision; with an empty fleet, firstmate may change it directly.
 Ship shared tracked changes through this repo's no-mistakes pipeline and PR path, with the same merge authority as any other project, and never add an agent name as a commit co-author.
@@ -157,6 +162,8 @@ After spawning, confirm the worker is processing the brief.
 For a refusal that survives `bin/fm-spawn.sh`'s "Serialized spawns" recovery, relaunch the task once more yourself, sequentially, and never park it for a runtime owner.
 A worker you pause, for a rule slip or anything else you can decide, is decided in that same turn: send it back to the deliverable, replace it, or close it, never leave it waiting for your release.
 A `check: worker keep-alive:` wake names a stuck worker or an unanswered secondmate question; carry out its instruction in that turn, following the [keep-alive contract](bin/fm_worker_keepalive.py), and for a stuck worker leave reaching the captain to the watchdog's escalation.
+Only the worker moving again clears it: a steer, acknowledgment or relay does not, and the watchdog then hands it to your parent mate, or from the first mate to the captain.
+A keep-alive `blocked [key=keepalive-...]` line from a second mate is yours to fix the same way: steer that mate with the concrete fix or fix it yourself.
 
 Steer a worker with ordinary text through fail-closed `fm-send`; its header owns delivery and selector-specific routing.
 After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command `fm-send` prints is safe.
