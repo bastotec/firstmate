@@ -482,6 +482,83 @@ test_a_question_the_parent_never_answers_reaches_the_captain_once() {
   pass "a question the parent never answers reaches the captain as one line and clears when answered"
 }
 
+test_reopened_and_reworded_questions_get_fresh_deadlines() {
+  local dir mode note
+  for mode in same reopened reworded; do
+    dir=$(make_parent "reask-$mode" finn)
+    note='which route should I take?'
+    ask "$dir" finn "needs-decision [key=route]: $note"
+    scan "$dir" "$T0"
+    scan "$dir" $((T0 + 600))
+    scan "$dir" $((T0 + 2400))
+    if [ "$mode" != reworded ]; then
+      ask "$dir" finn 'resolved [key=route]: answered: take the local route'
+    fi
+    if [ "$mode" != same ]; then
+      note='the local route failed; which route should I take now?'
+    fi
+    ask "$dir" finn "needs-decision [key=route]: $note"
+    scan "$dir" $((T0 + 2600))
+    scan "$dir" $((T0 + 3199))
+    assert_equals 1 "$(wakes "$dir" | grep -c 'for your answer to')" "a $mode question did not start a fresh 10-minute clock"
+    scan "$dir" $((T0 + 3200))
+    assert_equals 2 "$(wakes "$dir" | grep -c 'for your answer to')" "a $mode question inherited the previous wake"
+    assert_contains "$(wakes "$dir" | grep 'for your answer to' | tail -1)" "$note" "the fresh wake omitted the current question"
+    scan "$dir" $((T0 + 4999))
+    assert_equals 1 "$(wakes "$dir" | grep -c 'raise it with the captain')" "a $mode question inherited the previous escalation deadline"
+    scan "$dir" $((T0 + 5000))
+    scan "$dir" $((T0 + 5100))
+    assert_equals 2 "$(wakes "$dir" | grep -c 'raise it with the captain')" "a $mode question did not escalate exactly once"
+  done
+  pass "same-key reopenings between scans and reworded asks get fresh wake and escalation deadlines"
+}
+
+test_escalation_tracks_all_still_open_questions() {
+  local dir closed remaining channel folded key
+  for closed in budget-sheet bank-item; do
+    dir=$(make_parent "escalation-$closed" finn)
+    make_secondmate "$dir" parent-mate
+    channel="$dir/parent/state/parent-mate.status"
+    key="keepalive-parent-mate-finn-ask-$T0"
+    ask "$dir" finn 'needs-decision [key=budget-sheet]: which month should the new tab cover?'
+    scan "$dir" "$T0"
+    scan "$dir" $((T0 + 600))
+    ask "$dir" finn 'needs-decision [key=bank-item]: Inter or Nubank for the import?'
+    scan "$dir" $((T0 + 700))
+    scan "$dir" $((T0 + 1300))
+    scan "$dir" $((T0 + 2400))
+    assert_grep "blocked [key=$key]:" "$channel" "the first escalation did not reach the parent channel"
+    scan "$dir" $((T0 + 3100))
+    folded=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+    assert_contains "$folded" "$key" "a later batch changed the blocker key"
+    assert_equals 1 "$(printf '%s\n' "$folded" | wc -l | tr -d ' ')" "the mate has more than one open blocker"
+    assert_contains "$folded" 'answer to 2 questions' "the later batch omitted the earlier escalated question"
+    assert_contains "$folded" 'which month should the new tab cover?' "the blocker no longer names the oldest open question"
+    ask "$dir" finn "resolved [key=$closed]: answered"
+    scan "$dir" $((T0 + 3200))
+    scan "$dir" $((T0 + 3300))
+    folded=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+    assert_contains "$folded" "$key" "a partial answer resolved or replaced the blocker key"
+    assert_contains "$folded" 'answer to 1 question' "a partial answer did not refresh the outstanding count"
+    if [ "$closed" = bank-item ]; then
+      remaining=budget-sheet
+      assert_contains "$folded" 'which month should the new tab cover?' "answering the newer question hid the older one"
+    else
+      remaining=bank-item
+      assert_contains "$folded" 'Inter or Nubank for the import?' "answering the oldest question left a stale question visible"
+    fi
+    assert_equals 3 "$(grep -c '^blocked ' "$channel")" "the blocker was not refreshed exactly on set changes"
+    assert_equals 0 "$(grep -c '^resolved ' "$channel" || true)" "a partial answer prematurely cleared the blocker"
+    ask "$dir" finn "resolved [key=$remaining]: answered"
+    scan "$dir" $((T0 + 3400))
+    scan "$dir" $((T0 + 3500))
+    folded=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+    assert_equals '' "$folded" "the empty escalation set left an open blocker"
+    assert_equals 1 "$(grep -c '^resolved ' "$channel")" "the final answer did not resolve the blocker exactly once"
+  done
+  pass "escalations keep one current blocker across additions and partial answers"
+}
+
 test_held_on_the_mate_wakes_then_escalates_once
 test_external_wait_is_left_to_the_declared_wait_cadence
 test_blocked_worker_is_retried_by_the_mate_then_escalated
@@ -498,3 +575,5 @@ test_supervisor_declared_wait_defers_stalls_until_expiry
 test_watcher_keepalive_guard_stays_cheap_and_obeys_cadence
 test_unanswered_mate_question_wakes_the_parent
 test_a_question_the_parent_never_answers_reaches_the_captain_once
+test_reopened_and_reworded_questions_get_fresh_deadlines
+test_escalation_tracks_all_still_open_questions

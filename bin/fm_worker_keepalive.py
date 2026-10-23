@@ -392,16 +392,19 @@ class Scan:
 
     def questions(self, mate: str) -> dict:
         """Still-open parent-bound questions in a second mate's channel, by identity."""
-        r = bash('. "$1/fm-classify-lib.sh"; status_open_decisions "$2"', str(SCRIPT_DIR),
+        r = bash('. "$1/fm-classify-lib.sh"; _fm_status_open_decision_origins "$2"; '
+                 'printf "\\n--open--\\n"; status_open_decisions "$2"', str(SCRIPT_DIR),
                  str(self.state / ("%s.status" % mate)))
+        origins_text, _, open_text = r.stdout.partition("\n--open--\n")
+        origins = dict(line.split("\t", 1) for line in origins_text.splitlines() if "\t" in line)
         out = {}
-        for line in r.stdout.splitlines():
+        for line in open_text.splitlines():
             key, _, rest = line.partition("\t")
             verb, _, note = rest.partition("\t")
             if verb not in ("needs-decision", "blocked") or key.startswith(MACHINE_KEYS):
                 continue
-            ident = key if key != "default" else "default-" + hashlib.sha256(note.encode()).hexdigest()[:8]
-            out[ident] = {"key": key, "note": note}
+            ident = key + "-" + hashlib.sha256(note.encode()).hexdigest()[:16]
+            out[ident] = {"key": key, "note": note, "origin": origins.get(key)}
         return out
 
     def asks(self, mate: str) -> None:
@@ -424,12 +427,9 @@ class Scan:
         for ident in [i for i in asks if i not in now_open]:
             del asks[ident]
         for ident, q in now_open.items():
-            entry = asks.setdefault(ident, {"first": NOW, "woke": 0, "escalated": False})
-            entry.update(q)
-        if rec.get("esc_first") and not any(a["escalated"] for a in asks.values()):
-            if self.report(mate + "-ask", {"first": rec["esc_first"]}, "resolved",
-                           "second mate %s's questions are answered" % mate):
-                rec.pop("esc_first")
+            if ident not in asks or asks[ident].get("origin") != q.get("origin"):
+                asks[ident] = {"first": NOW, "woke": 0, "escalated": False}
+            asks[ident].update(q)
         due = sorted((a for a in asks.values() if not a["woke"] and NOW - a["first"] >= ASK), key=lambda a: a["first"])
         if due:
             listed = "; ".join("[%s] \"%s\"" % (a["key"], a["note"][:200]) for a in due[:5])
@@ -443,18 +443,25 @@ class Scan:
             if self.wake("keepalive:%s:asks:%d" % (mate, due[0]["first"]), text):
                 for a in due:
                     a["woke"] = NOW
-        late = sorted((a for a in asks.values() if a["woke"] and not a["escalated"] and NOW - a["woke"] >= ESCALATE),
-                      key=lambda a: a["first"])
-        if late:
-            first = rec.get("esc_first") or late[0]["first"]
+        escalated = {ident: a for ident, a in asks.items()
+                     if a["escalated"] or (a["woke"] and NOW - a["woke"] >= ESCALATE)}
+        esc_ids = sorted(escalated)
+        if escalated and esc_ids != rec.get("esc_ids"):
+            pending = sorted(escalated.values(), key=lambda a: a["first"])
+            first = rec.get("esc_first") or pending[0]["first"]
             line = ("second mate %s has waited %d minutes for an answer to %d question%s and its parent did not answer; "
                     "it needs an answer to \"%s\"%s"
-                    % (mate, minutes(NOW - late[0]["first"]), len(late), "" if len(late) == 1 else "s",
-                       late[0]["note"][:200], " and %d more" % (len(late) - 1) if len(late) > 1 else ""))
+                    % (mate, minutes(NOW - pending[0]["first"]), len(pending), "" if len(pending) == 1 else "s",
+                       pending[0]["note"][:200], " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""))
             if self.report(mate + "-ask", {"first": first}, "blocked", line):
-                rec["esc_first"] = first
-                for a in late:
+                rec["esc_first"], rec["esc_ids"] = first, esc_ids
+                for a in pending:
                     a["escalated"] = True
+        elif not escalated and rec.get("esc_first"):
+            if self.report(mate + "-ask", {"first": rec["esc_first"]}, "resolved",
+                           "second mate %s's questions are answered" % mate):
+                rec.pop("esc_first")
+                rec.pop("esc_ids", None)
         save(rec_path, rec)
 
     def scan(self) -> None:
