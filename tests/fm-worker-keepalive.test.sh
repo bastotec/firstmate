@@ -868,6 +868,68 @@ test_run_stuck_in_its_ci_step_wakes_the_mate_to_land_or_close() {
   pass "a run stuck 2 hours in its CI step wakes the mate to land or close its PR"
 }
 
+test_mature_pr_conditions_supersede_stale_worker_classifications() {
+  local dir fallback cond mature
+  for fallback in blocked dead; do
+    for cond in unmerged ci-stuck; do
+      dir=$(make_home "pr-precedence-$fallback-$cond" ship)
+      printf 'pr=https://github.com/o/r/pull/255\n' >> "$dir/home/state/w1.meta"
+      printf 'run=01M5\nstep=ci\n' > "$dir/home/state/w1.crew-state"
+      status "$dir" "$T0" 'blocked: validation needs a retry'
+      [ "$fallback" != dead ] || echo dead > "$dir/liveness"
+      make_pr "$dir" OPEN CONFLICTING DIRTY CANCELLED
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1200))
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 3000))
+      jq -e --arg cond "$fallback" '.cond == $cond and .escalated' \
+        "$dir/home/state/keepalive/w1.json" >/dev/null || fail "setup: $fallback was not escalated"
+      if [ "$cond" = unmerged ]; then
+        make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+        FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 3001))
+        mature=$((T0 + 4801))
+      else
+        mature=$((T0 + 7200))
+      fi
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$mature"
+      jq -e --arg cond "$cond" --argjson now "$mature" '.cond == $cond and .woke == $now and (.escalated | not)' \
+        "$dir/home/state/keepalive/w1.json" >/dev/null || fail "$fallback masked mature $cond"
+      if [ "$cond" = unmerged ]; then
+        assert_contains "$(wakes "$dir")" 'merge it now with bin/fm-pr-merge.sh w1' "no merge wake replaced $fallback"
+      else
+        assert_contains "$(wakes "$dir")" 'land it or close it now' "no CI recovery wake replaced $fallback"
+      fi
+      printf '#!/usr/bin/env bash\nprintf "tasks[1]{id,state,kind,repo,title}:\\n  w1,done,ship,o/r,trial\\n"\n' > "$dir/bin/tasks"
+      chmod +x "$dir/bin/tasks"
+      FM_KEEPALIVE_TASKS="$dir/bin/tasks" FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 1))
+      jq -e '.cond == "undelivered"' "$dir/home/state/keepalive/w1.json" >/dev/null \
+        || fail "a mature PR condition overrode backlog acceptance"
+    done
+  done
+  pass "mature PR conditions replace stale blockers and dead agents but not backlog acceptance"
+}
+
+test_green_pr_during_aged_ci_waits_for_its_merge_deadline() {
+  local dir
+  dir=$(make_home ci-turns-green ship)
+  printf 'pr=https://github.com/o/r/pull/255\n' >> "$dir/home/state/w1.meta"
+  printf 'run=01M5\nstep=ci\n' > "$dir/home/state/w1.crew-state"
+  status "$dir" "$T0" 'working: validation reached CI'
+  make_pr "$dir" OPEN MERGEABLE CLEAN PENDING
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+  make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 7140))
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 7200))
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 8939))
+  assert_equals 0 "$(wake_count "$dir")" "healthy CI triggered recovery before the green PR deadline"
+  jq -e '.cond == null' "$dir/home/state/keepalive/w1.json" >/dev/null \
+    || fail "a green PR in aged CI was classified as stuck"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 8940))
+  jq -e '.cond == "unmerged"' "$dir/home/state/keepalive/w1.json" >/dev/null \
+    || fail "a green PR in aged CI missed its merge deadline"
+  assert_equals 1 "$(wake_count "$dir")" "the green PR deadline did not wake the mate once"
+  pass "CI turning green before its timeout waits for the green PR deadline"
+}
+
 # Case 9 (primary, 2026-10-20..23): auto-land was disarmed after one merge and
 # stayed off for three days, so no green PR in its repos merged. A configured
 # but unarmed auto-land wakes the home's supervisor to re-arm it and clears
@@ -884,6 +946,7 @@ test_disarmed_autoland_wakes_the_supervisor_to_rearm_it() {
   scan "$dir" $((T0 + 300))
   assert_contains "$(wakes "$dir")" 'auto-land is configured (config/autoland.json) but not armed' "a disarmed auto-land did not wake the supervisor"
   assert_contains "$(wakes "$dir")" 'bin/fm-autoland.sh arm' "the wake does not say how to re-arm it"
+  assert_not_contains "$(wakes "$dir")" 'remove its config' "the delivered wake directs configuration deletion"
   : > "$dir/home/state/autoland.check.sh"
   scan "$dir" $((T0 + 400))
   assert_absent "$dir/home/state/keepalive/autoland.json" "an armed auto-land kept its record"
@@ -916,4 +979,6 @@ test_open_question_reposts_preserve_the_episode
 test_escalation_tracks_all_still_open_questions
 test_green_pr_left_unmerged_wakes_the_mate_to_merge_it
 test_run_stuck_in_its_ci_step_wakes_the_mate_to_land_or_close
+test_mature_pr_conditions_supersede_stale_worker_classifications
+test_green_pr_during_aged_ci_waits_for_its_merge_deadline
 test_disarmed_autoland_wakes_the_supervisor_to_rearm_it

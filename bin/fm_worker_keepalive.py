@@ -465,17 +465,15 @@ class Scan:
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
+        if pr:
+            return pr
         if verb == "done":
-            if pr:
-                return pr
             return ("done" if m.get("pr") else "undelivered"), min(NOW, mtime(status) or NOW), verb, text
         if liveness(self.h, self.state, wid) == "dead":
             return "dead", NOW, verb or "", text
         opened = min(NOW, mtime(status) or NOW)
         if verb in ("blocked", "failed"):
             return "blocked", opened, verb, text
-        if pr:
-            return pr
         if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
             # waiting on CI or a merge has its own bounds above; it is not a stall
             return None, opened, verb or "working", text
@@ -506,7 +504,7 @@ class Scan:
             track.pop("ci", None)
         if green and NOW - track["green"] >= PR_GREEN:
             return "unmerged", track["green"], "green", url
-        if "ci" in track and NOW - track["ci"] >= CI_STEP:
+        if not green and "ci" in track and NOW - track["ci"] >= CI_STEP:
             return "ci-stuck", track["ci"], "ci", "%s, %s" % (url, pr_summary(view))
         return None
 
@@ -691,7 +689,7 @@ class Scan:
             if self.wake("keepalive:autoland:disarmed:%d" % rec["first"],
                          "auto-land is configured (config/autoland.json) but not armed, so green PRs in its repos are "
                          "not merging: re-arm it now with bin/fm-autoland.sh arm; only the captain's own words keep "
-                         "it off, and then remove its config instead of leaving it disarmed"):
+                         "it off"):
                 rec["woke"] = NOW
         elif rec.get("woke") and not rec.get("escalated") and NOW - rec["woke"] >= (ESCALATE if self.primary else FOLLOW):
             if self.report("autoland", rec, "blocked", "auto-land has been disarmed for %d minutes, so green PRs are "
