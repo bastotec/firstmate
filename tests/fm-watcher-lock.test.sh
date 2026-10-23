@@ -959,13 +959,15 @@ test_stopped_watcher_is_live_but_stale_then_exit_is_classified() {
     fail "SIGSTOP watcher with a stale beacon was classified healthy"
   fi
 
-  kill -CONT "$watcher_pid" 2>/dev/null || true
-  kill -TERM "$watcher_pid" 2>/dev/null || true
+  # Kill while stopped: resuming then sending TERM can leave bash deferring
+  # its trap until foreground work finishes. This case tests exit classification,
+  # not the latency of graceful shutdown under load.
+  kill -KILL "$watcher_pid" 2>/dev/null || fail "could not SIGKILL stopped watcher"
   wait_for_exit "$armpid" 80
   status=$?
-  [ "$status" -ne 0 ] && [ "$status" -ne 124 ] || fail "terminated stopped-watcher cycle did not surface nonzero (status $status)"
-  grep -Eq 'reason=(nonzero-exit|signal-exit)' "$state/.watch-cycle-exits.log" \
-    || fail "terminated watcher exit was not classified in the lifecycle ledger"
+  [ "$status" -eq 137 ] || fail "killed stopped-watcher cycle did not surface SIGKILL (status $status)"
+  grep -q 'reason=signal-exit' "$state/.watch-cycle-exits.log" \
+    || fail "killed watcher exit was not classified as a signal in the lifecycle ledger"
   pass "SIGSTOP distinguishes live PID from stale beacon and termination records the exit class"
 }
 
