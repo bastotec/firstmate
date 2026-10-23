@@ -320,6 +320,7 @@ The relay never truncates or consumes the source log, and mates must append corr
 The [reply-log guard](../bin/fm-reply-log-guard.py) blocks common rewrite tool calls on Deck secondmate supervisor turns, but shell-text matching is best effort, not a security boundary.
 The mirror's bounded recovery handles rewrites that escape that guard: it replays a previously read log from the start, skips already-mirrored lines, and delivers changed or new lines still present in the log.
 A replayed report whose locally rewritten form is already mirrored needs no document fetch.
+An older pending capture can finish ingestion without rewinding later progress under the [adapter header's receipt-backed reconciliation rules](../bin/fm-procevent-remote-reply.sh).
 Other continuity breaks, or repeated rewrites beyond the recovery budget, escalate once and leave a durable stop that automatic startup or relaunch cannot lift.
 Inspect the break before deliberately lifting the stop; the [adapter header](../bin/fm-procevent-remote-reply.sh) owns recovery eligibility, the budget setting, and the operator command.
 Recovery cannot restore bytes lost from the remote log.
