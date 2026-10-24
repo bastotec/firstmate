@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Retire the durable records of a task whose endpoint has no backend-confirmed
-# stop, on an operator's explicit say-so or, with --finished, on the owning
-# mate's proof that the work is finished.
+# Retire task endpoints and their durable records.
+# Operator and --finished modes handle endpoints with no backend-confirmed
+# stop, on an operator's explicit say-so or the owning mate's proof that the
+# work is finished; --accepted-result is a separate path described below.
 #
 # Retirement requires a named record and an explicit basis, never just a
 # missing endpoint. Cleanup on its own never retires such a record -
@@ -46,12 +47,17 @@
 # to assert it is stopped; --finished never accepts a stream record.
 # This command records the assertion's author and time before removing any record.
 #
+# --accepted-result <acceptance.json> is the explicit owning mate's finite
+# diagnosis/superseded completion path, not a landed-work or discard assertion.
+# bin/fm-preserved-result-lib.sh owns its admission, preservation and retry contract.
+#
 # --orphan and --list-orphans handle the opposite leftover: a live stream
 # endpoint whose task record is already gone. bin/fm-retire-orphan-lib.sh's
 # header owns that contract.
 # docs/stream-backend.md owns the operator-facing retirement contract.
 #
-# Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
+# In operator and --finished modes, retiring a record is RECORD bookkeeping
+# and nothing else. Cleanup runs first,
 # because when its own gates allow it, it does the whole job properly. In
 # operator mode, two of its refusals are proceeded past: the work-protection
 # gate, which runs before
@@ -115,7 +121,11 @@ usage: fm-retire-endpoint.sh [--override-runtime-refusal] <task-id> [<task-id>..
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> [<task-id>...]
        FM_HOME=<owning-home> fm-retire-endpoint.sh --finished <task-id> --merged-pr <url>
        FM_HOME=<owning-home> fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]
+       FM_HOME=<owning-home> fm-retire-endpoint.sh --accepted-result <acceptance.json> <task-id>
        FM_HOME=<owning-home> fm-retire-endpoint.sh --list-orphans
+
+For accepted finite diagnosis or superseded work (not shipped code), see
+bin/fm-preserved-result-lib.sh's acceptance schema and retained-allocation contract.
 
 Retires the durable records - the task record and its backlog row - of tasks
 whose runtime endpoint has no backend-confirmed stop, after you confirm the ids
@@ -246,6 +256,7 @@ OVERRIDE_RUNTIME_REFUSAL=0
 ORPHAN=0
 LIST_ORPHANS=0
 ORPHAN_ENDPOINT=
+ACCEPTED_RESULT=
 while [ "$#" -gt 0 ]; do
   arg=$1
   shift
@@ -253,6 +264,11 @@ while [ "$#" -gt 0 ]; do
     -h|--help)
       usage
       exit 0
+      ;;
+    --accepted-result)
+      [ "$#" -gt 0 ] || refuse "--accepted-result needs an acceptance JSON file"
+      ACCEPTED_RESULT=$1
+      shift
       ;;
     --finished)
       FINISHED=1
@@ -311,6 +327,20 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
+if [ -n "$ACCEPTED_RESULT" ]; then
+  [ -n "$FM_HOME_EXPLICIT" ] && [ "${#IDS[@]}" -eq 1 ] \
+    && [ "$FINISHED$ORPHAN$LIST_ORPHANS$OVERRIDE_RUNTIME_REFUSAL$EXPECTED_RECORD_SET" = 00000 ] \
+    && [ -z "$MERGED_PR_URL$STOPPED_STATUS_SIZE$ORPHAN_ENDPOINT" ] && [ "$EXPECTED_STATE" = stopped ] \
+    || refuse "--accepted-result requires an explicit owning FM_HOME, exactly one task, and no other retirement mode or guards"
+  # shellcheck source=bin/fm-gate-refuse-lib.sh
+  . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+  fm_refuse_if_gate_agent
+  # shellcheck source=bin/fm-preserved-result-lib.sh
+  . "$SCRIPT_DIR/fm-preserved-result-lib.sh"
+  preserved_result_retire "${IDS[0]}" "$ACCEPTED_RESULT"
+  exit $?
+fi
+
 if [ "$EXPECTED_RECORD_SET" = 1 ]; then
   [ "$FINISHED" = 1 ] && [ "${#IDS[@]}" -eq 1 ] \
     || refuse "--expected-record requires --finished with exactly one task id"
@@ -363,6 +393,8 @@ fi
   || refuse "--override-runtime-refusal is an operator's assertion and cannot ride the automatic --finished sweep"
 
 for id in "${IDS[@]}"; do
+  [ ! -e "$STATE/$id.preserved-result" ] && [ ! -L "$STATE/$id.preserved-result" ] \
+    || refuse "retry this task through --accepted-result; its original allocation is retained"
   [ -f "$STATE/$id.meta" ] && [ ! -L "$STATE/$id.meta" ] \
     || refuse "no durable task record at $STATE/$id.meta, so there is nothing to retire for '$id'"
 done

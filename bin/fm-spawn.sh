@@ -1026,6 +1026,10 @@ unset FM_SPAWN_SERIAL_HOLDER
 
 ID=${POS[0]}
 fm_task_id_creation_valid "$ID" || { echo "error: invalid task id" >&2; exit 2; }
+if [ -e "$STATE/$ID.preserved-result" ] || [ -L "$STATE/$ID.preserved-result" ]; then
+  echo "error: $ID retains its original allocation for an accepted result; use a new task id" >&2
+  exit 1
+fi
 if [ -e "$STATE" ] || [ -L "$STATE" ]; then
   fm_backlog_directory_present "$STATE" "state directory" || {
     echo "error: spawn refused: $FM_BACKLOG_TRANSITION_ERROR" >&2
