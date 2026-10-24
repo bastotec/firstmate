@@ -103,6 +103,18 @@ case "${1:-}" in
     [ ! -f "$loaded" ] || { printf 'Bootstrap failed: service already loaded\n' >&2; exit 5; }
     printf 'path = %s\nprogram = %s\nproperties = keepalive | runatload | inferred program\n' \
       "$plist" "$FM_FAKE_JOB_WORKER" > "$loaded"
+    # launchd reports the job's own environment and its default one.
+    python3 - "$plist" >> "$loaded" 2>/dev/null <<'PY' || true
+import plistlib, sys
+env = plistlib.load(open(sys.argv[1], "rb")).get("EnvironmentVariables", {})
+print("\tenvironment = {")
+for key, value in env.items():
+    print(f"\t\t{key} => {value}")
+print("\t}")
+print("\tdefault environment = {")
+print("\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin")
+print("\t}")
+PY
     exit 0
     ;;
   kickstart) exit 0 ;;
@@ -454,6 +466,99 @@ if kill -0 "$DOCTOR_WORKER_PID" 2>/dev/null; then
 fi
 DOCTOR_WORKER_PID=
 pass "doctor refreshes stale worker identity before probing tools"
+
+# --- a worker started from a bare post-reboot PATH ---------------------------
+
+# The worker is launched the way a host comes back from a reboot: PATH is the
+# bare system /usr/bin:/bin, and every probed tool lives only in a user-level
+# install dir (deck in ~/.local/bin, treehouse in ~/.cargo/bin, tasks-axi in
+# ~/.no-mistakes/bin), none of which that PATH names.
+new_case Linux no-gui
+CASE_REMOTE_JOB_ACTIVE=
+CASE_PLATFORM_OVERRIDE=Linux
+rm -f "$CASE_BIN/sleep" "$CASE_BIN/uname"
+mkdir -p "$CASE_HOME/.local/bin" "$CASE_HOME/.cargo/bin" "$CASE_HOME/.no-mistakes/bin"
+mv "$CASE_BIN/deck" "$CASE_HOME/.local/bin/deck"
+mv "$CASE_BIN/treehouse" "$CASE_HOME/.cargo/bin/treehouse"
+mv "$CASE_BIN/tasks-axi" "$CASE_HOME/.no-mistakes/bin/tasks-axi"
+env -i PATH=/usr/bin:/bin HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+  "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/worker.out" 2> "$CASE_STATE/worker.err" &
+DOCTOR_WORKER_PID=$!
+REBOOT_SUPERVISOR_PID=$DOCTOR_WORKER_PID
+for _ in $(seq 1 100); do
+  [ -f "$CASE_HOME/.firstmate/remote-job/worker.ready" ] && break
+  sleep 0.05
+done
+assert_present "$CASE_HOME/.firstmate/remote-job/worker.ready" "the bare-PATH fixture worker did not start"
+doctor
+assert_contains "$DOCTOR_OUT" 'check remote-job-probe=ok: the remote job worker completed the required-tool probe' \
+  "the bare-PATH worker could not run the required-tool probe: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" "required harness=deck:$CASE_HOME/.local/bin/deck" \
+  "a worker job did not resolve deck from ~/.local/bin under a bare PATH: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" "required treehouse=$CASE_HOME/.cargo/bin/treehouse" \
+  "a worker job did not resolve a tool from ~/.cargo/bin under a bare PATH: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" "required tasks-axi=$CASE_HOME/.no-mistakes/bin/tasks-axi" \
+  "a worker job did not resolve a tool from ~/.no-mistakes/bin under a bare PATH: $DOCTOR_OUT"
+pass "worker jobs resolve user-level tools when the worker itself started with a bare PATH"
+if [ -r "/proc/$DOCTOR_WORKER_PID/environ" ]; then
+  expect_code 1 "$DOCTOR_RC" "doctor accepted a worker whose own PATH cannot resolve deck: $DOCTOR_OUT"
+  assert_contains "$DOCTOR_OUT" "check remote-job-worker=fixable: the running remote job worker's PATH cannot resolve deck: /usr/bin:/bin" \
+    "doctor did not flag the bare-PATH worker"
+  doctor --fix
+  expect_code 0 "$DOCTOR_RC" "--fix did not repair the bare-PATH worker: $DOCTOR_OUT"
+  assert_contains "$DOCTOR_OUT" 'fix remote-job-worker=applied:' "--fix did not report restarting the bare-PATH worker"
+  assert_contains "$DOCTOR_OUT" 'check remote-job-worker=ok: the Linux remote job worker is running' \
+    "the restarted worker was still flagged: $DOCTOR_OUT"
+  DOCTOR_WORKER_PID=$(cat "$CASE_HOME/.firstmate/remote-job/worker.pid")
+  WORKER_PATH=$(tr '\0' '\n' < "/proc/$DOCTOR_WORKER_PID/environ" | sed -n 's/^PATH=//p')
+  assert_equals "$CASE_HOME/.local/bin:$CASE_HOME/.cargo/bin:$CASE_HOME/.no-mistakes/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$WORKER_PATH" "the Linux worker start did not set the explicit worker PATH"
+  pass "doctor flags a worker whose own PATH cannot resolve deck and --fix restarts it with the explicit PATH"
+else
+  echo "skip: this kernel exposes no /proc/<pid>/environ, so the Linux worker PATH flag is covered on Linux only"
+fi
+for pid in "$DOCTOR_WORKER_PID" "$REBOOT_SUPERVISOR_PID"; do
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ] && [ "$pgid" != "$(ps -o pgid= -p $$ | tr -d ' ')" ]; then
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  else
+    kill -TERM "$pid" 2>/dev/null || true
+  fi
+done
+for pid in "$DOCTOR_WORKER_PID" "$REBOOT_SUPERVISOR_PID"; do
+  for _ in $(seq 1 100); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.05
+  done
+  kill -KILL "$pid" 2>/dev/null || true
+done
+DOCTOR_WORKER_PID=
+
+# The macOS LaunchAgent names the same explicit PATH, and a loaded agent
+# still running on launchd's bare default PATH is flagged and reloaded.
+new_case Darwin gui
+mkdir -p "$CASE_HOME/.local/bin"
+mv "$CASE_BIN/deck" "$CASE_HOME/.local/bin/deck"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix did not install the worker: $DOCTOR_OUT"
+assert_equals "$CASE_HOME/.local/bin:$CASE_HOME/.cargo/bin:$CASE_HOME/.no-mistakes/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+  "$(python3 -c 'import plistlib,sys; print(plistlib.load(open(sys.argv[1], "rb"))["EnvironmentVariables"]["PATH"])' "$CASE_JOB_PLIST")" \
+  "the LaunchAgent does not set the explicit worker PATH"
+pass "the LaunchAgent sets the explicit worker PATH"
+printf 'path = %s\nprogram = %s\n\tdefault environment = {\n\t\tPATH => /usr/bin:/bin:/usr/sbin:/sbin\n\t}\n' \
+  "$CASE_JOB_PLIST" "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/loaded-$JOB_LABEL"
+: > "$CASE_LAUNCHCTL_LOG"
+doctor
+expect_code 1 "$DOCTOR_RC" "doctor accepted a loaded worker on launchd's bare default PATH: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" "check remote-job-worker-loaded=fixable: the loaded $JOB_LABEL runs with a PATH that cannot resolve deck: /usr/bin:/bin:/usr/sbin:/sbin" \
+  "doctor did not flag the bare-PATH LaunchAgent"
+assert_no_grep bootstrap "$CASE_LAUNCHCTL_LOG" "a read-only doctor run reloaded the worker"
+doctor --fix
+expect_code 0 "$DOCTOR_RC" "--fix did not reload the bare-PATH LaunchAgent: $DOCTOR_OUT"
+assert_contains "$DOCTOR_OUT" 'fix remote-job-worker=applied:' "--fix did not report reloading the worker"
+assert_contains "$DOCTOR_OUT" "check remote-job-worker-loaded=ok: $JOB_LABEL is loaded" "the reloaded worker was still flagged: $DOCTOR_OUT"
+assert_grep bootstrap "$CASE_LAUNCHCTL_LOG" "--fix did not bootstrap the worker again"
+pass "doctor flags a LaunchAgent whose PATH cannot resolve deck and --fix reloads it"
 
 # --- the entrypoint symlink is recreated when it is missing ------------------
 

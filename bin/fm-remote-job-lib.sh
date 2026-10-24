@@ -61,8 +61,9 @@
 # its configured FM_ROOT/bin. Every child receives env -i with the composed
 # PATH, HOME, FM_HOME, FM_ROOT_OVERRIDE, and FM_REMOTE_JOB_ACTIVE=1. The PATH
 # is intentionally filesystem-discovered rather than login-shell-derived:
-# ~/.local/bin; nvm, asdf, and mise shims/install bins; Nix; Homebrew; and the
-# system tail. No shell startup files are evaluated. Each discovered set is
+# ~/.local/bin, ~/.cargo/bin, and ~/.no-mistakes/bin; nvm, asdf, and mise
+# shims/install bins; Nix; Homebrew; and the system tail. No shell startup files
+# are evaluated. Each discovered set is
 # appended in the shell's own sorted pathname-expansion order, so which install
 # of a multi-version tool wins is fixed by this composition rather than by the
 # order the filesystem happens to return.
@@ -70,8 +71,13 @@
 # On macOS the worker is Firstmate's Aqua LaunchAgent
 # dev.firstmate.remote-job at ~/Library/LaunchAgents/dev.firstmate.remote-job.plist
 # with logs under ~/Library/Logs. Linux starts the same worker process without
-# an Aqua requirement. The launch-agent renderer and repair helpers here are
-# shared by the entrypoint and remote doctor so their ownership cannot drift.
+# an Aqua requirement. Both launches set the worker's own PATH explicitly to
+# fm_remote_job_service_path rather than inheriting launchd's or a fresh SSH
+# session's bare system PATH, which is all a host has right after a reboot, and
+# ensure restarts a running worker whose launch PATH cannot resolve a deck that
+# PATH can (fm_remote_job_worker_path_gap). The launch-agent renderer
+# and repair helpers here are shared by the entrypoint and remote doctor so
+# their ownership cannot drift.
 #
 # The Linux start path puts the worker tree in its own process group, so
 # stopping a worker signals its restart supervisor, its serving child, and any
@@ -99,6 +105,7 @@ FM_REMOTE_JOB_SEQ_CLAIM_REAP_INTERVAL=3600
 FM_REMOTE_JOB_PREEMPTED_EXIT=76
 FM_REMOTE_JOB_OPERATOR_PATH=
 FM_REMOTE_JOB_CHILD_PATH=
+FM_REMOTE_JOB_WORKER_PATH=
 FM_REMOTE_JOB_STATE=
 FM_REMOTE_JOB_JOBS=
 FM_REMOTE_JOB_SEQ_CLAIMS=
@@ -278,6 +285,8 @@ fm_remote_job_compose_operator_path() { # <account-home>
   local account_home=$1 account_user nvm_bin
   FM_REMOTE_JOB_OPERATOR_PATH=
   fm_remote_job_path_append_if_dir "$account_home/.local/bin"
+  fm_remote_job_path_append_if_dir "$account_home/.cargo/bin"
+  fm_remote_job_path_append_if_dir "$account_home/.no-mistakes/bin"
   nvm_bin=$(fm_remote_job_nvm_selected_bin "$account_home" 2>/dev/null || true)
   [ -z "$nvm_bin" ] || fm_remote_job_path_append "$nvm_bin"
   fm_remote_job_path_append_if_dir "$account_home/.asdf/shims"
@@ -299,6 +308,82 @@ fm_remote_job_compose_operator_path() { # <account-home>
   fm_remote_job_path_append /usr/sbin
   fm_remote_job_path_append /sbin
   printf '%s\n' "$FM_REMOTE_JOB_OPERATOR_PATH"
+}
+
+# The explicit PATH a Firstmate-owned launch (the macOS LaunchAgent, the Linux
+# worker start, a stream agent) puts in the launched process's own
+# environment. It is fixed rather than discovered so the LaunchAgent contract
+# does not churn as tools come and go, and it names the user-level install
+# directories whether or not they exist yet, so a tool installed after the
+# launch still resolves.
+fm_remote_job_service_path() { # <account-home>
+  local account_home=$1 path
+  path="$account_home/.local/bin:$account_home/.cargo/bin:$account_home/.no-mistakes/bin"
+  [ "$(fm_remote_job_platform)" != darwin ] || path="$path:/opt/homebrew/bin"
+  printf '%s\n' "$path:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+}
+
+# <base> followed by every <extra> entry it lacks, order otherwise kept.
+fm_remote_job_path_union() { # <base> <extra>
+  local out=$1 directory old_ifs
+  old_ifs=$IFS
+  IFS=:
+  for directory in $2; do
+    [ -n "$directory" ] || continue
+    case ":$out:" in *":$directory:"*) continue ;; esac
+    out="${out:+$out:}$directory"
+  done
+  IFS=$old_ifs
+  printf '%s\n' "$out"
+}
+
+# The PATH the running worker was launched with. On macOS that is the loaded
+# LaunchAgent's own environment, else launchd's default environment, as
+# `launchctl print` reports them (macOS no longer shows another process's
+# environment through ps). Elsewhere it is the serving worker's
+# /proc/<pid>/environ as the kernel recorded it at exec, or ps's environment
+# column where /proc is absent. Fails when no worker environment can be read.
+fm_remote_job_worker_env_path() { # <remote-root> <account-home>
+  local root=$1 account_home=$2 uid pid ps_bin value='' word words
+  if [ "$(fm_remote_job_platform)" = darwin ]; then
+    uid=$(id -u 2>/dev/null || true)
+    case "$uid" in ''|*[!0-9]*) return 1 ;; esac
+    value=$(launchctl print "gui/$uid/$FM_REMOTE_JOB_LABEL" 2>/dev/null | awk '
+      /^[[:space:]]*(inherited|default) environment = [{]/ { section = $1; next }
+      /^[[:space:]]*environment = [{]/ { section = "own"; next }
+      /^[[:space:]]*[}]/ { section = ""; next }
+      section != "" && $1 == "PATH" && $2 == "=>" { line = $0; sub(/^[[:space:]]*PATH => /, "", line); path[section] = line }
+      END { if ("own" in path) print path["own"]; else if ("default" in path) print path["default"] }')
+  else
+    FM_REMOTE_JOB_OWNER_PID=
+    fm_remote_job_worker_owned_alive "$root" "$account_home" || return 1
+    pid=$FM_REMOTE_JOB_OWNER_PID
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    if [ -r "/proc/$pid/environ" ]; then
+      value=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n 's/^PATH=//p' | head -n 1)
+    else
+      if [ -x /bin/ps ]; then ps_bin=/bin/ps; elif [ -x /usr/bin/ps ]; then ps_bin=/usr/bin/ps; else return 1; fi
+      read -r -a words <<< "$("$ps_bin" eww -o command= -p "$pid" 2>/dev/null)" || true
+      for word in ${words[@]+"${words[@]}"}; do
+        case "$word" in PATH=*) value=${word#PATH=} ;; esac
+      done
+    fi
+  fi
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
+}
+
+# 0 when the running worker has the gap a reboot leaves behind: deck resolves
+# on fm_remote_job_service_path but not on the PATH the worker was launched
+# with, so a relaunch is exactly what closes it. Sets FM_REMOTE_JOB_WORKER_PATH
+# to that launch PATH. A host without deck there, or a worker whose environment
+# cannot be read, has no gap this can prove.
+fm_remote_job_worker_path_gap() { # <remote-root> <account-home>
+  local root=$1 account_home=$2 service
+  FM_REMOTE_JOB_WORKER_PATH=$(fm_remote_job_worker_env_path "$root" "$account_home" 2>/dev/null) || return 1
+  service=$(fm_remote_job_service_path "$account_home")
+  (PATH=$service command -v deck >/dev/null 2>&1) || return 1
+  ! (PATH=$FM_REMOTE_JOB_WORKER_PATH command -v deck >/dev/null 2>&1)
 }
 
 fm_remote_job_build_child_path() { # <remote-root>
@@ -889,6 +974,8 @@ fm_remote_job_render_launchagent() { # <remote-root> <account-home>
 		<string>$account_home</string>
 		<key>FM_ROOT_OVERRIDE</key>
 		<string>$root</string>
+		<key>PATH</key>
+		<string>$(fm_remote_job_service_path "$account_home")</string>
 	</dict>
 	<key>LimitLoadToSessionType</key>
 	<string>Aqua</string>
@@ -1194,11 +1281,14 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
   }
   fm_remote_job_prepare_state "$account_home" || return 1
   if fm_remote_job_worker_owned_alive "$root" "$account_home"; then
-    if fm_remote_job_worker_identity_matches "$root" "$account_home"; then return 0; fi
     # The owner pid is the serving child; its restart supervisor sits above it
     # and would immediately replace a lone process kill, so stop the whole
     # worker tree through its isolated group.
     pid=$FM_REMOTE_JOB_OWNER_PID
+    if fm_remote_job_worker_identity_matches "$root" "$account_home" &&
+      ! fm_remote_job_worker_path_gap "$root" "$account_home"; then
+      return 0
+    fi
     fm_remote_job_stop_worker_tree "$pid" || {
       FM_REMOTE_JOB_ERROR="stale remote job worker did not stop safely"
       return 1
@@ -1212,6 +1302,7 @@ fm_remote_job_start_linux_worker() { # <remote-root> <account-home>
   set -m
   nohup env \
     HOME="$account_home" \
+    PATH="$(fm_remote_job_service_path "$account_home")" \
     FM_ROOT_OVERRIDE="$root" \
     FM_REMOTE_JOB_STATE_ROOT="$FM_REMOTE_JOB_STATE" \
     FM_REMOTE_JOB_PLATFORM_OVERRIDE="${FM_REMOTE_JOB_PLATFORM_OVERRIDE:-}" \
@@ -1272,7 +1363,8 @@ _fm_remote_job_ensure_worker() { # <remote-root> <account-home>
       FM_REMOTE_JOB_REPAIRED=1
     fi
     if ! fm_remote_job_launchagent_loaded "$root" "$account_home" "$uid" ||
-      [ "$FM_REMOTE_JOB_REPAIRED" -eq 1 ] || [ "$identity_matches" -eq 0 ]; then
+      [ "$FM_REMOTE_JOB_REPAIRED" -eq 1 ] || [ "$identity_matches" -eq 0 ] ||
+      fm_remote_job_worker_path_gap "$root" "$account_home"; then
       fm_remote_job_reload_launchagent "$account_home" "$uid" || return 1
       FM_REMOTE_JOB_REPAIRED=1
     fi

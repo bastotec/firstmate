@@ -77,8 +77,9 @@ The [`fm-machine-vnc.sh` header](../bin/fm-machine-vnc.sh) owns installation pre
 
 Remote job execution never runs a login or interactive shell, so `~/.profile`, `~/.bashrc`, and `~/.zshrc` never contribute to the job worker's runtime `PATH`.
 `bin/fm-remote-job-lib.sh` is the single owner of the worker `PATH` and builds it by filesystem discovery rather than by evaluating shell startup files.
-The authorized child sees `<remote-root>/bin` first, then a genuine account `~/.local/bin`, the nvm default version bin, asdf and mise shims and install bins, Nix directories, Homebrew directories, and the system tail `/usr/bin:/bin:/usr/sbin:/sbin`; that header owns the exact order and version selection.
+The authorized child sees `<remote-root>/bin` first, then a genuine account `~/.local/bin`, `~/.cargo/bin`, and `~/.no-mistakes/bin`, the nvm default version bin, asdf and mise shims and install bins, Nix directories, Homebrew directories, and the system tail `/usr/bin:/bin:/usr/sbin:/sbin`; that header owns the exact order and version selection.
 A symlinked `~/.local/bin` is excluded.
+The worker process itself, and every stream agent, is launched with an explicit `PATH` that names those user-level directories, so a worker started from a bare post-reboot system `PATH` never depends on the login `PATH`; that header owns the exact value.
 The entrypoint resolves `git` only from the operator portion before prepending `<remote-root>/bin` for the authorized child.
 A checkout-local `bin/git` therefore cannot authorize an untracked command, and a host with no operator `git` receives an install-or-wrapper diagnostic before command execution.
 
@@ -130,7 +131,7 @@ bin/fm-on.sh <secondmate-id|ssh-alias> fm-remote-doctor.sh --fix
 ```
 
 Over the plain SSH doctor bootstrap it writes and reloads the Firstmate-owned `dev.firstmate.remote-job` launch agent on macOS, scoped with `LimitLoadToSessionType=Aqua` and bootstrapped in `gui/<uid>`.
-It starts the same workers directly on Linux, recreates the `~/.local/bin/fm-remote-entrypoint.sh` symlink when it is absent, and creates only Firstmate-owned required-tool wrappers that it can prove resolve to a version-manager target.
+It starts the same workers directly on Linux, restarts a running worker whose own launch `PATH` cannot resolve `deck`, recreates the `~/.local/bin/fm-remote-entrypoint.sh` symlink when it is absent, and creates only Firstmate-owned required-tool wrappers that it can prove resolve to a version-manager target.
 It never installs packages or overwrites a non-Firstmate file at a reserved wrapper path.
 It re-derives every check from the host afterwards, so what it prints is the state after the repair rather than the intent of one.
 

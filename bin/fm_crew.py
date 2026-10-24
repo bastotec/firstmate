@@ -79,7 +79,10 @@ by the operating system's per-argument bound.
 FM_HOME is required; state, data, and project paths are always rooted there.
 Only FM_CONFIG_OVERRIDE selects a different config directory; state, data, and
 project directory overrides used by endpoint scripts do not apply here.
-FM_DECK_BIN overrides the deck executable (default: deck on PATH).
+FM_DECK_BIN overrides the deck executable (default: deck on PATH, else on the
+account's composed tool PATH from bin/fm-remote-job-lib.sh, which covers
+~/.local/bin, ~/.cargo/bin and ~/.no-mistakes/bin when a process started with
+a bare system PATH, as one does right after a host reboot).
 FM_CREW_WORK_ROOT overrides ~/.local/state/firstmate-crew; each home's neutral
 workdirs live below its hashed home key (specialists use empty repositories for
 owned skill discovery). Choose this root before creating a specialist: its
@@ -249,9 +252,20 @@ def deck_env() -> dict:
     return env
 
 
+def composed_tool(name: str) -> str | None:
+    """<name> on the account's filesystem-composed tool PATH, owned by fm-remote-job-lib.sh."""
+    out = subprocess.run(
+        ["bash", "-c", '. "$1/fm-remote-job-lib.sh"; fm_remote_job_compose_operator_path "$HOME" >/dev/null; '
+         'fm_remote_job_operator_tool "$2"', "fm-crew", str(SCRIPT_DIR), name],
+        capture_output=True, text=True, check=False,
+    )
+    found = out.stdout.strip()
+    return found if out.returncode == 0 and found else None
+
+
 def deck_bin() -> str:
     requested = os.environ.get("FM_DECK_BIN") or "deck"
-    found = shutil.which(requested)
+    found = shutil.which(requested) or ("/" not in requested and composed_tool(requested))
     if not found:
         die(f"deck executable is unavailable: {requested} (set FM_DECK_BIN)")
     return found

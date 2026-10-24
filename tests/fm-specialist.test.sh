@@ -578,6 +578,18 @@ fm_test_kill_tree "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null
 "$SPEC" status memory-check >/dev/null || fail "reconcile timed-out job"
 pass "a hanging job cannot reuse an earlier completion"
 
+# A host just back from a reboot hands its processes a bare system PATH; deck
+# installed only in ~/.local/bin must still resolve without FM_DECK_BIN.
+REBOOT_HOME="$TMP_ROOT/reboot-home"
+REBOOT_TOOLS="$TMP_ROOT/reboot-tools"
+mkdir -p "$REBOOT_HOME/.local/bin" "$REBOOT_TOOLS"
+ln -s "$ROOT/tests/assets/deck-crew-stub.py" "$REBOOT_HOME/.local/bin/deck"
+ln -s "$(command -v jq)" "$REBOOT_TOOLS/jq"
+out=$(env -u FM_DECK_BIN HOME="$REBOOT_HOME" PATH="$REBOOT_TOOLS:/usr/bin:/bin" \
+  "$SPEC" job memory-check --brief "After a reboot" --wait 2>&1) || fail "a bare-PATH job could not find deck in ~/.local/bin: $out"
+assert_equals "done" "$(jq -r .last_job.outcome "$MEM_REC")" "the bare-PATH job did not run on the ~/.local/bin deck"
+pass "deck resolves from ~/.local/bin when the caller has a bare system PATH"
+
 before=$(jq -c . "$MEM_REC")
 expect_code 2 "$(FM_DECK_BIN="$TMP_ROOT/missing-deck" "$SPEC" job memory-check --brief x >/dev/null 2>&1; echo $?)" "missing Deck is refused synchronously"
 assert_equals "$before" "$(jq -c . "$MEM_REC")" "launch preflight leaves the specialist unchanged"

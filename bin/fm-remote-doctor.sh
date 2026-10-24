@@ -13,7 +13,9 @@
 # A remote second mate runs on a stream endpoint, so the host needs: the
 # sibling dev.firstmate.remote-job worker that runs normal fm-on commands
 # through the Aqua (darwin, which needs a GUI login session) or Linux
-# job-worker path; stream-tools (curl, jq, python3, and this checkout's stream
+# job-worker path, launched with the explicit worker PATH (a running worker
+# whose own environment PATH cannot resolve deck, as one started from a bare
+# post-reboot PATH, is fixable and --fix restarts it); stream-tools (curl, jq, python3, and this checkout's stream
 # agent); stream-token (the selected home's config/stream-token is readable and
 # non-empty; its value is never printed); stream-hub (the hub that home's
 # config/stream-hub names answers this host with that token on the adapter's
@@ -182,7 +184,12 @@ check_remote_job_worker() {
       record remote-job-worker-loaded "human: the remote job worker cannot be inspected without launchctl and an account uid" \
         "restore launchctl and a readable account uid, then rerun this command"
     elif fm_remote_job_launchagent_loaded "$FM_ROOT" "${HOME:-}" "$UID_NUM"; then
-      record remote-job-worker-loaded "ok: $FM_REMOTE_JOB_LABEL is loaded in gui/$UID_NUM"
+      if fm_remote_job_worker_path_gap "$FM_ROOT" "${HOME:-}"; then
+        record remote-job-worker-loaded "fixable: the loaded $FM_REMOTE_JOB_LABEL runs with a PATH that cannot resolve deck: $FM_REMOTE_JOB_WORKER_PATH" \
+          "rerun this command with --fix to reload the worker with the explicit worker PATH"
+      else
+        record remote-job-worker-loaded "ok: $FM_REMOTE_JOB_LABEL is loaded in gui/$UID_NUM"
+      fi
     elif check_is_ok gui-session; then
       record remote-job-worker-loaded "fixable: $FM_REMOTE_JOB_LABEL is not loaded in gui/$UID_NUM" \
         "rerun this command with --fix to bootstrap the worker"
@@ -195,7 +202,12 @@ check_remote_job_worker() {
     pid=$(cat "${FM_REMOTE_JOB_STATE_ROOT:-${HOME:-}/.firstmate/remote-job}/worker.pid" 2>/dev/null || true)
     if [ "${FM_REMOTE_JOB_ACTIVE:-}" = 1 ] ||
       { remote_job_existing_state && case "$pid" in ''|*[!0-9]*) false ;; *) kill -0 "$pid" 2>/dev/null ;; esac; }; then
-      record remote-job-worker "ok: the Linux remote job worker is running"
+      if fm_remote_job_worker_path_gap "$FM_ROOT" "${HOME:-}"; then
+        record remote-job-worker "fixable: the running remote job worker's PATH cannot resolve deck: $FM_REMOTE_JOB_WORKER_PATH" \
+          "rerun this command with --fix to restart the worker with the explicit worker PATH"
+      else
+        record remote-job-worker "ok: the Linux remote job worker is running"
+      fi
       record remote-job-worker-loaded "skip: Aqua launch agents do not apply on $PLATFORM"
     else
       record remote-job-worker "fixable: the Linux remote job worker is not running" \
