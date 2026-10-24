@@ -1177,12 +1177,8 @@ make_approval_wait() {  # <dir> <key>
 EOF
 }
 
-# Case 10 (primary, 2026-10-19..23): three workers sat on terminal publication
-# refusals their parent explicitly preserved through an approval wait
-# (state/<id>.approval-wait binding the exact open decision key). The keep-alive
-# still demanded the mate unblock a preserved blocked line and merge a green PR
-# held ready-only. An approval wait in force excludes both action demands while
-# the exact key stays bound, without touching the episode records or clocks.
+# bin/fm_worker_keepalive.py's docstring owns approval-wait exclusions,
+# action-episode resets and PR-clock behavior.
 test_approval_wait_excludes_action_demands_while_bound() {
   local dir record
   for scenario in unmerged ci-stuck; do
