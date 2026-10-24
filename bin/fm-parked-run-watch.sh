@@ -2,6 +2,8 @@
 # fm-parked-run-watch.sh - never let a worker's validation run sit parked.
 #
 # Usage: fm-parked-run-watch.sh scan [--help]
+#        fm-parked-run-watch.sh digest   (idle sweep only: admitted candidate
+#        JSONL on stdin, with task control locks held through publication)
 #        fm-parked-run-watch.sh close <worker-id>   (bin/fm-teardown.sh, as a
 #        worker leaves: resolve an escalated episode, then drop its record)
 #
@@ -31,6 +33,20 @@
 # worker leaving never has a blocker raised after its close resolved it. A scan
 # drops a record whose worker has left.
 #
+# Open needs-decision questions use the idle sweep's admission and timing
+# projection (bin/fm_stall_record.py), then this owner's `digest` publication
+# instead of the individual nudge/escalation path. The scheduled idle sweep
+# collects those questions; acknowledged digests suppress individual publication
+# until the parked episode changes or resumes, including after a keyed answer
+# closes the question. bin/fm_stall_record.py owns episode identity.
+# Main-home digests use episode-bearing stall-digest: queue keys; fm-watch.sh
+# dispatches their doorbell, including for handling successors. Under the wake
+# queue lock, fm_wake_commit_stall_digests_through in fm-wake-lib.sh records
+# one delivered episode hash per line in idle-sweep/<id>.stall-delivered before
+# observation acknowledgment or queue removal. Parent-channel appends carry
+# [stall-episode=<hash>] instead. These receipts reconcile interrupted publication
+# without repeating an old question when the next batch changes.
+#
 # Separately, a live worker classified busy by bin/fm-busy-lib.sh gets one
 # check-in wake after FM_WORKER_QUIET_SECS without a status change, whether or
 # not it has a validation run. The quiet stretch is keyed by status-file mtime,
@@ -47,13 +63,14 @@
 #   FM_WORKER_QUIET_SECS seconds a busy worker may go without a status line
 #                        before its mate gets one check-in wake (7200)
 #
-# Exit: 0 after a scan or close; 1 when close could not resolve an escalated
-# blocker (the record is kept, so a retry resolves it); 2 on invalid use.
+# Exit: 0 after a scan, digest or close; 1 when digest publication fails or close
+# could not resolve an escalated blocker (the record is kept for retry);
+# 2 on invalid use.
 set -u
 SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 case "${1:-}" in
-  scan|close) ;;
+  scan|close|digest) ;;
   -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
   *) sed -n '2,40p' "$0" >&2; exit 2 ;;
 esac
@@ -69,6 +86,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-busy-lib.sh
 . "$SCRIPT_DIR/fm-busy-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 
 QUIET=${FM_WORKER_QUIET_SECS:-7200}
 case "$QUIET" in ''|*[!0-9]*) QUIET=7200 ;; esac
@@ -108,6 +127,64 @@ minutes() { printf '%s' "$(( $1 / 60 ))"; }
 
 lock_of() { printf '%s/.%s.parked-run.lock' "$STATE" "$1"; }
 
+if [ "$1" = digest ]; then
+  admitted=$(cat)
+  [ -n "$admitted" ] || exit 0
+  rc=0
+  destination=$(fm_parent_channel_destination "$FM_HOME" "$STATE") || rc=$?
+  case "$rc" in
+    0)
+      if [ -e "$destination" ] || [ -L "$destination" ]; then
+        [ -f "$destination" ] && [ ! -L "$destination" ] || exit 1
+      fi
+      ;;
+    1)
+      fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK" || exit 1
+      trap 'fm_lock_release "$FM_WAKE_QUEUE_LOCK" >/dev/null 2>&1 || true' EXIT
+      fm_wake_commit_stall_digests_through || exit 1
+      ;;
+    *) exit 1 ;;
+  esac
+  candidates=''
+  delivery_args=()
+  [ "$rc" -ne 0 ] || delivery_args=(--delivery-log "$destination")
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    id=$(printf '%s' "$candidate" | jq -r .id)
+    stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+      "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
+      "$(printf '%s' "$candidate" | jq -r .decisions)" --observe --now "$NOW" \
+      "${delivery_args[@]+"${delivery_args[@]}"}") || exit 1
+    [ "$(printf '%s' "$stall" | jq -r .notify)" = true ] || continue
+    candidate=$(printf '%s' "$candidate" | jq -c --argjson stall "$stall" '.stall=$stall') || exit 1
+    candidates="$candidates$candidate"$'\n'
+  done <<< "$admitted"
+  if [ -n "$candidates" ]; then
+    digest=$(printf '%s' "$candidates" | jq -rs '
+      map(.id + ": " + (if .stall.route=="mate-triage" then
+        "pending question (mate triage before captain): " + (.stall.notify_questions | join("; "))
+        else "mate repair: implementation has no attributed validation run; inspect and resume the worker" end)) | join(" | ")') || exit 1
+    batch_key=$(printf '%s' "$candidates" | jq -rs 'map(.stall.episode) | sort | join("-")' | cksum | cut -d' ' -f1)
+    if [ "$rc" -eq 1 ]; then
+      queue_key=$(printf '%s' "$candidates" | jq -rs 'map(.id as $id | .stall.delivery_episodes[] | $id + ":" + .) | sort | "stall-digest:" + join(",")') || exit 1
+      fm_wake_append_locked check "$queue_key" "check: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message." || exit 1
+      fm_wake_commit_stall_digests_through || exit 1
+    else
+      episodes=$(printf '%s' "$candidates" | jq -rs 'map(.stall.delivery_episodes[] | "[stall-episode=" + . + "]") | sort | join(" ")') || exit 1
+      fm_parent_channel_report "$FM_HOME" "$STATE" "needs-decision [key=stall-digest-$batch_key]: stalled tasks digest: $digest. Repair locally where authorized; batch only genuine captain questions into one message. $episodes" || exit 1
+    fi
+  fi
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    id=$(printf '%s' "$candidate" | jq -r .id)
+    python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+      "$STATE/$id.meta" "$(printf '%s' "$candidate" | jq -r .current)" \
+      "$(printf '%s' "$candidate" | jq -r .decisions)" --ack --now "$NOW" \
+      "${delivery_args[@]+"${delivery_args[@]}"}" >/dev/null || true
+  done <<< "$admitted"
+  exit 0
+fi
+
 if [ "$1" = close ]; then
   id=${2:-}
   case "$id" in ''|*[!A-Za-z0-9._-]*) echo "error: close needs a worker id" >&2; exit 2 ;; esac
@@ -136,8 +213,13 @@ for rec in "$STATE"/*.parked-run; do
 done
 
 scan_one() {  # <id>
-  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated reading
+  local id=$1 rec="$STATE/$1.parked-run" verdict run step since nudged escalated reading pending=''
   reading=$(FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-crew-state.sh" --publish "$id" </dev/null 2>/dev/null) || return 0
+  case "$reading" in
+    'state: parked · '*)
+      pending=$(status_open_decisions "$STATE/$id.status" | awk -F '\t' '$2 == "needs-decision"')
+      ;;
+  esac
   case "$reading" in
     'state: parked · '*|'state: working · '*|'state: done · '*|'state: blocked · '*|'state: failed · '*) ;;
     *) return 0 ;;
@@ -168,6 +250,11 @@ scan_one() {  # <id>
       escalate "$id" resolved "worker $id's run $(field "$rec" run) is no longer parked at $(field "$rec" step) (parked since $(field "$rec" since))" || return 0
     fi
     record_write "$id" "$run" "$step" "$NOW" 0 0
+    return 0
+  fi
+  [ -z "$pending" ] || return 0
+  if [ "$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+      "$STATE/$id.meta" "$reading" '' --reported-run --now "$NOW")" = true ]; then
     return 0
   fi
   since=$(field "$rec" since) nudged=$(field "$rec" nudged) escalated=$(field "$rec" escalated)

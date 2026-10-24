@@ -31,7 +31,7 @@ Every captain-facing outcome that leaves durable evidence in the mate home is pu
 | Child ended silently | terminal current state with a silent ledger | the existing inactive-outcome scan in `bin/fm-inactive-reconcile.sh`, which carries the reader's generic state detail as `detail=` and its separately recorded run cause as `error=` |
 | Mate lane failing or recovered | the mate's lane-health episode | [`fm-deck-worker.sh`'s SUPERVISOR HEALTH block](../bin/fm-deck-worker.sh) and [`fm-captain-lane.sh`'s lane-health comment](../bin/fm-captain-lane.sh) |
 | Handed-off orders overdue or cleared | the overdue hand-off delivery journal | [`fm-captain-lane.sh`'s OVERDUE HAND-OFFS comment](../bin/fm-captain-lane.sh) |
-| Child validation parked too long or moving again | the child's parked-run episode | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh); its header owns timing and resolution, including teardown's close |
+| Child stalled or validation moving again | the child's stall projection or parked-run episode | [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh); its header owns digest publication, watchdog escalation and resolution, including teardown's close |
 | Worker PR's CI recovery needs escalation, worker unreachable | the worker's stalled-CI record | [`fm_ci_stall.py`](../bin/fm_ci_stall.py); its docstring owns bounds, retries and hand-off |
 | A stuck worker its mate did not or could not unstick | the worker's keep-alive record | [`fm_worker_keepalive.py`](../bin/fm_worker_keepalive.py); its docstring owns conditions, bounds and escalation |
 | A second mate's question its parent left unanswered | the parent's keep-alive record of that mate's open questions | [`fm_worker_keepalive.py`](../bin/fm_worker_keepalive.py); its docstring owns the bound, the wake and the escalation |
@@ -58,7 +58,7 @@ The [`mate-messaging` skill](../.agents/skills/mate-messaging/SKILL.md) owns whe
 ## What is deliberately not built
 
 - No mirror of the mate's chat: chat can mix outcomes with other conversation, so choosing which sentence is an outcome would itself be model behavior.
-- No generic timeout on every child's open decision or blocker: [parked validation runs](../bin/fm-parked-run-watch.sh), [parent-bound secondmate questions and keep-alive escalations](../bin/fm_worker_keepalive.py) have watchdogs; other child decisions remain a supervision-quality question, separable from channel delivery.
+- No separate decision-timeout publisher: the [idle sweep](../bin/fm-idle-sweep.sh) and [parked-run watchdog](../bin/fm-parked-run-watch.sh) own stalled-task collection and publication; [parent-bound secondmate questions and keep-alive escalations](../bin/fm_worker_keepalive.py) retain their watchdogs.
 - No separate ledger watcher: the lightweight ledger pass stays inside the existing inactive-outcome command on every watcher poll and reuses its receipts and upstream append.
 - No orphan lifecycle: teardown refuses instead of removing an undelivered outcome, the same way it refuses on other unlanded conditions.
 

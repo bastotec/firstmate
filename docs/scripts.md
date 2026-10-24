@@ -21,8 +21,8 @@ The shared no-mistakes gate refusal for fleet lifecycle entrypoints is summarize
 | `fm-update.sh`           | Guarded self-update of firstmate and local or remote secondmate homes, reconciling redundant divergence and classifying every live mate left on the target commit for restart or fallback nudge |
 | `fm-secondmate-restart.sh` | Persist open conversational work, then restart eligible second mates or report the fallback outcome |
 | [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh) | Run guarded mid-session second-mate recovery under the [secondmate lifecycle](stream-backend.md#secondmate-lifecycle) and the script's LANE HEALTH contract |
-| [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh) | Parked-run watchdog and quiet-worker check-ins; header owns timing and escalation |
-| [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Watcher-run guarded cleanup, retries, first-mate handoffs, and second-mate sweep audits; header owns eligibility and repeat suppression |
+| [`fm-parked-run-watch.sh`](../bin/fm-parked-run-watch.sh) | Publish stalled-task digests and run the fallback parked-run watchdog and quiet-worker check-ins |
+| [`fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) | Collect stalled-task episodes and run guarded cleanup, retries, first-mate handoffs, and second-mate sweep audits |
 | [`fm-backlog-normalize.sh`](../bin/fm-backlog-normalize.sh) | Repair checked rows misplaced in In flight or Queued; header owns repair and skip rules |
 | [`fm-ci-infra.sh`](../bin/fm-ci-infra.sh) | Classify a pull request's failed checks as infrastructure or code, with the runner fix; header owns classification criteria |
 | [`fm-ci-stall.sh`](../bin/fm-ci-stall.sh) | Worker PR stalled-CI recovery and event counts; [`fm_ci_stall.py`'s docstring](../bin/fm_ci_stall.py) owns bounds, retries and hand-off |

@@ -24,11 +24,12 @@
 #     the same fail-closed admission applies to record-less endpoints below;
 #   - otherwise the recorded worktree's slot-owner claim is checked first;
 #     a claim naming another task classifies this record as dead, never done
-#     from the claimant's run; all other records take one bin/fm-crew-state.sh
-#     read bounded to 60 seconds; age is the time since the status ledger
-#     (else metadata record) changed;
-#   - working or parked, or done with its PR (recorded, or the last PR link in
-#     its ledger) still open or unreadable: left alone;
+#     from the claimant's run; all other records take an initial
+#     bin/fm-crew-state.sh read bounded to 60 seconds; cleanup age is the time
+#     since the status ledger (else metadata record) changed;
+#   - working or parked: no cleanup or retry; stalled timing is handled below;
+#   - done with its PR (recorded, or the last PR link in its ledger) still open
+#     or unreadable: left alone;
 #   - a done ship with no PR, or a closed-unmerged PR, is never cleaned up
 #     automatically, since a pushed but unmerged branch passes cleanup's checks;
 #     it becomes the clean-it-up-or-keep-it decision below;
@@ -116,6 +117,17 @@
 # ONE `check:` wake keyed
 # idle-sweep-audit:<mate>:<epoch> per episode; a fresh clean summary ends it.
 #
+# Stalled timing and episode dedup are owned by bin/fm_stall_record.py.
+# Admitted non-secondmate tasks are observed on every scan; threshold crossings
+# project class stalled (not a worker ledger state) and queue one batched
+# question/repair digest through this home's mate route. Questions need mate
+# triage before any captain-facing message; implementation stalls carry a repair,
+# not a made-up ask. Approval exclusions, holds and deferrals still exclude all
+# automatic action. Before publication, current state and open questions are
+# re-read under each task's control lock; only a still-matching stalled episode
+# is delivered. Acknowledgement follows the single parent report or main-home
+# doorbell append succeeding; failed publication remains eligible for retry.
+#
 # `summary` prints the last scan's state/idle-sweep.json
 # (schema fm-idle-sweep.v1: generated, generated_epoch, home, workers[] of
 # {id, class, age_seconds, detail, action, hold_id}); hold_id is retained for
@@ -181,6 +193,8 @@ fi
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
 . "$SCRIPT_DIR/fm-backlog-transition-lib.sh"
+# shellcheck source=bin/fm-classify-lib.sh
+. "$SCRIPT_DIR/fm-classify-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 
@@ -258,13 +272,17 @@ approval_wait() {  # <task-id>
 classify() {
   local id=$1 line verb worktree row pr pr_state hold_rc=0
   UNPROVEN=0
+  STALL_CURRENT=
   MERGED_PR_URL=
   AGE=$(record_age "$id")
   DETAIL=
-  approval_wait "$id" && return
+  if approval_wait "$id"; then
+    STALL_CURRENT='state: excluded'
+    return
+  fi
   hold_settled "$id" "idle-$id" || hold_rc=$?
   case "$hold_rc" in
-    0) CLASS=held; return ;;
+    0) STALL_CURRENT='state: excluded'; CLASS=held; return ;;
     1) ;;
     *) CLASS=unknown; DETAIL="captain hold could not be read"; return ;;
   esac
@@ -276,6 +294,7 @@ classify() {
     line=$(fm_run_timed 60 \
       "$SCRIPT_DIR/fm-crew-state.sh" "$id" 2>/dev/null | head -1) || true
   fi
+  STALL_CURRENT=$line
   verb=$(printf '%s' "$line" | sed -n 's/^state: \([a-z]*\).*/\1/p')
   DETAIL=$(printf '%s' "$line" | sed 's/^state: [a-z]* · source: [a-z-]* · //' | cut -c1-200)
   case "$verb" in
@@ -538,6 +557,11 @@ RAISED=0
 NEW=
 HANDOFFS=
 PENDING_RAISED=
+STALL_CANDIDATES=
+STALL_DELIVERY_ARGS=()
+if stall_delivery_log=$(fm_parent_channel_destination "$FM_HOME" "$STATE" 2>/dev/null); then
+  STALL_DELIVERY_ARGS=(--delivery-log "$stall_delivery_log")
+fi
 ROWS=
 add_row() {  # <id> <class> <detail> <action>
   ROWS="$ROWS$(jq -cn --arg id "$1" --arg class "$2" --argjson age "$AGE" \
@@ -551,6 +575,23 @@ while IFS= read -r meta; do
   record=$(cat "$meta" 2>/dev/null) || continue
   stopped_status_size=$(fingerprint "$id")
   classify "$id"
+  TIMED_STALL=0
+  decisions=$(status_open_decisions "$STATE/$id.status")
+  stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
+    "$meta" "$STALL_CURRENT" "$decisions" --observe --now "$NOW" \
+    "${STALL_DELIVERY_ARGS[@]+"${STALL_DELIVERY_ARGS[@]}"}" 2>/dev/null) || stall='{}'
+  if [ "$(printf '%s' "$stall" | jq -r '.state // ""')" = stalled ]; then
+    CLASS=stalled
+    TIMED_STALL=1
+    AGE=$(printf '%s' "$stall" | jq -r .age_seconds)
+    DETAIL="$(printf '%s' "$stall" | jq -r '.phase'): threshold crossed; mate action required"
+    if [ "$(printf '%s' "$stall" | jq -r '.notify')" = true ]; then
+      STALL_CANDIDATES="$STALL_CANDIDATES$(jq -cn --arg id "$id" --arg record "$record" \
+        --arg current "$STALL_CURRENT" --arg decisions "$decisions" \
+        --arg size "$stopped_status_size" --argjson stall "$stall" \
+        '{id:$id,record:$record,current:$current,decisions:$decisions,size:$size,stall:$stall}')"$'\n'
+    fi
+  fi
   action=none
   HOLD_ID=
   case "$CLASS" in
@@ -584,13 +625,17 @@ while IFS= read -r meta; do
       fi
       ;;
     failed|stalled|dead)
-      RAISED=0
-      decide_stopped "$id"
-      case "$STOPPED_ACTION" in
-        retired|retried) action=$STOPPED_ACTION; NEW="$NEW $id" ;;
-        unhandled) action=unhandled ;;
-        asked) if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; else action=unhandled; fi ;;
-      esac
+      # A timing warning is not evidence the worker stopped and grants no
+      # relaunch or retirement authority. Existing stopped-worker policy stays.
+      if [ "$TIMED_STALL" -eq 0 ]; then
+        RAISED=0
+        decide_stopped "$id"
+        case "$STOPPED_ACTION" in
+          retired|retried) action=$STOPPED_ACTION; NEW="$NEW $id" ;;
+          unhandled) action=unhandled ;;
+          asked) if [ "$RAISED" = 1 ]; then action=asked; NEW="$NEW $id"; else action=unhandled; fi ;;
+        esac
+      fi
       ;;
   esac
   add_row "$id" "$CLASS" "$DETAIL" "$action"
@@ -777,6 +822,42 @@ if [ -n "$NEW" ]; then
       log "could not queue the idle sweep wake for:$NEW"
     fi
   fi
+fi
+# Batch stalled episodes separately from retire/retry handoffs. Hold the same
+# per-task admission lock through publication, and never turn age into authority.
+STALL_DELIVER=
+while IFS= read -r candidate; do
+  [ -n "$candidate" ] || continue
+  id=$(printf '%s' "$candidate" | jq -r .id)
+  handoff_lock=".control-$id.lock"
+  fm_lock_try_acquire "$STATE/$handoff_lock" || continue
+  hold_rc=0
+  hold_settled "$id" "idle-$id" || hold_rc=$?
+  if approval_wait "$id" || [ "$hold_rc" -ne 1 ] \
+    || [ "$(cat "$STATE/$id.meta" 2>/dev/null)" != "$(printf '%s' "$candidate" | jq -r .record)" ] \
+    || [ "$(fingerprint "$id")" != "$(printf '%s' "$candidate" | jq -r .size)" ]; then
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+    continue
+  fi
+  classify "$id"
+  decisions=$(status_open_decisions "$STATE/$id.status")
+  stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
+    "$STATE/$id.meta" "$STALL_CURRENT" "$decisions" --observe --now "$(date +%s)" \
+    "${STALL_DELIVERY_ARGS[@]+"${STALL_DELIVERY_ARGS[@]}"}" 2>/dev/null) || stall='{}'
+  if [ "$(printf '%s' "$stall" | jq -r '.notify // false')" != true ] \
+    || [ "$(printf '%s' "$stall" | jq -r .episode)" != "$(printf '%s' "$candidate" | jq -r .stall.episode)" ]; then
+    fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true
+    continue
+  fi
+  candidate=$(jq -cn --arg id "$id" --arg current "$STALL_CURRENT" \
+    --arg decisions "$decisions" --argjson stall "$stall" \
+    '{id:$id,current:$current,decisions:$decisions,stall:$stall}')
+  HANDOFF_LOCKS="$HANDOFF_LOCKS $handoff_lock"
+  STALL_DELIVER="$STALL_DELIVER$candidate"$'\n'
+done <<< "$STALL_CANDIDATES"
+if [ -n "$STALL_DELIVER" ]; then
+  printf '%s' "$STALL_DELIVER" | "$SCRIPT_DIR/fm-parked-run-watch.sh" digest \
+    || log "could not deliver the stalled tasks digest"
 fi
 release_handoff_locks
 
