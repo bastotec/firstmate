@@ -14,9 +14,9 @@
 # at data/<id>/preserved-result/. The original allocation is leased IN PLACE,
 # under Treehouse's state flock, before any endpoint stop. No git write, reset,
 # return, branch deletion, source deletion, or worktree relocation occurs.
-# fm_preserved_result.py owns the Treehouse v2.3 lease schema integration.
-# state/<id>.preserved-result blocks ordinary teardown and same-id reuse even
-# after a partial failure; there is deliberately no automatic release path.
+# fm_preserved_result.py owns the version-pinned Treehouse lease schema integration.
+# state/<id>.preserved-result blocks ordinary task/home teardown and same-id
+# reuse even after a partial failure; there is no automatic release path.
 # The slot claim survives. Explicit operator discard remains a separate act.
 #
 # Only the exact recorded stream endpoint with a confirmed kill can complete.
@@ -24,6 +24,12 @@
 # The original kind and PR fields are never rewritten. Backlog completion links
 # the saved knowledge result, not a PR or local-main claim. Open captain calls
 # or conditional waits refuse; resolve those through their existing owner first.
+# Validation ownership must be readable through no-mistakes; an active run
+# attributed by fm-nm-run-lib.sh refuses, including a pipeline-owned head absent
+# from the original worktree after a rebase or fix round.
+# Public commitments retain fm-public-followup.sh's guard-work gate, resolving
+# delegated work through fm-public-followup-lib.sh's primary-home binding.
+# An unresolved primary home refuses before any endpoint or allocation change.
 # The existing fused backlog-close journal owns crash replay after stop proof.
 # Retry the SAME acceptance after a failure; it converges under project, control
 # and metadata locks, never broadens into cleanup. Receipts retain stop evidence

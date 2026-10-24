@@ -80,7 +80,7 @@ The watcher independently runs [`bin/fm-idle-sweep.sh`](../../../bin/fm-idle-swe
 Handle its handoffs under the stopped-worker rule below, never through a captain hold.
 
 Use [`bin/fm-pr-lib.sh`'s completion-claim gate](../../../bin/fm-pr-lib.sh) to judge a worker with a recorded PR, regardless of delivery mode.
-Without a recorded PR, a worker is finished when its branch landed, or when it is a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
+Without a recorded PR, ordinary cleanup requires a landed branch, or a scout whose report exists and whose `captain-hold-lifecycle` completion gate passes.
 A scout kept alive to host the captain's Lavish loop, or any worker whose work is still under way, is not finished.
 
 For each finished worker:
@@ -93,7 +93,7 @@ For each finished worker:
 
 Deciding a stopped or unproven worker is yours, never the captain's (his rule of 2026-10-18: "i dont want to make those decisions"):
 - Retire it when its work is done, merged, superseded or abandoned: use step 1's guarded cleanup and preservation path, respecting its documented limits.
-  For an explicitly accepted finite diagnosis or superseded ship whose original dirty allocation must remain, use [`fm-retire-endpoint.sh`'s accepted-result path](../../../bin/fm-preserved-result-lib.sh); its header owns acceptance evidence, retained-allocation safeguards and restart, separately from landed-work teardown.
+  For an explicitly accepted finite diagnosis or superseded ship whose original dirty allocation must remain, use [`fm-retire-endpoint.sh`'s accepted-result path](../../../bin/fm-preserved-result-lib.sh); its header owns acceptance evidence, retained-allocation safeguards and retry, separately from landed-work teardown.
 - Retry it when the work is still wanted and unfinished - its task is open, no PR of it landed, and nothing superseded it: use [`fm-control.sh`'s relaunch path](../../../bin/fm-control.sh) with a note that tells the worker why it is restarting and what to continue.
 - If you really cannot tell, ask your own first mate (in a second mate home, one `needs-decision` line on the parent channel); the captain sees at most a one-line FYI in your chat or notes, never a card.
 [`bin/fm-idle-sweep.sh`'s header](../../../bin/fm-idle-sweep.sh) owns the automatic version of this rule.

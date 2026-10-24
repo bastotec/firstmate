@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Retire the durable records of a task whose endpoint has no backend-confirmed
-# stop, on an operator's explicit say-so or, with --finished, on the owning
-# mate's proof that the work is finished.
+# Retire task endpoints and their durable records.
+# Operator and --finished modes handle endpoints with no backend-confirmed
+# stop, on an operator's explicit say-so or the owning mate's proof that the
+# work is finished; --accepted-result is a separate path described below.
 #
 # Retirement requires a named record and an explicit basis, never just a
 # missing endpoint. Cleanup on its own never retires such a record -
@@ -55,7 +56,8 @@
 # header owns that contract.
 # docs/stream-backend.md owns the operator-facing retirement contract.
 #
-# Retiring a record is RECORD bookkeeping and nothing else. Cleanup runs first,
+# In operator and --finished modes, retiring a record is RECORD bookkeeping
+# and nothing else. Cleanup runs first,
 # because when its own gates allow it, it does the whole job properly. In
 # operator mode, two of its refusals are proceeded past: the work-protection
 # gate, which runs before

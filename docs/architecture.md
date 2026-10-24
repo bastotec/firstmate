@@ -192,7 +192,7 @@ Independently, `fm-spawn.sh`, `fm-send.sh`, `fm-control.sh`, `fm-teardown.sh`, a
 The [Deck chat host](../bin/fm-deck-chat.sh) and [primary steer CLI](../bin/fm-primary-steer.sh) apply the same boundary to their mutating entrypoints; the steer CLI's status and delivery reads remain available.
 [`fm_crew.py`](../bin/fm_crew.py) applies that boundary to specialist and group lifecycle mutations, including specialist status, list, history, and result because they reconcile interrupted jobs; group status and list and the [fleet specialist-row reader](../bin/fm-fleet-snapshot.sh) remain read-only.
 [`fm-specialist.sh`](../bin/fm-specialist.sh) also refuses gate agents before routing to another mate's home, so remote execution cannot bypass the local authority boundary.
-[`fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) applies the same refusal directly to orphan closure before locking, assertion logging, or killing; its read-only orphan listing remains available, and record retirement still delegates cleanup to the guarded teardown entrypoint.
+[`fm-retire-endpoint.sh`](../bin/fm-retire-endpoint.sh) applies the same refusal directly to orphan closure and accepted-result retirement before locking, assertion logging, or killing; its read-only orphan listing remains available, and ordinary record retirement still delegates cleanup to the guarded teardown entrypoint.
 A normal primary checkout or crewmate worktree has neither signal and is unaffected.
 The helper's header owns the exact signal detection, relocated-home limitation, test-harness bypass, and relationship to no-mistakes' HEAD-continuity guard.
 
