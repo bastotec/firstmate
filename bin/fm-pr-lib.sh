@@ -92,23 +92,15 @@ FM_PR_POLL_RETIREMENT_REJECTED=
 
 # The one hold-label disposition shared by every consumer: prints the first
 # label that holds a PR ready-only (an explicit do-not-merge instruction),
-# empty when none. Accepts either a PR view's labels field (nodes.name, the
-# shape gh/GraphQL returns) or a comma-separated label list, so a caller that
-# already reduced its view to CSV labels (fm-autoland.sh) and one that holds
-# the whole view (fm_worker_keepalive.py) share one rule. Anything jq cannot
-# read as JSON is treated as that CSV list.
+# empty when none.
 fm_pr_hold_label() {  # <pr-view-or-labels>
   local input=$1 names=''
   if [ -n "$input" ]; then
-    names=$(printf '%s' "$input" | jq -r '
-      if type == "object"
-      then ([(if (.labels | type) == "object" then .labels.nodes else .labels end // [])[]?.name] | join(","))
-      elif type == "string" then .
-      else empty end' 2>/dev/null)
+    names=$(printf '%s' "$input" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null)
   fi
   printf '%s\n' "${names:-$input}" \
     | tr ',' '\n' \
-    | grep -iE '^(do[- ]?not[- ]?merge|hold|on[- ]?hold|wip|blocked|security|destructive|breaking([- ]change)?)$' \
+    | grep -iE '^(do[- ]?not[- ]?merge|hold|on[- ]hold|wip|blocked|security|destructive|breaking([- ]change)?)$' \
     | head -n 1
 }
 

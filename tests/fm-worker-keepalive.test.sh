@@ -1220,23 +1220,30 @@ test_approval_wait_excludes_action_demands_while_bound() {
 # is fm-approval-wait.sh release, not a steer. A blocked line on any other key
 # still wakes the mate.
 test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
-  local dir record
-  dir=$(make_home approval-wait-blocked ship)
-  record="$dir/home/state/keepalive/w1.json"
-  make_approval_wait "$dir" publication-recovery-01M5
-  status "$dir" "$T0" 'blocked [key=publication-recovery-01M5]: terminal publication refusal preserved; awaiting the tooling owner release'
-  scan "$dir" $((T0 + 1200))
-  scan "$dir" $((T0 + 4000))
-  assert_equals 0 "$(wake_count "$dir")" "a preserved blocked line bound to the approval wait woke the mate"
-  assert_equals 0 "$(notice_count "$dir" 'worker w1')" "a preserved blocked line bound to the approval wait reached the captain"
-  jq -e '(.cond == null) or (.cond == "blocked" and (.woke // 0) == 0 and (.escalated | not))' "$record" >/dev/null \
-    || fail "the preserved blocked line opened an episode that demanded action"
-  rm "$dir/home/state/w1.approval-wait"
-  scan "$dir" $((T0 + 4001))
-  assert_equals 0 "$(wake_count "$dir")" "releasing the wait woke the mate before its own stuck bound"
-  scan "$dir" $((T0 + 4001 + 1200))
-  assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the blocked demand"
-  pass "a blocked line on the approval wait's exact key is preserved, not a mate blocker"
+  local dir record line i=0
+  for line in \
+    'blocked [key=publication-recovery-01M5]: terminal publication refusal preserved' \
+    'blocked: [key=publication-recovery-01M5] awaiting approval' \
+    'blocked corr=abc123 [key=publication-recovery-01M5]: awaiting approval' \
+    'blocked [stage=publication] [key=publication-recovery-01M5]: awaiting approval'; do
+    i=$((i + 1))
+    dir=$(make_home "approval-wait-blocked-$i" ship)
+    record="$dir/home/state/keepalive/w1.json"
+    make_approval_wait "$dir" publication-recovery-01M5
+    status "$dir" "$T0" "$line"
+    scan "$dir" $((T0 + 1200))
+    scan "$dir" $((T0 + 4000))
+    assert_equals 0 "$(wake_count "$dir")" "a preserved blocked line bound to the approval wait woke the mate: $line"
+    assert_equals 0 "$(notice_count "$dir" 'worker w1')" "a preserved blocked line bound to the approval wait reached the captain"
+    jq -e '(.cond == null) or (.cond == "blocked" and (.woke // 0) == 0 and (.escalated | not))' "$record" >/dev/null \
+      || fail "the preserved blocked line opened an episode that demanded action"
+    rm "$dir/home/state/w1.approval-wait"
+    scan "$dir" $((T0 + 4001))
+    assert_equals 0 "$(wake_count "$dir")" "releasing the wait woke the mate before its own stuck bound"
+    scan "$dir" $((T0 + 4001 + 1200))
+    assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the blocked demand"
+  done
+  pass "supported blocked status formats preserve exact waits and restore demands on release"
 }
 
 # A green PR whose forge state carries a hold label (fm-pr-lib's hold-label
@@ -1252,7 +1259,7 @@ test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand() {
   python3 - "$dir/pr.json" <<'PY2'
 import json, sys
 v = json.load(open(sys.argv[1]))
-v["labels"] = {"nodes": [{"name": "do-not-merge"}]}
+v["labels"] = [{"name": "do-not-merge"}]
 json.dump(v, open(sys.argv[1], "w"))
 PY2
   FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
@@ -1262,7 +1269,7 @@ PY2
   python3 - "$dir/pr.json" <<'PY2'
 import json, sys
 v = json.load(open(sys.argv[1]))
-v["labels"] = {"nodes": []}
+v["labels"] = []
 json.dump(v, open(sys.argv[1], "w"))
 PY2
   FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5401))
@@ -1270,6 +1277,88 @@ PY2
   pass "a hold-labelled green PR is ready-only and merges once the label is gone"
 }
 
+test_exact_approval_wait_survives_endpoint_loss() {
+  local dir scenario
+  for scenario in no-pr green-pr; do
+    dir=$(make_home "dead-approval-$scenario" ship)
+    make_approval_wait "$dir" publication
+    status "$dir" "$T0" 'blocked: [key=publication] awaiting approval'
+    if [ "$scenario" = green-pr ]; then
+      printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
+      make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+    fi
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+    echo dead > "$dir/liveness"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1200))
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5000))
+    assert_equals 0 "$(wake_count "$dir")" "endpoint loss released an exact approval wait"
+    assert_equals 0 "$(notice_count "$dir" 'worker w1')" "endpoint loss escalated an exact approval wait"
+    status "$dir" $((T0 + 5001)) 'blocked [key=other]: unrelated failure'
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5001))
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5301))
+    assert_equals 1 "$(wake_count "$dir")" "an unrelated dead worker was excluded by the approval wait"
+    assert_contains "$(wakes "$dir")" 'no live agent' "an unrelated dead worker lost recovery escalation"
+  done
+  pass "exact approval waits survive endpoint loss without excluding unrelated dead workers"
+}
+
+test_unreadable_approval_wait_keeps_pr_actions_excluded() {
+  local dir scenario kind record mature
+  for scenario in unmerged ci-stuck; do
+    for kind in corrupt unreadable broken-symlink directory; do
+      dir=$(make_home "approval-$scenario-$kind" ship)
+      record="$dir/home/state/w1.approval-wait"
+      case "$kind" in
+        corrupt) printf 'not json\n' > "$record" ;;
+        unreadable) make_approval_wait "$dir" publication; chmod 000 "$record" ;;
+        broken-symlink) ln -s "$dir/missing" "$record" ;;
+        directory) mkdir "$record" ;;
+      esac
+      printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
+      if [ "$scenario" = unmerged ]; then
+        status "$dir" "$T0" 'done: PR ready'
+        make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+        mature=$((T0 + 1800))
+      else
+        printf 'run=01M5\nstep=ci\nverdict=\n' > "$dir/home/state/w1.crew-state"
+        status "$dir" "$T0" 'working: validation reached CI'
+        make_pr "$dir" OPEN CONFLICTING DIRTY FAILURE
+        mature=$((T0 + 7200))
+      fi
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$mature"
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3600))
+      assert_equals 0 "$(wake_count "$dir")" "a $kind approval record allowed a $scenario action demand"
+      jq -e --argjson first "$T0" '.cond == null and (.track.green // .track.ci) == $first' \
+        "$dir/home/state/keepalive/w1.json" >/dev/null || fail "the excluded PR clock changed"
+      if [ "$kind" = directory ]; then rmdir "$record"; else rm "$record"; fi
+      FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3601))
+      assert_equals 1 "$(wake_count "$dir")" "reconciling a $kind record did not restore the $scenario demand"
+    done
+  done
+  pass "undecodable approval records exclude PR actions until reconciled"
+}
+
+test_shared_hold_label_inputs() {
+  local input expected actual
+  while IFS=$'\t' read -r input expected; do
+    actual=$(bash -c '. "$1/bin/fm-pr-lib.sh"; fm_pr_hold_label "$2"' _ "$ROOT" "$input")
+    assert_equals "${expected:-}" "$actual" "unexpected hold-label disposition for $input"
+  done <<'EOF'
+bug,on-hold	on-hold
+on hold	on hold
+onhold
+"hold"
+{"labels":{"nodes":[{"name":"hold"}]}}
+{"labels":[{"name":"bug"},{"name":"hold"}]}	hold
+{"labels":[]}
+EOF
+  pass "shared hold labels accept CSV and gh-view arrays without extra aliases or input modes"
+}
+
 test_approval_wait_excludes_action_demands_while_bound
 test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand
+test_exact_approval_wait_survives_endpoint_loss
+test_unreadable_approval_wait_keeps_pr_actions_excluded
+test_shared_hold_label_inputs

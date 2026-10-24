@@ -436,25 +436,22 @@ def pr_hold_label(view: dict) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-def approval_wait(state: Path, wid: str) -> str:
-    """The task's bound approval-wait decision key, or "" when none is in force.
+def approval_wait(state: Path, wid: str) -> str | None:
+    """The task's bound approval-wait decision key, or None when none is in force.
 
     Reuses fm-approval-wait.sh's admission predicate verbatim: any existing
     record object (fm-approval-wait.v1) is an exclusion in force, and only its
     explicit release clears it. Reading creates nothing and holds no lock.
     """
-    r = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_admit "$2" "$3" '
-             '|| jq -r ".decision_key // \\"\\"" "$2/$3.approval-wait" 2>/dev/null',
+    r = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_admit "$2" "$3" && exit 0; '
+             'jq -r ".decision_key // \\"\\"" "$2/$3.approval-wait" 2>/dev/null; exit 1',
              str(SCRIPT_DIR), str(state), wid)
-    return r.stdout.strip() if r.returncode == 0 else ""
+    return None if r.returncode == 0 else r.stdout.strip()
 
 
 def decision_key(line: str) -> str:
-    """The decision key a status line carries in its [key=...] group, or ""."""
-    m = STATUS_RE.match(line)
-    key = (m.group(2) if m else "") or ""
-    keys = re.findall(r"key=([A-Za-z0-9._-]+)", key)
-    return keys[-1] if keys else ""
+    r = bash('. "$1/fm-classify-lib.sh"; _fm_decision_key "$2"', str(SCRIPT_DIR), line)
+    return r.stdout.strip() if r.returncode == 0 else ""
 
 
 def minutes(secs: int) -> int:
@@ -557,6 +554,12 @@ class Scan:
         """(cond, since, verb, text) for this worker now; cond None when healthy."""
         status = self.state / ("%s.status" % wid)
         verb, text = last_status(status)
+        self.wait_bound.discard(wid)
+        if verb in ("blocked", "failed"):
+            key = self.approval_key(wid)
+            if key and decision_key(last_line(status)) == key:
+                self.wait_bound.add(wid)
+                return "blocked", NOW, verb, text
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
@@ -568,13 +571,6 @@ class Scan:
             return "dead", NOW, verb or "", text
         opened = min(NOW, mtime(status) or NOW)
         if verb in ("blocked", "failed"):
-            key = decision_key(last_line(status))
-            if key and key == self.approval_key(wid):
-                # the blocked line carries the approval wait's own decision key:
-                # that exact preserved wait, not a mate-decidable blocker
-                self.wait_bound.add(wid)
-            else:
-                self.wait_bound.discard(wid)
             return "blocked", opened, verb, text
         if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
             # waiting on CI or a merge has its own bounds above; it is not a stall
@@ -610,7 +606,7 @@ class Scan:
             track.pop("green", None)
         else:
             track.setdefault("green", NOW)
-        excluded = self.approval_key(m.get("_id", ""))
+        excluded = self.approval_key(m.get("_id", "")) is not None
         if excluded and green and NOW - track["green"] >= PR_GREEN:
             # an approval wait in force preserves the PR and its clock; the
             # release path is fm-approval-wait.sh release, not a merge demand
@@ -625,12 +621,10 @@ class Scan:
             return "ci-stuck", track["ci"], "ci", "%s, %s" % (url, pr_summary(view))
         return None
 
-    def approval_key(self, wid: str) -> str:
-        cached = self._approval_keys.get(wid)
-        if cached is None:
-            cached = approval_wait(self.state, wid)
-            self._approval_keys[wid] = cached
-        return cached
+    def approval_key(self, wid: str) -> str | None:
+        if wid not in self._approval_keys:
+            self._approval_keys[wid] = approval_wait(self.state, wid)
+        return self._approval_keys[wid]
 
     def one(self, wid: str, m: dict) -> None:
         rec_path = self.dir / ("%s.json" % wid)
