@@ -32,8 +32,11 @@ Episode identity includes metadata contents, phase, folded pending questions and
 for decisions, the attributed run, step and current gate's parked_since.
 First publication of matching gate timing enriches the existing parked episode;
 a changed already-known gate timestamp identifies a recreated gate.
-A proven phase transition or new question starts another episode; removing only
-some pending questions preserves the surviving questions' wait and acknowledgment.
+Decision identity includes both the folded key and summary, so identical wording
+under different keys remains independently eligible. Each continuously open
+question retains its own wait start and delivery receipt across additions or
+removals of other questions; digests include only overdue, undelivered questions.
+A proven phase transition starts another episode.
 The first question after a parked-only observation recovers entry evidence;
 a new or reopened question after an observed decision in the same parked episode
 starts its own observation clock. Current gate timing takes precedence over a
@@ -41,6 +44,9 @@ legacy parked-run clock; legacy delivery is imported only when consistent with
 the current gate and saved observation evidence.
 --ack records delivery only for the currently matching stalled episode and retains
 parked-episode delivery identity when its question closes before the run resumes.
+Main-home receipts and, with --delivery-log, successful parent-publication receipts
+are reconciled before observation can discard a closed question's episode, so
+publication interrupted before --ack still suppresses the parked-run fallback.
 Atomic owner-only writes refuse symlinks. No worker ledger, hold, gate or approval
 record is changed.
 The digest routes questions for mate triage, never infers captain authority from
