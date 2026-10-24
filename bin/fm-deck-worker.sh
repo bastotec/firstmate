@@ -394,20 +394,16 @@ mkfifo "$TURN_PIPE" || exit 1
 # sequence publication, and the secondmate render pipeline rings it at turn end.
 # Opening the FIFO read-write avoids waiting for a writer to attach; watcher,
 # captain-lane, Deck, and stdin-reader children must close the inherited fd 7.
-# If the doorbell cannot be opened, retain the sleep 0.1 fallback below.
 # tests/fm-deck-harness.test.sh::test_idle_host_waits_without_forking_and_wakes_on_input
 # covers idle process sampling and prompt /quit delivery.
 NAP_FIFO="$WORK/nap.doorbell"
 NAP_SECS=${FM_DECK_IDLE_POLL_SECS:-1}
-case "$NAP_SECS" in ''|*[!0-9]*|0) NAP_SECS=1 ;; esac
-NAP_FD=''
-if mkfifo "$NAP_FIFO" 2>/dev/null && exec 7<>"$NAP_FIFO"; then NAP_FD=7; fi
-nap() {  # wait up to NAP_SECS, or until the doorbell rings
-  if [ -n "$NAP_FD" ]; then
-    read -r -t "$NAP_SECS" -n 1 -u "$NAP_FD" _ 2>/dev/null || true
-  else
-    sleep 0.1
-  fi
+case "$NAP_SECS" in ''|*[!0-9]*) NAP_SECS=1 ;; esac
+[ "$NAP_SECS" -gt 0 ] 2>/dev/null || NAP_SECS=1
+mkfifo "$NAP_FIFO" || exit 1
+exec 7<>"$NAP_FIFO" || exit 1
+nap() {
+  read -r -t "$NAP_SECS" -n 1 -u 7 _ 2>/dev/null || true
 }
 TTY_SETTINGS=''
 [ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
@@ -1164,7 +1160,7 @@ sys.stdout.write(recalled)
       write_status() {
         printf '%s %s\n' "$tee_rc" "$jq_rc" > "$TURN_STATUS.tmp" \
           && mv -f "$TURN_STATUS.tmp" "$TURN_STATUS"
-        [ -z "$NAP_FD" ] || printf x >&7 2>/dev/null || true
+        printf x >&7 2>/dev/null || true
       }
       trap write_status EXIT
       tee "$EVENTS" < "$TURN_PIPE" | jq --unbuffered -rj "$RENDER" 2>/dev/null
