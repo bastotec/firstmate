@@ -147,6 +147,49 @@ run_worker() {
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
 
+# 2026-10-24: each idle host polled for input with `sleep 0.1`, ~10 forks a
+# second per worker; with ~25 workers that was most of a loaded Mac's system
+# time. An idle host now waits on a doorbell without starting processes, and
+# typed input still reaches it at once.
+test_idle_host_waits_without_forking_and_wakes_on_input() {
+  local dir="$TMP_ROOT/idle-no-fork" gen host i sleeps=0 start elapsed
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state"
+  mkfifo "$dir/stdin"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  FM_TEST_STATUS="$dir/state/t1.status" FM_TEST_BUSY_EVENT="$BUSY_EVENT" \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
+      --deck "$dir/deck" --model codex/gpt-5.6-luna -- write-status < "$dir/stdin" > "$dir/pane.out" 2>&1 &
+  host=$!
+  exec 8>"$dir/stdin"
+  for i in $(seq 1 100); do
+    grep -q 'turn finished' "$dir/pane.out" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'turn finished' "$dir/pane.out" || { exec 8>&-; kill "$host" 2>/dev/null; fail "setup: the first turn did not finish: $(cat "$dir/pane.out")"; }
+  sleep 0.5
+  for i in $(seq 1 30); do
+    if ps -Ao ppid=,comm= | awk -v p="$host" '$1 == p && $2 ~ /sleep$/ {found=1} END {exit !found}'; then
+      sleeps=$((sleeps + 1))
+    fi
+    sleep 0.1
+  done
+  start=$(python3 -c 'import time; print(time.time())')
+  printf '/quit\n' >&8
+  for i in $(seq 1 50); do
+    kill -0 "$host" 2>/dev/null || break
+    sleep 0.05
+  done
+  elapsed=$(python3 -c "import time; print(round(time.time() - $start, 2))")
+  exec 8>&-
+  if kill -0 "$host" 2>/dev/null; then kill "$host" 2>/dev/null; fail "the idle host did not exit on /quit"; fi
+  wait "$host" 2>/dev/null || true
+  [ "$sleeps" -le 3 ] || fail "an idle host kept forking sleep: seen in $sleeps of 30 samples"
+  python3 -c "import sys; sys.exit(0 if $elapsed < 0.9 else 1)" \
+    || fail "typed input waited for the poll instead of the doorbell (${elapsed}s)"
+  pass "fm-deck-worker: an idle host waits without forking and wakes on typed input"
+}
+
 test_worker_does_not_inherit_async_ring() {
   local dir="$TMP_ROOT/ring-env"
   [ "${FM_SEND_RING_ASYNC+x}" != x ] || fail "the test library retained the supervisor's async ring setting"
@@ -4372,4 +4415,5 @@ test_pipeline_input_wins_during_state_probe
 test_pipeline_deadline_expiring_during_probe_does_not_wake
 test_pipeline_clear_and_doorbell_preempt_polling
 test_pipeline_disabled_scout_and_already_parked_do_not_wake
+test_idle_host_waits_without_forking_and_wakes_on_input
 echo "fm-deck-harness: all cases passed"
