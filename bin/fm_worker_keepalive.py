@@ -11,6 +11,17 @@ watches its own. Overlapping scans of one home exit zero quietly under a
 non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
+  approval-wait the last blocked:, failed:, needs-decision: or paused: line
+               carries the task's exact nonempty approval-wait decision key,
+               parsed by bin/fm-classify-lib.sh. This preserved approval/publication
+               wait takes precedence over backlog delivery, PR demands and
+               liveness recovery, including when the endpoint disappears.
+               Entering it resolves any outstanding keep-alive escalation and
+               resets the action-episode markers without changing the worker or
+               approval record. Its stuck bound refreshes each scan, so release
+               starts a fresh recovery interval. PR clocks are retained without
+               PR observation while this exact-key match is active.
+               bin/fm-approval-wait.sh owns the binding and explicit release;
   undelivered  the worker's backlog item is done (accepted, read once per
                scan through bin/fm-tasks-axi.sh list --state done), or its last
                status line is done: with no recorded pr=, and the worker is
@@ -36,16 +47,16 @@ Each scan reads one condition per worker, first match wins:
                The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
                or closes it if superseded. Read live through `gh pr view`
                (FM_KEEPALIVE_PR stands in for it in tests);
-               Explicit exclusions preserve the PR and its clocks without
-               demanding action: an approval wait in force on the task
-               (state/<id>.approval-wait; bin/fm-approval-wait.sh's admission
+               Explicit PR-action exclusions: an approval wait in force on the
+               task (state/<id>.approval-wait; bin/fm-approval-wait.sh's admission
                predicate is the authority) excludes unmerged and ci-stuck for
-               as long as the record exists, and a hold label on the PR
-               (bin/fm-pr-lib.sh's fm_pr_hold_label owns the label set) is an
-               explicit ready-only instruction that leaves the PR to auto-land's
-               own held-PR reporting. Both clocks keep running from their first
-               observation, so releasing the wait or removing the label restores
-               the ordinary demand without restarting it;
+               as long as any record object exists, even corrupt or a broken
+               symlink. A hold label on the PR (bin/fm-pr-lib.sh's fm_pr_hold_label
+               owns the label set) also excludes both demands as an explicit
+               ready-only instruction, leaving held-PR reporting to auto-land.
+               On scans reaching PR observation, these exclusions do not restart
+               either clock: removing the exclusion restores ordinary demands
+               subject to the clock maintenance below;
   ci-stuck     scans have observed the worker's validation run in its CI step
                (state/<id>.crew-state step=ci) for FM_KEEPALIVE_CI_STEP_SECS
                (7200), with its PR still open and not meeting the PR-state and
@@ -59,13 +70,7 @@ Each scan reads one condition per worker, first match wins:
                still resets when a scan observes a step other than ci.
                The green clock also resets on observed ineligibility;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
-  blocked      the last status line is blocked: or failed: - the mate must act,
-               except a blocked: line carrying the task's own approval-wait
-               decision key (state/<id>.approval-wait), which is that exact
-               preserved approval/publication wait rather than a blocker to
-               unblock: bin/fm-approval-wait.sh release owns its release, no
-               action is demanded while the key stays bound, and the mate's
-               stuck bound restarts from the release scan;
+  blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
                suppresses held and no-progress detection until expiry, but
                never the higher-priority conditions above;
@@ -382,7 +387,7 @@ def result_trail(state: Path) -> str:
 
 
 def pr_view(url: str):
-    """Live state of one PR as gh reports it (state, draft, mergeability, checks), or None."""
+    """Live PR state, draft flag, mergeability, labels and checks from gh, or None."""
     cmd = [os.environ["FM_KEEPALIVE_PR"], url] if os.environ.get("FM_KEEPALIVE_PR") else [
         "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,labels,statusCheckRollup"]
     try:
@@ -437,11 +442,10 @@ def pr_hold_label(view: dict) -> str:
 
 
 def approval_wait(state: Path, wid: str) -> str | None:
-    """The task's bound approval-wait decision key, or None when none is in force.
+    """None if admitted, otherwise the bound key or "" if the key is unreadable.
 
-    Reuses fm-approval-wait.sh's admission predicate verbatim: any existing
-    record object (fm-approval-wait.v1) is an exclusion in force, and only its
-    explicit release clears it. Reading creates nothing and holds no lock.
+    bin/fm-approval-wait.sh owns admission; an empty key still excludes PR actions.
+    Reading creates nothing and holds no lock.
     """
     r = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_admit "$2" "$3" && exit 0; '
              'jq -r ".decision_key // \\"\\"" "$2/$3.approval-wait" 2>/dev/null; exit 1',
