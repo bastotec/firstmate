@@ -203,6 +203,9 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_DECK_IDLE_POLL_SECS  idle and running-turn fallback poll interval
+#                           (integer seconds; default 1; empty, 0, or
+#                           nonnumeric values use the default)
 #   FM_DECK_CAPTAIN_RETRY_SECS  initial delay after a recoverably failed idle
 #                           direct-source wake (seconds; default 30; empty or
 #                           nonnumeric values use the default; 0 allows an
@@ -386,11 +389,14 @@ WATCH_PUBLICATION_SEQ=0
 TURN_STATUS="$WORK/turn-pipeline.status"
 TURN_PIPE="$WORK/turn-events.pipe"
 mkfifo "$TURN_PIPE" || exit 1
-# A doorbell the idle and turn loops block on with bash's own read -t, so a wait
-# starts no process: a `sleep 0.1` poll in each of ~25 hosts was ~250 forks a
-# second and most of a loaded Mac's system time (2026-10-24). The stdin reader
-# rings it on input and the turn's render pipeline when the turn ends; anything
-# else is picked up on the next poll, FM_DECK_IDLE_POLL_SECS (1) later.
+# Keep waits fork-free with bash's builtin read -t; integer timeouts also work
+# on stock macOS bash 3.2. The stdin reader rings fd 7 on input and captain
+# sequence publication, and the secondmate render pipeline rings it at turn end.
+# Opening the FIFO read-write avoids waiting for a writer to attach; watcher,
+# captain-lane, Deck, and stdin-reader children must close the inherited fd 7.
+# If the doorbell cannot be opened, retain the sleep 0.1 fallback below.
+# tests/fm-deck-harness.test.sh::test_idle_host_waits_without_forking_and_wakes_on_input
+# covers idle process sampling and prompt /quit delivery.
 NAP_FIFO="$WORK/nap.doorbell"
 NAP_SECS=${FM_DECK_IDLE_POLL_SECS:-1}
 case "$NAP_SECS" in ''|*[!0-9]*|0) NAP_SECS=1 ;; esac

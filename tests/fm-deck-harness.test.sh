@@ -147,10 +147,6 @@ run_worker() {
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
 
-# 2026-10-24: each idle host polled for input with `sleep 0.1`, ~10 forks a
-# second per worker; with ~25 workers that was most of a loaded Mac's system
-# time. An idle host now waits on a doorbell without starting processes, and
-# typed input still reaches it at once.
 test_idle_host_waits_without_forking_and_wakes_on_input() {
   local dir="$TMP_ROOT/idle-no-fork" gen host i sleeps=0 start elapsed
   make_fake_deck "$dir"
