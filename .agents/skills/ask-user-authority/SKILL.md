@@ -1,8 +1,8 @@
 ---
 name: ask-user-authority
 description: >-
-  Agent-only decision procedure for ask-user findings.
-  Use when a task reaches needs-decision or parks at a gate, and before deciding any ask-user finding.
+  Agent-only decision procedure for early implementation questions and ask-user findings.
+  Use for unresolved product or design questions during implementation, when a task reaches needs-decision or parks at a gate, and before deciding any ask-user finding.
   This skill is the single owner of finding-decision policy: firstmate always applies judgment, decides findings that are unambiguous toward accepted intent, and escalates only genuinely ambiguous, expanding, or destructive ones.
   Finding authority is this skill's criteria, not the project's yolo posture.
 user-invocable: false
@@ -12,13 +12,22 @@ metadata:
 
 # ask-user-authority
 
-This skill is the single owner of the decision policy for no-mistakes ask-user findings.
+This skill is the single owner of the decision policy for early implementation questions and no-mistakes ask-user findings.
 `AGENTS.md` section 7 points here and does not restate this procedure.
 Finding authority is determined by the criteria below, not by `yolo`.
 Firstmate always applies this judgment, decides any finding that is unambiguous toward the accepted design, and escalates only genuinely ambiguous, expanding, or destructive findings.
 
 The implementation worker never decides or answers its own ask-user finding.
 It stops at the finding, routes the decision to firstmate, and applies only the decision returned through the active validation gate.
+
+## Early implementation questions
+
+For a product or design question that the implementation worker cannot settle from its brief, raise `needs-decision [key=<slug>]` to the parent mate as soon as it is identified, within the first hour of implementation or immediately if discovered later.
+Include the question, 2-3 options, a recommended default, and the reversible work that can continue under that default.
+Keep building on the default only within accepted intent and existing authority, keeping the choice provisional and the decision open until the mate answers.
+If no default meets those limits, continue independent authorized work instead of stopping the whole task.
+This continuation never authorizes money or payments, credential access, production changes, deploys, outward messages or publication, destructive or irreversible actions, security-sensitive choices, scope expansion, or anything requiring the captain's explicit approval.
+It does not answer an ask-user finding, resume parked validation, bypass a gate, or override an explicit stop instruction; the affected action stays stopped under the existing rules below.
 
 ## Decide
 
@@ -47,6 +56,8 @@ Resume fleet supervision immediately after the decision lands.
 
 ## A parked run is never left waiting
 
+Second mates relay open decisions requiring firstmate judgment through the parent channel immediately when identified, including during implementation, rather than collecting them for the task's final report.
+The 15-minute escalation deadline below is an outer backstop, not permission to delay that relay.
 When a task reaches `needs-decision` or parks at a gate, its second mate must escalate to the main firstmate through its parent channel within 15 minutes of that event.
 The escalation is one question with 2-3 options and a recommended default.
 For a default already within accepted intent and the mate's authority, return that decision to the same worker under "Return the decision" and keep the task moving without waiting for endorsement.
