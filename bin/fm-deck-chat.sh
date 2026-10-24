@@ -547,9 +547,8 @@ DECK=${FM_DECK_BIN:-$(command -v deck 2>/dev/null || true)}
 if [ -z "$DECK" ]; then
   # A bare post-reboot PATH lacks the user-level install dirs; the remote job
   # library owns the composed tool PATH that covers them.
-  # shellcheck source=bin/fm-remote-job-lib.sh
-  DECK=$(. "$SCRIPT_DIR/fm-remote-job-lib.sh" && fm_remote_job_compose_operator_path "${HOME:-}" >/dev/null &&
-    fm_remote_job_operator_tool deck 2>/dev/null || true)
+  DECK=$(bash -c '. "$1" && fm_remote_job_compose_operator_path "$2" >/dev/null &&
+    fm_remote_job_operator_tool deck' fm-deck-chat "$SCRIPT_DIR/fm-remote-job-lib.sh" "${HOME:-}" 2>/dev/null || true)
 fi
 [ -n "$DECK" ] && [ -x "$DECK" ] || die 'deck is not installed (set FM_DECK_BIN)' 2
 chat_help=$("$DECK" chat --help 2>&1) || die "$DECK has no chat command" 2

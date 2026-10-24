@@ -294,7 +294,9 @@ mkdir -p "$CASE_HOME/.local/bin"
 for tool in tasks-axi treehouse deck; do
   ln -s "$CASE_BIN/$tool" "$CASE_HOME/.local/bin/$tool"
 done
-HOME="$CASE_HOME" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
+# Keep this dependency probe's worker healthy; the bare-PATH repair case below
+# deliberately exercises replacement instead.
+HOME="$CASE_HOME" PATH="$CASE_HOME/.local/bin:$BASE_PATH" FM_ROOT_OVERRIDE="$ROOT" FM_REMOTE_JOB_PLATFORM_OVERRIDE=Linux \
   "$ROOT/bin/fm-remote-job-worker.sh" > "$CASE_STATE/worker.out" 2> "$CASE_STATE/worker.err" &
 DOCTOR_WORKER_PID=$!
 for _ in $(seq 1 100); do

@@ -829,14 +829,14 @@ remote() { HOME="$FAKE_ACCOUNT" PATH="$FAKE_RBIN:/usr/bin:/bin" "$ROOT/bin/fm-ma
 out=$(remote probe "$RROOT" http://127.0.0.1:8329/v1 - cargo-only-runtime)
 assert_contains "$out" "path-source=worker" "worker PATH not used"
 assert_contains "$out" "tool cargo=$FAKE_ACCOUNT/.cargo/bin/cargo" "rustup cargo not found for builds"
-assert_contains "$out" "tool cargo-only-runtime=missing" "cargo directory leaked into runtime PATH"
+assert_contains "$out" "tool cargo-only-runtime=$FAKE_ACCOUNT/.cargo/bin/cargo-only-runtime" "worker runtime PATH omitted the cargo directory"
 out=$(machine setup box "$RROOT")
 assert_contains "$out" "step deck=done:" "setup skipped rustup Deck build"
 out=$(remote install-deck "$RROOT" https://github.com/bastotec/deck.git)
 assert_contains "$out" "result=done:" "same-origin Deck cache was refused"
 assert_equals 'deck 0.1' "$("$FAKE_ACCOUNT/.local/bin/deck" --version)" "replacement Deck does not run"
 assert_equals '' "$(find "$FAKE_ACCOUNT/.local/bin" -name 'deck.prev-*' -o -name '.deck.new.*')" "Deck replacement left persistent backups or staging files"
-pass "rustup builds resolve cargo without changing worker runtime lookups or leaving backups"
+pass "rustup builds and worker runtime lookups share the cargo directory without leaving backups"
 
 new_account
 git -C "$NETFM" remote set-url origin https://user:ORIGIN-TOKEN@example.com/acme/firstmate.git

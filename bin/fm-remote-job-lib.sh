@@ -375,6 +375,17 @@ fm_remote_job_worker_env_path() { # <remote-root> <account-home>
   printf '%s\n' "$value"
 }
 
+fm_remote_job_path_has_tool() { # <path> <tool>
+  local path=$1 tool=$2 directory
+  while :; do
+    directory=${path%%:*}
+    if [ -f "${directory:-.}/$tool" ] && [ -x "${directory:-.}/$tool" ]; then
+      return 0
+    fi
+    case "$path" in *:*) path=${path#*:} ;; *) return 1 ;; esac
+  done
+}
+
 # 0 when the running worker has the gap a reboot leaves behind: deck resolves
 # on fm_remote_job_service_path but not on the PATH the worker was launched
 # with, so a relaunch is exactly what closes it. Sets FM_REMOTE_JOB_WORKER_PATH
@@ -384,8 +395,8 @@ fm_remote_job_worker_path_gap() { # <remote-root> <account-home>
   local root=$1 account_home=$2 service
   FM_REMOTE_JOB_WORKER_PATH=$(fm_remote_job_worker_env_path "$root" "$account_home" 2>/dev/null) || return 1
   service=$(fm_remote_job_service_path "$account_home")
-  (PATH=$service command -v deck >/dev/null 2>&1) || return 1
-  ! (PATH=$FM_REMOTE_JOB_WORKER_PATH command -v deck >/dev/null 2>&1)
+  fm_remote_job_path_has_tool "$service" deck || return 1
+  ! fm_remote_job_path_has_tool "$FM_REMOTE_JOB_WORKER_PATH" deck
 }
 
 fm_remote_job_build_child_path() { # <remote-root>

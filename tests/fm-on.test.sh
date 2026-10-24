@@ -255,6 +255,9 @@ expect_dir "$REMOTE_ROOT/bin"
 if [ -d "$ACCOUNT_HOME/.local/bin" ] && [ ! -L "$ACCOUNT_HOME/.local/bin" ]; then
   expect_dir "$ACCOUNT_HOME/.local/bin"
 fi
+for candidate in "$ACCOUNT_HOME/.cargo/bin" "$ACCOUNT_HOME/.no-mistakes/bin"; do
+  [ -d "$candidate" ] && [ ! -L "$candidate" ] && expect_dir "$candidate"
+done
 for candidate in "${NVM_CHILD_DIRS[@]}"; do expect_dir "$candidate"; done
 for candidate in "${MANAGER_DIRS[@]}"; do
   [ -d "$candidate" ] && [ ! -L "$candidate" ] && expect_dir "$candidate"
