@@ -29,8 +29,9 @@ Each scan reads one condition per worker, first match wins:
                eligible for the PR conditions below; otherwise its done: status
                suppresses the remaining conditions regardless of agent liveness.
   unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
-               mergeStateStatus CLEAN, HAS_HOOKS or UNSTABLE, at least one check,
-               and every reported check SUCCESS, NEUTRAL or SKIPPED for
+               at least one check and every verdict returned by latest_checks
+               below SUCCESS, NEUTRAL or SKIPPED (behind or review-required is
+               left to bin/fm-pr-merge.sh) for
                FM_KEEPALIVE_PR_GREEN_SECS (1800) since first observed eligible.
                The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
                or closes it if superseded. Read live through `gh pr view`
@@ -40,9 +41,13 @@ Each scan reads one condition per worker, first match wins:
                (7200), with its PR still open and not meeting the PR-state and
                check criteria above: rerun failed or cancelled checks, recover
                conflicts, then merge once green, or close it if superseded.
-               Both PR clocks reset on an unavailable, merged or closed PR
-               observation; the green clock also resets on ineligibility and
-               the CI clock when a scan observes a step other than ci;
+               Both PR clocks and any unmerged/ci-stuck episode reset when
+               the recorded pr= changes or the saved track has no PR binding.
+               A merged or closed PR observation clears both clocks.
+               An unreadable PR does not resolve, wake or escalate an existing
+               PR episode; its clocks are retained, except that the CI clock
+               still resets when a scan observes a step other than ci.
+               The green clock also resets on observed ineligibility;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
@@ -58,8 +63,8 @@ Each scan reads one condition per worker, first match wins:
                is left to bin/fm-watch.sh's declared-wait cadence;
   no-progress  any other live, unfinished worker whose real progress has not
                moved for FM_KEEPALIVE_NO_PROGRESS_SECS (1200). A live worker
-               without a blocked or failed status is exempt while a successful
-               open-PR observation retains its CI or green clock above.
+               without a blocked or failed status is exempt while its CI or
+               green clock above is retained, including during failed PR reads.
                Real progress is
                the worktree's HEAD, the paths, mtimes and sizes of its changed
                files that are not reports (*.md, *.txt, *.log, report/ and notes/
@@ -353,7 +358,7 @@ def result_trail(state: Path) -> str:
 def pr_view(url: str):
     """Live state of one PR as gh reports it (state, draft, mergeability, checks), or None."""
     cmd = [os.environ["FM_KEEPALIVE_PR"], url] if os.environ.get("FM_KEEPALIVE_PR") else [
-        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,mergeStateStatus,statusCheckRollup"]
+        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,statusCheckRollup"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         return json.loads(r.stdout) if r.returncode == 0 else None
@@ -361,18 +366,41 @@ def pr_view(url: str):
         return None
 
 
+def latest_checks(view: dict) -> list:
+    """Keep status contexts independent and supersede only completed named runs
+    strictly older than a green run of the same name, ordered by startedAt
+    (completedAt if absent). Unfinished, tied, unnamed or undated non-green
+    runs remain blocking; missing or malformed timestamps cannot prove age.
+    """
+    runs = {}
+    verdicts = []
+    for i, c in enumerate(view.get("statusCheckRollup") or []):
+        if c.get("__typename") != "CheckRun":
+            verdicts.append(c.get("state") or "PENDING")
+            continue
+        name = c.get("name") or ""
+        when = c.get("startedAt") or c.get("completedAt") or ""
+        if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", when):
+            when = ""
+        verdict = (c.get("conclusion") or "PENDING") if c.get("status") == "COMPLETED" else "PENDING"
+        runs.setdefault((name, -1 if name else i), []).append((when, verdict, c.get("status") == "COMPLETED"))
+    for group in runs.values():
+        newest_green = max((when for when, verdict, _ in group if verdict in ("SUCCESS", "NEUTRAL", "SKIPPED")), default="")
+        verdicts.extend(verdict for when, verdict, completed in group
+                        if verdict in ("SUCCESS", "NEUTRAL", "SKIPPED")
+                        or not (completed and when and when < newest_green))
+    return verdicts
+
+
 def pr_green(view: dict) -> bool:
     """Eligibility predicate for the unmerged condition documented above."""
-    checks = view.get("statusCheckRollup") or []
-    concl = [(c.get("conclusion") or c.get("state") or "").upper() for c in checks]
+    concl = latest_checks(view)
     return (view.get("state") == "OPEN" and not view.get("isDraft") and view.get("mergeable") == "MERGEABLE"
-            and view.get("mergeStateStatus") in ("CLEAN", "HAS_HOOKS", "UNSTABLE") and bool(concl)
-            and all(c in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in concl))
+            and bool(concl) and all(c in ("SUCCESS", "NEUTRAL", "SKIPPED") for c in concl))
 
 
 def pr_summary(view: dict) -> str:
-    checks = view.get("statusCheckRollup") or []
-    bad = sorted({(c.get("conclusion") or c.get("state") or "pending").lower() for c in checks} - {"success", "neutral", "skipped"})
+    bad = sorted({c.lower() for c in latest_checks(view)} - {"success", "neutral", "skipped"})
     return "mergeable %s, checks %s" % ((view.get("mergeable") or "unknown").lower(), ", ".join(bad) or "green")
 
 
@@ -477,7 +505,7 @@ class Scan:
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
-        if pr:
+        if pr and (pr[0] != "unknown" or rec.get("cond") in ("unmerged", "ci-stuck")):
             return pr
         if verb == "done":
             return ("done" if m.get("pr") else "undelivered"), min(NOW, mtime(status) or NOW), verb, text
@@ -497,23 +525,29 @@ class Scan:
         return "no-progress", rec.get("fp_since", NOW), verb or "working", text
 
     def pr_condition(self, m: dict, rec: dict):
-        """unmerged (green and mergeable PR_GREEN after first seen so) or ci-stuck (CI step CI_STEP), else None."""
+        """unmerged or ci-stuck when mature, unknown on a failed PR read, else None."""
         track = rec.setdefault("track", {})
         url = m.get("pr") or ""
-        step = meta(self.state / ("%s.crew-state" % m.get("_id", ""))).get("step", "")
-        view = pr_view(url) if url else None
-        if not view or view.get("state") != "OPEN":
+        if track.get("pr") != url:
             track.clear()
+        track["pr"] = url
+        step = meta(self.state / ("%s.crew-state" % m.get("_id", ""))).get("step", "")
+        if step == "ci" and url:
+            track.setdefault("ci", NOW)
+        else:
+            track.pop("ci", None)
+        view = pr_view(url) if url else None
+        if view is None:
+            return ("unknown", NOW, "", "") if url else None
+        if view.get("state") != "OPEN":
+            track.pop("ci", None)
+            track.pop("green", None)
             return None
         green = pr_green(view)
         if not green:
             track.pop("green", None)
         else:
             track.setdefault("green", NOW)
-        if step == "ci":
-            track.setdefault("ci", NOW)
-        else:
-            track.pop("ci", None)
         if green and NOW - track["green"] >= PR_GREEN:
             return "unmerged", track["green"], "green", url
         if not green and "ci" in track and NOW - track["ci"] >= CI_STEP:
@@ -524,12 +558,19 @@ class Scan:
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
         m = dict(m, _id=wid)
+        if rec.get("cond") in ("unmerged", "ci-stuck") and rec.get("track", {}).get("pr") != (m.get("pr") or ""):
+            if not self.resolve(wid, rec, "moved to another PR"):
+                return
+            rec = {}
         if rec.get("cond") in STALL_CONDITIONS:
             rec.setdefault("episode_fp", rec.get("fp"))
         fp = fingerprint(self.state, wid, m)
         if rec.get("fp") != fp:
             rec["fp"], rec["fp_since"] = fp, NOW
         cond, since, verb, text = self.condition(wid, m, rec)
+        if cond == "unknown":
+            save(rec_path, rec)
+            return
         if cond == "no-progress" and NOW - since < NO_PROGRESS and (
                 rec.get("cond") not in STALL_CONDITIONS or fp != rec.get("episode_fp")):
             cond = None
