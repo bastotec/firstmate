@@ -90,6 +90,20 @@ FM_PR_RETIRE_RECEIPT_HASH=
 FM_PR_RETIRE_RECEIPT_IDENTITY=
 FM_PR_POLL_RETIREMENT_REJECTED=
 
+# The one hold-label disposition shared by every consumer: prints the first
+# label that holds a PR ready-only (an explicit do-not-merge instruction),
+# empty when none.
+fm_pr_hold_label() {  # <pr-view-or-labels>
+  local input=$1 names=''
+  if [ -n "$input" ]; then
+    names=$(printf '%s' "$input" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null)
+  fi
+  printf '%s\n' "${names:-$input}" \
+    | tr ',' '\n' \
+    | grep -iE '^(do[- ]?not[- ]?merge|hold|on[- ]hold|wip|blocked|security|destructive|breaking([- ]change)?)$' \
+    | head -n 1
+}
+
 fm_pr_attestation_jq() {
   cat <<'JQ'
   def attest($head):
