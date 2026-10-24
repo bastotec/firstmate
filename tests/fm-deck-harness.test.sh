@@ -2006,7 +2006,9 @@ SH
     chmod +x "$dir/bin/fm-watch.sh"
   fi
   chmod +x "$dir/bin/fm-watch-arm.sh"
-  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_DECK_CHILD_STOP_SECS=2 FM_ARM_CHILD_STOP_SECS=1 python3 - "$dir" "$mode" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
+  # Use the host's default child grace: the real arm needs time to stop its
+  # child and publish the cycle result before the host's outer deadline.
+  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_ARM_CHILD_STOP_SECS=1 python3 - "$dir" "$mode" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
 import os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(sys.argv[1])
 home = root / 'home'
@@ -2047,6 +2049,8 @@ with (root/'pane').open('w') as output:
         p.wait(timeout=30)
         took = time.monotonic() - started
         assert took < 8, (took, (root/'pane').read_text())
+        expected_rc = 0 if sys.argv[2] == 'quit-term' else 1
+        assert p.returncode == expected_rc, (p.returncode, (root/'pane').read_text())
         assert not alive(arm), 'the host left its watcher arm running'
         assert not alive(writer), "the host left its watcher's helper running"
         if sys.argv[2] == 'quit-term':

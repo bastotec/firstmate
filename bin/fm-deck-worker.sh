@@ -403,7 +403,13 @@ case "$NAP_SECS" in ''|*[!0-9]*) NAP_SECS=1 ;; esac
 mkfifo "$NAP_FIFO" || exit 1
 exec 7<>"$NAP_FIFO" || exit 1
 nap() {
+  local stopped=0
+  # Let read unwind its timeout before exiting: cleanup inside its signal trap
+  # can otherwise be interrupted by read's still-armed alarm.
+  trap 'stopped=1; printf x >&7' HUP TERM
   read -r -t "$NAP_SECS" -n 1 -u 7 _ 2>/dev/null || true
+  trap 'exit 1' HUP TERM
+  [ "$stopped" -eq 0 ] || exit 1
 }
 TTY_SETTINGS=''
 [ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
