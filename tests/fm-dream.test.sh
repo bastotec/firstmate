@@ -113,6 +113,8 @@ case "${STUB_NM:-pass}" in
   gate) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
           printf 'gate:\n  step: review\n  status: awaiting_approval\n  findings[1]{id,severity,file,action,description}:\n    R1,error,AGENTS.md,ask-user,"too broad"\n' ;; esac ;;
   broken) echo "error: daemon unreachable: dial ipc: no such file" >&2; exit 1 ;;
+  override) case "$*" in *abort*) echo "run_status: cancelled" ;; *)
+          printf 'pr: "https://github.com/bastotec/firstmate/pull/992"\noutcome: passed-with-override\nhelp[1]: "A human approved past a live CI failure"\n' ;; esac ;;
   slow) case "$*" in *abort*) echo "run_status: cancelled" ;;
           *) if [ ! -e "$STUB_CALLS/nm-first" ]; then : > "$STUB_CALLS/nm-first"
                printf 'pr: "https://github.com/bastotec/firstmate/pull/991"\nerror: wait of 8m0s elapsed while driving the run\n'; exit 1
@@ -2023,6 +2025,19 @@ test_instructions_count_delimiter_content_and_check_its_hard_stops() {
   pass "instructions: delimiter content counts toward the proposal cap and removed hard-stop checks"
 }
 
+# 2026-10-24: a --yes driver approved past a failing CI check and the run ended
+# passed-with-override. Nobody approved it, so dreaming treats that outcome as
+# a gate for a person and stops the run, never as an opened PR.
+test_instructions_treat_a_ci_override_as_a_gate() {
+  local d
+  d=$(new_case instr-override)
+  STUB_INSTR=edit STUB_NM=override run_dream "$d" --only collect instructions > "$d/out.json" || fail "run exited nonzero"
+  jq -e '.steps.instructions.status == "needs a decision" and (.steps.instructions.why | test("failing check was approved past"))' \
+    "$d/out.json" >/dev/null || fail "a CI override was reported as a result: $(jq -c .steps.instructions "$d/out.json")"
+  grep -q '|axi abort' "$d/calls/nm" || fail "the overridden run was not stopped"
+  pass "a CI override from --yes is a gate for a person, never an opened PR"
+}
+
 test_instructions_stop_a_parked_gate_and_report_it() {
   local d
   d=$(new_case instr-gate)
@@ -2279,6 +2294,7 @@ test_instructions_prune_landed_or_old_worktrees
 test_instructions_guards_reject_out_of_scope_hard_stop_and_big_changes
 test_instructions_count_delimiter_content_and_check_its_hard_stops
 test_instructions_stop_a_parked_gate_and_report_it
+test_instructions_treat_a_ci_override_as_a_gate
 test_waiting_for_ziggy_is_not_the_step_s_own_time
 test_no_mistakes_failures_are_broken_down_by_step_cause_and_host
 test_a_bridge_without_reports_skips_the_host_and_says_so

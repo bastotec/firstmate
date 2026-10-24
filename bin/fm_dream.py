@@ -1795,6 +1795,10 @@ def drive_gate(ctx, tree, intent):
         if pr and isinstance(ctx.facts.get('instructions'), dict):
             ctx.facts['instructions']['pr'] = pr  # known even if the night is interrupted next
         outcome = re.search(r'^outcome: (\S+)', out, re.M)
+        if outcome and outcome.group(1) == 'passed-with-override':
+            # An override is someone approving past a failing check; nobody did
+            # tonight, so it is a gate for a person, never a result (2026-10-24).
+            return 'gate', pr, 'ci gate: a failing check was approved past, not fixed'
         if outcome:
             return outcome.group(1), pr, ''
         _run, gate = parse_gate(out)
