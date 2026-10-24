@@ -80,9 +80,7 @@ FM_HOME is required; state, data, and project paths are always rooted there.
 Only FM_CONFIG_OVERRIDE selects a different config directory; state, data, and
 project directory overrides used by endpoint scripts do not apply here.
 FM_DECK_BIN overrides the deck executable (default: deck on PATH, else on the
-account's composed tool PATH from bin/fm-remote-job-lib.sh, which covers
-~/.local/bin, ~/.cargo/bin and ~/.no-mistakes/bin when a process started with
-a bare system PATH, as one does right after a host reboot).
+account's composed tool PATH owned by bin/fm-remote-job-lib.sh).
 FM_CREW_WORK_ROOT overrides ~/.local/state/firstmate-crew; each home's neutral
 workdirs live below its hashed home key (specialists use empty repositories for
 owned skill discovery). Choose this root before creating a specialist: its

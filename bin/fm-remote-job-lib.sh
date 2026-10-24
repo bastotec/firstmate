@@ -61,9 +61,10 @@
 # its configured FM_ROOT/bin. Every child receives env -i with the composed
 # PATH, HOME, FM_HOME, FM_ROOT_OVERRIDE, and FM_REMOTE_JOB_ACTIVE=1. The PATH
 # is intentionally filesystem-discovered rather than login-shell-derived:
-# ~/.local/bin, ~/.cargo/bin, and ~/.no-mistakes/bin; nvm, asdf, and mise
-# shims/install bins; Nix; Homebrew; and the system tail. No shell startup files
-# are evaluated. Each discovered set is
+# ~/.local/bin, ~/.cargo/bin, and ~/.no-mistakes/bin (only when each exists and
+# is not a symlink); nvm, asdf, and mise shims/install bins; Nix; Homebrew; and
+# the system tail. No shell startup files are evaluated. The authorized child
+# prepends <remote-root>/bin to this operator PATH. Each discovered set is
 # appended in the shell's own sorted pathname-expansion order, so which install
 # of a multi-version tool wins is fixed by this composition rather than by the
 # order the filesystem happens to return.
@@ -71,13 +72,15 @@
 # On macOS the worker is Firstmate's Aqua LaunchAgent
 # dev.firstmate.remote-job at ~/Library/LaunchAgents/dev.firstmate.remote-job.plist
 # with logs under ~/Library/Logs. Linux starts the same worker process without
-# an Aqua requirement. Both launches set the worker's own PATH explicitly to
-# fm_remote_job_service_path rather than inheriting launchd's or a fresh SSH
-# session's bare system PATH, which is all a host has right after a reboot, and
-# ensure restarts a running worker whose launch PATH cannot resolve a deck that
-# PATH can (fm_remote_job_worker_path_gap). The launch-agent renderer
-# and repair helpers here are shared by the entrypoint and remote doctor so
-# their ownership cannot drift.
+# an Aqua requirement. Both worker launches replace the inherited PATH with
+# fm_remote_job_service_path. Stream-agent launches instead keep the caller's
+# PATH order and append missing service directories via fm_remote_job_path_union,
+# so existing caller selections still win. These launches need no shell startup
+# files, even with a bare system PATH after reboot. Ensure restarts a worker
+# when fm_remote_job_worker_path_gap proves a repairable launch-PATH gap; its
+# probe contract below defines both the service-PATH check and unreadable case.
+# The launch-agent renderer and repair helpers here are shared by the entrypoint
+# and remote doctor so their ownership cannot drift.
 #
 # The Linux start path puts the worker tree in its own process group, so
 # stopping a worker signals its restart supervisor, its serving child, and any
@@ -310,12 +313,11 @@ fm_remote_job_compose_operator_path() { # <account-home>
   printf '%s\n' "$FM_REMOTE_JOB_OPERATOR_PATH"
 }
 
-# The explicit PATH a Firstmate-owned launch (the macOS LaunchAgent, the Linux
-# worker start, a stream agent) puts in the launched process's own
-# environment. It is fixed rather than discovered so the LaunchAgent contract
-# does not churn as tools come and go, and it names the user-level install
-# directories whether or not they exist yet, so a tool installed after the
-# launch still resolves.
+# The fixed service-directory baseline for Firstmate-owned worker launches and
+# stream agents (which merge it with their caller PATH as described above).
+# It is not discovered, so the LaunchAgent contract does not churn as tools
+# come and go, and it names user-level install directories whether or not they
+# exist yet, so a tool installed after launch still resolves.
 fm_remote_job_service_path() { # <account-home>
   local account_home=$1 path
   path="$account_home/.local/bin:$account_home/.cargo/bin:$account_home/.no-mistakes/bin"
