@@ -555,7 +555,7 @@ class Scan:
         status = self.state / ("%s.status" % wid)
         verb, text = last_status(status)
         self.wait_bound.discard(wid)
-        if verb in ("blocked", "failed", "needs-decision"):
+        if verb in ("blocked", "failed", "needs-decision", "paused"):
             key = self.approval_key(wid)
             if key and decision_key(last_line(status)) == key:
                 self.wait_bound.add(wid)

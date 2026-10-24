@@ -1220,7 +1220,7 @@ test_approval_wait_excludes_action_demands_while_bound() {
 # is fm-approval-wait.sh release, not a steer. A blocked line on any other key
 # still wakes the mate.
 test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
-  local dir record line i=0
+  local dir record line verb i=0
   for line in \
     'blocked [key=publication-recovery-01M5]: terminal publication refusal preserved' \
     'blocked: [key=publication-recovery-01M5] awaiting approval' \
@@ -1244,14 +1244,16 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
     scan "$dir" $((T0 + 4001 + 1200))
     assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the blocked demand"
   done
-  dir=$(make_home approval-wait-unrelated-decision ship)
-  make_approval_wait "$dir" publication
-  status "$dir" "$T0" 'needs-decision [key=other]: unrelated decision'
-  scan "$dir" "$T0"
-  scan "$dir" $((T0 + 1200))
-  assert_equals 1 "$(wake_count "$dir")" "an unrelated decision key was excluded by the approval wait"
-  scan "$dir" $((T0 + 3000))
-  assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck')" "an unrelated decision lost real stuck escalation"
+  for verb in needs-decision paused; do
+    dir=$(make_home "approval-wait-unrelated-$verb" ship)
+    make_approval_wait "$dir" publication
+    status "$dir" "$T0" "$verb [key=other]: awaiting your release"
+    scan "$dir" "$T0"
+    scan "$dir" $((T0 + 1200))
+    assert_equals 1 "$(wake_count "$dir")" "an unrelated $verb key was excluded by the approval wait"
+    scan "$dir" $((T0 + 3000))
+    assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck')" "an unrelated $verb lost real stuck escalation"
+  done
   pass "supported status formats preserve exact waits without excluding unrelated decisions"
 }
 
@@ -1355,13 +1357,15 @@ test_unreadable_approval_wait_keeps_pr_actions_excluded() {
 }
 
 test_approval_wait_retires_escalation_and_restarts_recovery() {
-  local dir verb channel record before first open
-  for verb in blocked needs-decision; do
+  local dir verb initial_verb channel record before first open
+  for verb in blocked needs-decision paused; do
     dir=$(make_home "approval-after-escalation-$verb" ship)
     make_secondmate "$dir" helper
     channel="$dir/parent/state/helper.status"
     record="$dir/home/state/keepalive/w1.json"
-    status "$dir" "$T0" "$verb [key=publication]: awaiting approval"
+    initial_verb=$verb
+    [ "$verb" != paused ] || initial_verb=blocked
+    status "$dir" "$T0" "$initial_verb [key=publication]: awaiting approval"
     scan "$dir" "$T0"
     scan "$dir" $((T0 + 1200))
     scan "$dir" $((T0 + 1800))
@@ -1371,6 +1375,9 @@ test_approval_wait_retires_escalation_and_restarts_recovery() {
     FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
       --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" \
       || fail "could not declare a wait for $verb"
+    if [ "$verb" = paused ]; then
+      status "$dir" $((T0 + 1801)) 'paused [key=publication]: awaiting your release'
+    fi
     before=$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")
     scan "$dir" $((T0 + 1801))
     assert_grep "resolved [key=keepalive-helper-w1-$T0]" "$channel" "entering the wait left the escalation open"
