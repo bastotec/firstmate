@@ -13,10 +13,10 @@
 # A remote second mate runs on a stream endpoint, so the host needs: the
 # sibling dev.firstmate.remote-job worker that runs normal fm-on commands
 # through the Aqua (darwin, which needs a GUI login session) or Linux
-# job-worker path, launched with the explicit worker PATH (a running worker
-# whose own environment PATH cannot resolve deck, as one started from a bare
-# post-reboot PATH, is fixable and --fix restarts it); stream-tools (curl, jq, python3, and this checkout's stream
-# agent); stream-token (the selected home's config/stream-token is readable and
+# job-worker path (repairable launch-PATH gaps follow the
+# fm_remote_job_worker_path_gap contract in bin/fm-remote-job-lib.sh);
+# stream-tools (curl, jq, python3, and this checkout's stream agent);
+# stream-token (the selected home's config/stream-token is readable and
 # non-empty; its value is never printed); stream-hub (the hub that home's
 # config/stream-hub names answers this host with that token on the adapter's
 # protocol); and stream-survival (on Linux, systemd-logind does not kill the
