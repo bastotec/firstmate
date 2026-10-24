@@ -20,8 +20,10 @@
 # The slot claim survives. Explicit operator discard remains a separate act.
 #
 # Only the exact recorded stream endpoint with a confirmed kill can complete.
-# Missing/unreachable/foreign endpoints and hub-only closes retain the record.
-# The original kind and PR fields are never rewritten. Backlog completion links
+# Without durable stop proof, missing/unreachable/foreign endpoints and hub-only
+# closes retain the record. Once stop proof is saved, replay does not depend on
+# the hub remembering that endpoint. The original kind and PR fields are never
+# rewritten. Backlog completion links
 # the saved knowledge result, not a PR or local-main claim. Open captain calls
 # or conditional waits refuse; resolve those through their existing owner first.
 # Validation ownership must be readable through no-mistakes; an active run
@@ -37,8 +39,9 @@
 
 preserved_result_retire() ( # <id> <acceptance-json>
   set -e
+  # shellcheck disable=SC2153 # DATA is supplied by fm-retire-endpoint.sh.
   local id=$1 acceptance=$2 meta="$STATE/$1.meta" archive="$DATA/$1/preserved-result"
-  local snapshot project wt lock meta_lock gen target task rc relative applies=0
+  local snapshot project wt lock meta_lock gen target task rc phase relative applies=0
   local project_lock='' control_lock='' held_meta_lock=''
   trap 'test -z "$held_meta_lock" || fm_lock_release "$held_meta_lock"; test -z "$control_lock" || fm_lock_release "$control_lock"; test -z "$project_lock" || fm_lock_release "$project_lock"' EXIT
   if [ -e "$meta" ] || [ -L "$meta" ]; then
@@ -74,6 +77,7 @@ preserved_result_retire() ( # <id> <acceptance-json>
     || refuse "the original allocation claim does not belong to this task and home"
   for task in open deferred; do
     rc=0
+    # shellcheck disable=SC2153 # CONFIG is supplied by fm-retire-endpoint.sh.
     FM_HOME="$FM_HOME" FM_STATE_OVERRIDE="$STATE" FM_DATA_OVERRIDE="$DATA" FM_CONFIG_OVERRIDE="$CONFIG" \
       "$SCRIPT_DIR/fm-captain-hold.sh" "$task" "$id" >/dev/null || rc=$?
     [ "$rc" = 1 ] || refuse "resolve the task's captain call or deferred wait before accepting its result"
@@ -124,16 +128,18 @@ preserved_result_retire() ( # <id> <acceptance-json>
       "$SCRIPT_DIR/fm-public-followup.sh" guard-work "$PUBLIC_FOLLOWUP_WORK_HOME" "$id" \
       || refuse "task $id still owes a public reply through the myfirstmate relay"
   fi
-  python3 "$SCRIPT_DIR/fm_preserved_result.py" prepare "$STATE" "$DATA" "$id" "$acceptance" "$snapshot" || exit 1
+  phase=$(python3 "$SCRIPT_DIR/fm_preserved_result.py" prepare "$STATE" "$DATA" "$id" "$acceptance" "$snapshot") || exit 1
   if [ -f "$meta" ]; then
-    # The backend's kill treats a reused label as already gone; this operation
-    # instead requires a fresh exact label before invoking that shared primitive.
-    fm_backend_source stream
-    fm_backend_stream_parse_target "$target" || refuse "cannot address the original endpoint"
-    task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT") || refuse "endpoint identity is unconfirmed"
-    [ "$(printf '%s' "$task" | jq -r '.task.label // empty')" = "fm-$id" ] || refuse "endpoint belongs to another task"
-    fm_backend_kill stream "$target" "" "fm-$id" || refuse "endpoint stop is unconfirmed; original allocation and records retained"
-    python3 "$SCRIPT_DIR/fm_preserved_result.py" stopped "$STATE" "$DATA" "$id" "$acceptance" "$snapshot"
+    if [ "$phase" != endpoint-stopped ] && [ "$phase" != completed ]; then
+      # The backend's kill treats a reused label as already gone; this operation
+      # instead requires a fresh exact label before invoking that shared primitive.
+      fm_backend_source stream
+      fm_backend_stream_parse_target "$target" || refuse "cannot address the original endpoint"
+      task=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT") || refuse "endpoint identity is unconfirmed"
+      [ "$(printf '%s' "$task" | jq -r '.task.label // empty')" = "fm-$id" ] || refuse "endpoint belongs to another task"
+      fm_backend_kill stream "$target" "" "fm-$id" || refuse "endpoint stop is unconfirmed; original allocation and records retained"
+      python3 "$SCRIPT_DIR/fm_preserved_result.py" stopped "$STATE" "$DATA" "$id" "$acceptance" "$snapshot"
+    fi
     if [ "$applies" = 1 ]; then
       relative=$(fm_backlog_data_relative "$DATA") || exit 1
       fm_backlog_close_marker_write "$STATE" "$id" "$DATA" "$gen" 0 \

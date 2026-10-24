@@ -107,6 +107,52 @@ assert_admission_refused() {
   [ -n "$endpoint" ] && [ "$(printf '%s' "$endpoint" | jq -r '.closed_by // empty')" = '' ] || fail 'refusal stopped endpoint'
 }
 
+# Exit immediately after durable stop proof, before the backlog-close journal.
+# A restarted hub has forgotten the endpoint; the saved proof, not a fresh 404,
+# must let the SAME acceptance finish while retaining the original allocation.
+if command -v tasks-axi >/dev/null 2>&1; then
+  make_case stopped-before-journal
+  printf 'backend = "markdown"\n[markdown]\npath = "data/backlog.md"\n' > "$H/.tasks.toml"
+  printf '## In flight\n\n## Queued\n\n## Done\n' > "$H/data/backlog.md"
+  tasks-axi add finite 'Accepted inconclusive diagnosis, not code shipped' --file "$H/data/backlog.md" >/dev/null
+  tasks-axi start finite --file "$H/data/backlog.md" >/dev/null
+  real_python=$(command -v python3)
+  mkdir "$C/interrupt-bin"
+  cat > "$C/interrupt-bin/python3" <<SH
+#!/usr/bin/env bash
+"$real_python" "\$@" || exit \$?
+if [ "\${2:-}" = stopped ]; then
+  echo 'synthetic exit after durable stop, before backlog journal' >&2
+  exit 73
+fi
+SH
+  chmod +x "$C/interrupt-bin/python3"
+  stop_rc=0
+  PATH="$C/interrupt-bin:$PATH" run_retirement > "$C/interrupted.out" 2>&1 || stop_rc=$?
+  [ "$stop_rc" = 73 ] || fail "post-stop interruption returned $stop_rc instead of 73: $(cat "$C/interrupted.out")"
+  [ "$(jq -r '.phase' "$H/data/finite/preserved-result/receipt.json")" = endpoint-stopped ] || fail 'interruption did not retain confirmed stop proof'
+  [ ! -e "$H/state/finite.backlog-close" ] || fail 'fixture missed the stop-to-journal gap'
+  cmp "$C/before.meta" "$H/state/finite.meta" || fail 'gap lost original live metadata'
+  [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" '.endpoints[] | select(.endpoint_id == $e) | .closed_by')" = agent ] || fail 'interruption preceded confirmed endpoint stop'
+  assert_preserved
+  fm_test_fake_stream_set "$target" '{"forget":true}'
+  run_retirement
+  [ ! -e "$H/state/finite.meta" ] || fail 'retry retained live metadata after completion'
+  [ ! -e "$H/state/finite.backlog-close" ] || fail 'retry did not converge backlog journal'
+  [ "$(jq -r '.phase' "$H/data/finite/preserved-result/receipt.json")" = completed ] || fail 'retry did not complete preserved receipt'
+  [ "$(jq -r '.worktrees[0].leased' "$C/pool/treehouse-state.json")" = true ] || fail 'retry released original allocation'
+  cmp "$C/before.meta" "$H/data/finite/preserved-result/original.meta"
+  cmp "$C/result.md" "$H/data/finite/preserved-result/result.md"
+  cmp "$C/result.md" "$H/data/finite/report.md"
+  tasks-axi show finite --file "$H/data/backlog.md" --full > "$C/row"
+  assert_contains "$(cat "$C/row")" 'done' 'retry did not close accepted knowledge backlog'
+  assert_contains "$(cat "$C/row")" 'data/finite/report.md' 'retry lost durable result link'
+  assert_preserved
+  pass 'confirmed stop before backlog journal survives hub restart without losing original allocation/history/result (interruption exit 73)'
+else
+  printf 'skip: tasks-axi unavailable for confirmed-stop retry gap\n'
+fi
+
 for validation in pipeline-owned matching-live ledger-live status-failure ledger-failure status-error partial unbound foreign-branch; do
   make_case "validation-$validation"
   missing_head=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef

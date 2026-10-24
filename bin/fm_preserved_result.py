@@ -158,6 +158,9 @@ def main():
             write_json(receipt, r)
     else:
         require(phase == "prepare", "unsupported storage phase")
+        # The lifecycle owner must distinguish a new stop from crash replay
+        # without depending on the hub retaining its ephemeral endpoint table.
+        print(r["phase"])
 
 
 if __name__ == "__main__":

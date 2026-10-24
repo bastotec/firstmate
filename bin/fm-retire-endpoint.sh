@@ -573,6 +573,9 @@ retire_records_only_locked() {  # <id> <expected-record>
   return "$rc"
 }
 
+# The accepted-result subshell exits in its separate dispatch branch; these
+# ordinary-path probes refresh their result globals before each use below.
+# shellcheck disable=SC2031
 retire_records_only() {  # <id>
   local id=$1 marker mode=close probe_rc=0 gate_rc=0 marker_flags=() row pr verdict=unmerged body
   local meta="$STATE/$id.meta"

@@ -1169,8 +1169,13 @@ test_handling_child_stderr_is_retained() {
 #!/usr/bin/env bash
 printf 'handling successor startup diagnostic\n' >&2
 if [ "$FM_TEST_CHILD_MODE" = exits ]; then exit 7; fi
+. "${BASH_SOURCE[0]%/*}/fm-wake-lib.sh"
 trap 'exit 143' TERM
-: > "$FM_HOME/child-ready"
+fm_lock_try_acquire "$STATE/.watch.lock" || exit 2
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "${BASH_SOURCE[0]}" > "$STATE/.watch.lock/watcher-path"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+touch "$STATE/.last-watcher-beat"
 while :; do sleep 0.1; done
 SH
     chmod +x "$dir/bin/fm-watch.sh"
@@ -1179,12 +1184,14 @@ SH
       "$dir/bin/fm-watch-arm.sh" > "$dir/arm.out" 2> "$dir/arm.err" &
     ARM_PID=$!
     if [ "$mode" = interrupted ]; then
+      # Child startup precedes the arm's cycle initialization; interrupt only
+      # after the arm confirms readiness through its public output.
       i=0
-      while [ "$i" -lt 100 ] && [ ! -f "$dir/home/child-ready" ]; do
+      while [ "$i" -lt 100 ] && ! grep -q '^watcher: started ' "$dir/arm.out"; do
         sleep 0.1
         i=$((i + 1))
       done
-      [ -f "$dir/home/child-ready" ] || fail "handling child did not reach startup"
+      grep -q '^watcher: started ' "$dir/arm.out" || fail "handling arm did not confirm startup"
       kill -TERM "$ARM_PID" || fail "could not interrupt handling arm"
     fi
     wait "$ARM_PID"
@@ -1267,19 +1274,27 @@ test_interrupted_arm_stops_a_slow_watcher_within_its_bound() {
   cp -R "$ROOT/bin/." "$dir/bin/"
   cat > "$dir/bin/fm-watch.sh" <<'SH'
 #!/usr/bin/env bash
+. "${BASH_SOURCE[0]%/*}/fm-wake-lib.sh"
 trap 'exit 143' TERM
 ( while :; do printf 'x' >> "$FM_HOME/writes"; sleep 0.1; done ) &
 printf '%s\n' "$!" > "$FM_HOME/writer-pid"
 printf '%s\n' "$$" > "$FM_HOME/child-pid"
+fm_lock_try_acquire "$STATE/.watch.lock" || exit 2
+printf '%s\n' "$FM_HOME" > "$STATE/.watch.lock/fm-home"
+printf '%s\n' "${BASH_SOURCE[0]}" > "$STATE/.watch.lock/watcher-path"
+fm_pid_identity "$$" > "$STATE/.watch.lock/pid-identity"
+touch "$STATE/.last-watcher-beat"
 sleep 60
 SH
   chmod +x "$dir/bin/fm-watch.sh"
   FM_HOME="$dir/home" FM_STATE_OVERRIDE="$dir/state" FM_ARM_CONFIRM_TIMEOUT=60 \
     FM_ARM_CHILD_STOP_SECS=1 "$dir/bin/fm-watch-arm.sh" > "$dir/arm.out" 2>&1 &
   ARM_PID=$!
+  # Synchronize with the arm, not just its faster child: cycle logging is
+  # initialized before this readiness line is emitted.
   i=0
-  while [ "$i" -lt 100 ] && [ ! -s "$dir/home/child-pid" ]; do sleep 0.1; i=$((i + 1)); done
-  [ -s "$dir/home/child-pid" ] || fail "the slow watcher never started"
+  while [ "$i" -lt 100 ] && ! grep -q '^watcher: started ' "$dir/arm.out"; do sleep 0.1; i=$((i + 1)); done
+  grep -q '^watcher: started ' "$dir/arm.out" || fail "the arm never confirmed the slow watcher"
   child_pid=$(cat "$dir/home/child-pid")
   writer_pid=$(cat "$dir/home/writer-pid")
   kill -TERM "$ARM_PID" || fail "could not interrupt the arm"
