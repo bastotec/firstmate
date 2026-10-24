@@ -1225,7 +1225,8 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
     'blocked [key=publication-recovery-01M5]: terminal publication refusal preserved' \
     'blocked: [key=publication-recovery-01M5] awaiting approval' \
     'blocked corr=abc123 [key=publication-recovery-01M5]: awaiting approval' \
-    'blocked [stage=publication] [key=publication-recovery-01M5]: awaiting approval'; do
+    'blocked [stage=publication] [key=publication-recovery-01M5]: awaiting approval' \
+    'needs-decision [key=publication-recovery-01M5]: awaiting approval'; do
     i=$((i + 1))
     dir=$(make_home "approval-wait-blocked-$i" ship)
     record="$dir/home/state/keepalive/w1.json"
@@ -1243,7 +1244,15 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
     scan "$dir" $((T0 + 4001 + 1200))
     assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the blocked demand"
   done
-  pass "supported blocked status formats preserve exact waits and restore demands on release"
+  dir=$(make_home approval-wait-unrelated-decision ship)
+  make_approval_wait "$dir" publication
+  status "$dir" "$T0" 'needs-decision [key=other]: unrelated decision'
+  scan "$dir" "$T0"
+  scan "$dir" $((T0 + 1200))
+  assert_equals 1 "$(wake_count "$dir")" "an unrelated decision key was excluded by the approval wait"
+  scan "$dir" $((T0 + 3000))
+  assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck')" "an unrelated decision lost real stuck escalation"
+  pass "supported status formats preserve exact waits without excluding unrelated decisions"
 }
 
 # A green PR whose forge state carries a hold label (fm-pr-lib's hold-label
@@ -1251,30 +1260,36 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
 # instruction: auto-land already refuses to merge it, so the keep-alive must not
 # demand the merge behind that disposition. An unlabeled green PR still wakes.
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand() {
-  local dir
-  dir=$(make_home hold-label ship)
-  printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
-  status "$dir" "$T0" 'done: PR ready for review only'
-  make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
-  python3 - "$dir/pr.json" <<'PY2'
-import json, sys
-v = json.load(open(sys.argv[1]))
-v["labels"] = [{"name": "do-not-merge"}]
-json.dump(v, open(sys.argv[1], "w"))
-PY2
-  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
-  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1800))
-  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5400))
-  assert_equals 0 "$(wake_count "$dir")" "a hold-labelled green PR demanded a merge"
-  python3 - "$dir/pr.json" <<'PY2'
-import json, sys
-v = json.load(open(sys.argv[1]))
-v["labels"] = []
-json.dump(v, open(sys.argv[1], "w"))
-PY2
-  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5401))
-  assert_equals 1 "$(wake_count "$dir")" "removing the hold label did not restore the merge demand"
-  pass "a hold-labelled green PR is ready-only and merges once the label is gone"
+  local dir scenario mature
+  for scenario in unmerged ci-stuck; do
+    dir=$(make_home "hold-label-$scenario" ship)
+    printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
+    if [ "$scenario" = unmerged ]; then
+      status "$dir" "$T0" 'done: PR ready for review only'
+      make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+      mature=$((T0 + 1800))
+    else
+      printf 'run=01M5\nstep=ci\n' > "$dir/home/state/w1.crew-state"
+      status "$dir" "$T0" 'working: validation reached CI'
+      make_pr "$dir" OPEN CONFLICTING DIRTY FAILURE
+      mature=$((T0 + 7200))
+    fi
+    jq '.labels = [{name: "do-not-merge"}]' "$dir/pr.json" > "$dir/pr-held.json"
+    mv "$dir/pr-held.json" "$dir/pr.json"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$mature"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3600))
+    assert_equals 0 "$(wake_count "$dir")" "a hold-labelled PR demanded $scenario action"
+    jq -e --argjson first "$T0" '.cond == null and (.track.green // .track.ci) == $first' \
+      "$dir/home/state/keepalive/w1.json" >/dev/null || fail "the hold label changed the $scenario clock"
+    jq '.labels = []' "$dir/pr.json" > "$dir/pr-released.json"
+    mv "$dir/pr-released.json" "$dir/pr.json"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3601))
+    assert_equals 1 "$(wake_count "$dir")" "removing the hold label did not restore the $scenario demand"
+    jq -e --arg cond "$scenario" '.cond == $cond' "$dir/home/state/keepalive/w1.json" >/dev/null \
+      || fail "the released PR did not restore $scenario"
+  done
+  pass "hold-labelled PRs exclude merge and CI demands until the label is gone"
 }
 
 test_exact_approval_wait_survives_endpoint_loss() {
@@ -1339,6 +1354,49 @@ test_unreadable_approval_wait_keeps_pr_actions_excluded() {
   pass "undecodable approval records exclude PR actions until reconciled"
 }
 
+test_approval_wait_retires_escalation_and_restarts_recovery() {
+  local dir verb channel record before first open
+  for verb in blocked needs-decision; do
+    dir=$(make_home "approval-after-escalation-$verb" ship)
+    make_secondmate "$dir" helper
+    channel="$dir/parent/state/helper.status"
+    record="$dir/home/state/keepalive/w1.json"
+    status "$dir" "$T0" "$verb [key=publication]: awaiting approval"
+    scan "$dir" "$T0"
+    scan "$dir" $((T0 + 1200))
+    scan "$dir" $((T0 + 1800))
+    assert_equals 1 "$(wake_count "$dir")" "setup: $verb did not wake its mate"
+    assert_grep "blocked [key=keepalive-helper-w1-$T0]" "$channel" "setup: $verb did not escalate"
+    printf 'Preserve this worker until publication is approved.\n' > "$dir/instruction"
+    FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
+      --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" \
+      || fail "could not declare a wait for $verb"
+    before=$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")
+    scan "$dir" $((T0 + 1801))
+    assert_grep "resolved [key=keepalive-helper-w1-$T0]" "$channel" "entering the wait left the escalation open"
+    open=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
+    assert_equals '' "$open" "the parent still has an actionable keepalive question"
+    jq -e '.woke == 0 and .nudges == 0 and (.escalated | not) and .first == null and .captain_notified == null' \
+      "$record" >/dev/null || fail "entering the wait retained action-episode markers"
+    scan "$dir" $((T0 + 5000))
+    assert_equals 1 "$(wake_count "$dir")" "the bound wait demanded more action"
+    assert_equals 2 "$(wc -l < "$channel" | tr -d ' ')" "the wait repeated its escalation or resolution"
+    assert_equals "$before" "$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")" \
+      "keepalive changed preserved worker or approval state"
+    rm "$dir/home/state/w1.approval-wait"
+    scan "$dir" $((T0 + 5001))
+    assert_equals 1 "$(wake_count "$dir")" "releasing the wait skipped the fresh recovery bound"
+    scan "$dir" $((T0 + 6201))
+    assert_equals 2 "$(wake_count "$dir")" "releasing the wait did not restore recovery"
+    scan "$dir" $((T0 + 6801))
+    first=$(jq -r '.first' "$record")
+    [ "$first" -gt "$T0" ] || fail "the new escalation reused the old episode key"
+    assert_grep "blocked [key=keepalive-helper-w1-$first]" "$channel" "the new recovery episode did not escalate"
+    assert_equals 3 "$(wc -l < "$channel" | tr -d ' ')" "the fresh recovery episode did not escalate exactly once"
+  done
+  pass "entering an approval wait resolves escalation and release starts fresh recovery"
+}
+
 test_shared_hold_label_inputs() {
   local input expected actual
   while IFS=$'\t' read -r input expected; do
@@ -1361,4 +1419,5 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand
 test_exact_approval_wait_survives_endpoint_loss
 test_unreadable_approval_wait_keeps_pr_actions_excluded
+test_approval_wait_retires_escalation_and_restarts_recovery
 test_shared_hold_label_inputs

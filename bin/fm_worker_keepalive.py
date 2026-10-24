@@ -555,7 +555,7 @@ class Scan:
         status = self.state / ("%s.status" % wid)
         verb, text = last_status(status)
         self.wait_bound.discard(wid)
-        if verb in ("blocked", "failed"):
+        if verb in ("blocked", "failed", "needs-decision"):
             key = self.approval_key(wid)
             if key and decision_key(last_line(status)) == key:
                 self.wait_bound.add(wid)
@@ -606,18 +606,11 @@ class Scan:
             track.pop("green", None)
         else:
             track.setdefault("green", NOW)
-        excluded = self.approval_key(m.get("_id", "")) is not None
-        if excluded and green and NOW - track["green"] >= PR_GREEN:
-            # an approval wait in force preserves the PR and its clock; the
-            # release path is fm-approval-wait.sh release, not a merge demand
-            return None
-        if green and NOW - track["green"] >= PR_GREEN and pr_hold_label(view):
-            # a hold label is an explicit ready-only instruction; auto-land
-            # already reports it, so the clock keeps running but no demand fires
+        if self.approval_key(m.get("_id", "")) is not None or pr_hold_label(view):
             return None
         if green and NOW - track["green"] >= PR_GREEN:
             return "unmerged", track["green"], "green", url
-        if not green and "ci" in track and NOW - track["ci"] >= CI_STEP and not excluded:
+        if not green and "ci" in track and NOW - track["ci"] >= CI_STEP:
             return "ci-stuck", track["ci"], "ci", "%s, %s" % (url, pr_summary(view))
         return None
 
@@ -663,12 +656,12 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0}.get(cond, STUCK)
         if cond == "blocked" and wid in self.wait_bound:
-            # the blocked line carries the approval wait's own preserved decision
-            # key: an exact approval/publication wait, not a mate-decidable
-            # blocker. The episode record is preserved untouched and no action is
-            # demanded while the key stays bound; fm-approval-wait.sh release owns
-            # clearing it, and the mate's stuck bound restarts from that release.
-            rec["since"] = NOW
+            if not self.resolve(wid, rec, "is waiting for approval"):
+                save(rec_path, rec)
+                return
+            rec.update(since=NOW, woke=0, nudges=0, escalated=False, episode_fp=rec["fp"])
+            rec.pop("first", None)
+            rec.pop("captain_notified", None)
             save(rec_path, rec)
             return
         age = NOW - rec["since"]
