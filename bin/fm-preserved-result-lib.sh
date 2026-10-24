@@ -94,8 +94,9 @@ preserved_result_retire() ( # <id> <acceptance-json>
     run_state=$(fm_nm_runs_status_for_worktree "$wt" "$branch" "$ledger")
     [ "$(fm_nm_run_status_class "$run_state")" != live ] || refuse "finish or abort the original validation run before accepting its result"
     status=$(fm_nm_run_bounded "$wt" 10 axi status) || refuse "cannot establish validation run ownership"
-    [ -n "$status" ] && ! printf '%s\n' "$status" | grep -q '^error:' \
-      || refuse "cannot establish validation run ownership"
+    if [ -z "$status" ] || printf '%s\n' "$status" | grep -q '^error:'; then
+      refuse "cannot establish validation run ownership"
+    fi
     if printf '%s\n' "$status" | grep -q '^run:'; then
       run_branch=$(fm_nm_strip_quotes "$(fm_nm_field "$status" branch)")
       [ "$run_branch" = "$branch" ] || refuse "cannot establish validation run ownership"
