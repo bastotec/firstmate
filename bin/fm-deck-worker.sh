@@ -1208,7 +1208,7 @@ sys.stdout.write(recalled)
     turn_pipeline=("$deck_rc" "$tee_rc" "$jq_rc")
     [ "$monitor_failed" -eq 0 ] || return 1
   else
-    "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
+    "$DECK" "${args[@]}" </dev/null 7>&- | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
     turn_pipeline=("${PIPESTATUS[@]}")
   fi
   deck_stream_end
