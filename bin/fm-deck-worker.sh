@@ -1161,7 +1161,7 @@ sys.stdout.write(recalled)
       write_status() {
         printf '%s %s\n' "$tee_rc" "$jq_rc" > "$TURN_STATUS.tmp" \
           && mv -f "$TURN_STATUS.tmp" "$TURN_STATUS"
-        [ -z "$NAP_FD" ] || printf x >&"$NAP_FD" 2>/dev/null || true
+        [ -z "$NAP_FD" ] || printf x >&7 2>/dev/null || true
       }
       trap write_status EXIT
       tee "$EVENTS" < "$TURN_PIPE" | jq --unbuffered -rj "$RENDER" 2>/dev/null
