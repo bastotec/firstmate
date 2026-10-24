@@ -1158,3 +1158,118 @@ test_pr_watchdog_reads_latest_checks_and_survives_read_failures
 test_pr_checks_preserve_independent_and_unsettled_failures
 test_unreadable_pr_preserves_open_episodes
 test_legacy_pr_tracks_start_with_fresh_ownership
+
+# An approval-wait record as bin/fm-approval-wait.sh writes it, binding the task
+# to one exact open decision key. The home path must match the fixture home so
+# declare would accept it; the digest fields are opaque to the keep-alive.
+make_approval_wait() {  # <dir> <key>
+  cat > "$dir/home/state/w1.approval-wait" <<EOF
+{
+  "schema": "fm-approval-wait.v1",
+  "task": "w1",
+  "home": "$dir/home",
+  "decision_key": "$2",
+  "instruction_file": "$dir/instruction",
+  "instruction_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "metadata_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "declared": "2026-10-19T21:23:00Z"
+}
+EOF
+}
+
+# Case 10 (primary, 2026-10-19..23): three workers sat on terminal publication
+# refusals their parent explicitly preserved through an approval wait
+# (state/<id>.approval-wait binding the exact open decision key). The keep-alive
+# still demanded the mate unblock a preserved blocked line and merge a green PR
+# held ready-only. An approval wait in force excludes both action demands while
+# the exact key stays bound, without touching the episode records or clocks.
+test_approval_wait_excludes_action_demands_while_bound() {
+  local dir record
+  for scenario in unmerged ci-stuck; do
+    dir=$(make_home "approval-wait-$scenario" ship)
+    record="$dir/home/state/keepalive/w1.json"
+    printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
+    make_approval_wait "$dir" nm-01M5-pr-publication
+    if [ "$scenario" = unmerged ]; then
+      status "$dir" "$T0" 'done: PR ready; parent excludes merge until the publication key is released'
+      make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+      mature=$((T0 + 1800))
+    else
+      printf 'run=01M5\nstep=ci\nverdict=\n' > "$dir/home/state/w1.crew-state"
+      status "$dir" "$T0" 'working: validation reached CI'
+      make_pr "$dir" OPEN CONFLICTING DIRTY FAILURE
+      mature=$((T0 + 7200))
+    fi
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$mature"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3600))
+    assert_equals 0 "$(wake_count "$dir")" "an approval-wait-bound $scenario still demanded action"
+    jq -e --argjson first "$T0" '.cond == null and (.track.green // .track.ci) == $first' "$record" >/dev/null \
+      || fail "the approval wait cleared or restarted the $scenario clock"
+    rm "$dir/home/state/w1.approval-wait"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3601))
+    assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the $scenario demand"
+    jq -e --arg cond "$scenario" --argjson first "$T0" '.cond == $cond and .since == $first' "$record" >/dev/null \
+      || fail "the released $scenario condition was not re-raised from its preserved clock"
+  done
+  pass "an approval wait excludes merge and CI demands while bound and restores them on release"
+}
+
+# A blocked line bound to the approval wait's exact open decision key is the
+# preserved wait itself, not a blocker the mate must unblock: the release path
+# is fm-approval-wait.sh release, not a steer. A blocked line on any other key
+# still wakes the mate.
+test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
+  local dir record
+  dir=$(make_home approval-wait-blocked ship)
+  record="$dir/home/state/keepalive/w1.json"
+  make_approval_wait "$dir" publication-recovery-01M5
+  status "$dir" "$T0" 'blocked [key=publication-recovery-01M5]: terminal publication refusal preserved; awaiting the tooling owner release'
+  scan "$dir" $((T0 + 1200))
+  scan "$dir" $((T0 + 4000))
+  assert_equals 0 "$(wake_count "$dir")" "a preserved blocked line bound to the approval wait woke the mate"
+  assert_equals 0 "$(notice_count "$dir" 'worker w1')" "a preserved blocked line bound to the approval wait reached the captain"
+  jq -e '(.cond == null) or (.cond == "blocked" and (.woke // 0) == 0 and (.escalated | not))' "$record" >/dev/null \
+    || fail "the preserved blocked line opened an episode that demanded action"
+  rm "$dir/home/state/w1.approval-wait"
+  scan "$dir" $((T0 + 4001))
+  assert_equals 0 "$(wake_count "$dir")" "releasing the wait woke the mate before its own stuck bound"
+  scan "$dir" $((T0 + 4001 + 1200))
+  assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the blocked demand"
+  pass "a blocked line on the approval wait's exact key is preserved, not a mate blocker"
+}
+
+# A green PR whose forge state carries a hold label (fm-pr-lib's hold-label
+# disposition, one owner with fm-autoland.sh) is an explicit ready-only
+# instruction: auto-land already refuses to merge it, so the keep-alive must not
+# demand the merge behind that disposition. An unlabeled green PR still wakes.
+test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand() {
+  local dir
+  dir=$(make_home hold-label ship)
+  printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
+  status "$dir" "$T0" 'done: PR ready for review only'
+  make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+  python3 - "$dir/pr.json" <<'PY2'
+import json, sys
+v = json.load(open(sys.argv[1]))
+v["labels"] = {"nodes": [{"name": "do-not-merge"}]}
+json.dump(v, open(sys.argv[1], "w"))
+PY2
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1800))
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5400))
+  assert_equals 0 "$(wake_count "$dir")" "a hold-labelled green PR demanded a merge"
+  python3 - "$dir/pr.json" <<'PY2'
+import json, sys
+v = json.load(open(sys.argv[1]))
+v["labels"] = {"nodes": []}
+json.dump(v, open(sys.argv[1], "w"))
+PY2
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5401))
+  assert_equals 1 "$(wake_count "$dir")" "removing the hold label did not restore the merge demand"
+  pass "a hold-labelled green PR is ready-only and merges once the label is gone"
+}
+
+test_approval_wait_excludes_action_demands_while_bound
+test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker
+test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand

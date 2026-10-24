@@ -271,10 +271,8 @@ PR_JQ="$(fm_pr_attestation_jq)"'
                else .commits.nodes[0].commit.statusCheckRollup.contexts.nodes end // [])
     }'
 
-hold_label() {  # <csv labels>; prints the first hold label
-  printf '%s\n' "$1" | tr ',' '\n' \
-    | grep -iE '^(do[- ]?not[- ]?merge|hold|on[- ]hold|wip|blocked|security|destructive|breaking([- ]change)?)$' \
-    | head -n 1
+hold_label() {  # <csv labels>; prints the first hold label (fm-pr-lib.sh owns the rule)
+  fm_pr_hold_label "$1"
 }
 
 # Decide one normalized PR. Sets VERDICT (merge|hold|skip) and REASON.

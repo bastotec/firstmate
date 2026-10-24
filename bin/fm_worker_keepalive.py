@@ -36,6 +36,16 @@ Each scan reads one condition per worker, first match wins:
                The mate merges it (bin/fm-pr-merge.sh), subject to merge policy,
                or closes it if superseded. Read live through `gh pr view`
                (FM_KEEPALIVE_PR stands in for it in tests);
+               Explicit exclusions preserve the PR and its clocks without
+               demanding action: an approval wait in force on the task
+               (state/<id>.approval-wait; bin/fm-approval-wait.sh's admission
+               predicate is the authority) excludes unmerged and ci-stuck for
+               as long as the record exists, and a hold label on the PR
+               (bin/fm-pr-lib.sh's fm_pr_hold_label owns the label set) is an
+               explicit ready-only instruction that leaves the PR to auto-land's
+               own held-PR reporting. Both clocks keep running from their first
+               observation, so releasing the wait or removing the label restores
+               the ordinary demand without restarting it;
   ci-stuck     scans have observed the worker's validation run in its CI step
                (state/<id>.crew-state step=ci) for FM_KEEPALIVE_CI_STEP_SECS
                (7200), with its PR still open and not meeting the PR-state and
@@ -49,7 +59,13 @@ Each scan reads one condition per worker, first match wins:
                still resets when a scan observes a step other than ci.
                The green clock also resets on observed ineligibility;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
-  blocked      the last status line is blocked: or failed: - the mate must act;
+  blocked      the last status line is blocked: or failed: - the mate must act,
+               except a blocked: line carrying the task's own approval-wait
+               decision key (state/<id>.approval-wait), which is that exact
+               preserved approval/publication wait rather than a blocker to
+               unblock: bin/fm-approval-wait.sh release owns its release, no
+               action is demanded while the key stays bound, and the mate's
+               stuck bound restarts from the release scan;
   external     an active supervisor declaration from bin/fm-external-wait.sh
                suppresses held and no-progress detection until expiry, but
                never the higher-priority conditions above;
@@ -92,7 +108,8 @@ to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
 parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
 wake and then tells the captain (see Captain lines). A stall clears when the
 worker resumes with real progress, reports done: with a PR, or enters an
-external or non-mate-decidable wait, unless a higher-priority condition applies.
+external, approval-wait or non-mate-decidable wait, unless a higher-priority
+condition applies.
 An escalated episode's resolution is published through the same route when it
 clears or the worker leaves.
 
@@ -260,6 +277,15 @@ def last_status(path: Path):
     return m.group(1), m.group(3)
 
 
+def last_line(path: Path) -> str:
+    """The status file's last non-empty line verbatim, or ""."""
+    try:
+        lines = [ln for ln in path.read_text(errors="replace").splitlines() if ln.strip()]
+    except OSError:
+        return ""
+    return lines[-1] if lines else ""
+
+
 def mate_decidable(verb: str, text: str) -> bool:
     """A paused:/captain-held line the mate can decide itself (see docstring)."""
     if verb == "paused" and UNTIL_RE.search(text):
@@ -358,7 +384,7 @@ def result_trail(state: Path) -> str:
 def pr_view(url: str):
     """Live state of one PR as gh reports it (state, draft, mergeability, checks), or None."""
     cmd = [os.environ["FM_KEEPALIVE_PR"], url] if os.environ.get("FM_KEEPALIVE_PR") else [
-        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,statusCheckRollup"]
+        "gh", "pr", "view", url, "--json", "state,isDraft,mergeable,labels,statusCheckRollup"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         return json.loads(r.stdout) if r.returncode == 0 else None
@@ -402,6 +428,33 @@ def pr_green(view: dict) -> bool:
 def pr_summary(view: dict) -> str:
     bad = sorted({c.lower() for c in latest_checks(view)} - {"success", "neutral", "skipped"})
     return "mergeable %s, checks %s" % ((view.get("mergeable") or "unknown").lower(), ", ".join(bad) or "green")
+
+
+def pr_hold_label(view: dict) -> str:
+    """First hold label on the PR, reusing fm-pr-lib.sh's one hold-label rule."""
+    r = bash('. "$1/fm-pr-lib.sh"; fm_pr_hold_label "$2"', str(SCRIPT_DIR), json.dumps(view))
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def approval_wait(state: Path, wid: str) -> str:
+    """The task's bound approval-wait decision key, or "" when none is in force.
+
+    Reuses fm-approval-wait.sh's admission predicate verbatim: any existing
+    record object (fm-approval-wait.v1) is an exclusion in force, and only its
+    explicit release clears it. Reading creates nothing and holds no lock.
+    """
+    r = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_admit "$2" "$3" '
+             '|| jq -r ".decision_key // \\"\\"" "$2/$3.approval-wait" 2>/dev/null',
+             str(SCRIPT_DIR), str(state), wid)
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def decision_key(line: str) -> str:
+    """The decision key a status line carries in its [key=...] group, or ""."""
+    m = STATUS_RE.match(line)
+    key = (m.group(2) if m else "") or ""
+    keys = re.findall(r"key=([A-Za-z0-9._-]+)", key)
+    return keys[-1] if keys else ""
 
 
 def minutes(secs: int) -> int:
@@ -465,6 +518,8 @@ class Scan:
         marker = h / ".fm-secondmate-home"
         self.primary = not (marker.exists() or marker.is_symlink())
         self.escalate_after = ESCALATE if self.primary else FOLLOW
+        self._approval_keys = {}
+        self.wait_bound = set()
 
     def tell_captain(self, key: str, text: str, after: str) -> bool:
         notify = os.environ.get("FM_KEEPALIVE_NOTIFY") or str(SCRIPT_DIR / "fm-notify.sh")
@@ -513,6 +568,13 @@ class Scan:
             return "dead", NOW, verb or "", text
         opened = min(NOW, mtime(status) or NOW)
         if verb in ("blocked", "failed"):
+            key = decision_key(last_line(status))
+            if key and key == self.approval_key(wid):
+                # the blocked line carries the approval wait's own decision key:
+                # that exact preserved wait, not a mate-decidable blocker
+                self.wait_bound.add(wid)
+            else:
+                self.wait_bound.discard(wid)
             return "blocked", opened, verb, text
         if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
             # waiting on CI or a merge has its own bounds above; it is not a stall
@@ -548,11 +610,27 @@ class Scan:
             track.pop("green", None)
         else:
             track.setdefault("green", NOW)
+        excluded = self.approval_key(m.get("_id", ""))
+        if excluded and green and NOW - track["green"] >= PR_GREEN:
+            # an approval wait in force preserves the PR and its clock; the
+            # release path is fm-approval-wait.sh release, not a merge demand
+            return None
+        if green and NOW - track["green"] >= PR_GREEN and pr_hold_label(view):
+            # a hold label is an explicit ready-only instruction; auto-land
+            # already reports it, so the clock keeps running but no demand fires
+            return None
         if green and NOW - track["green"] >= PR_GREEN:
             return "unmerged", track["green"], "green", url
-        if not green and "ci" in track and NOW - track["ci"] >= CI_STEP:
+        if not green and "ci" in track and NOW - track["ci"] >= CI_STEP and not excluded:
             return "ci-stuck", track["ci"], "ci", "%s, %s" % (url, pr_summary(view))
         return None
+
+    def approval_key(self, wid: str) -> str:
+        cached = self._approval_keys.get(wid)
+        if cached is None:
+            cached = approval_wait(self.state, wid)
+            self._approval_keys[wid] = cached
+        return cached
 
     def one(self, wid: str, m: dict) -> None:
         rec_path = self.dir / ("%s.json" % wid)
@@ -590,6 +668,15 @@ class Scan:
             rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "episode_fp": rec["fp"], "cond": cond, "since": since,
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0}.get(cond, STUCK)
+        if cond == "blocked" and wid in self.wait_bound:
+            # the blocked line carries the approval wait's own preserved decision
+            # key: an exact approval/publication wait, not a mate-decidable
+            # blocker. The episode record is preserved untouched and no action is
+            # demanded while the key stays bound; fm-approval-wait.sh release owns
+            # clearing it, and the mate's stuck bound restarts from that release.
+            rec["since"] = NOW
+            save(rec_path, rec)
+            return
         age = NOW - rec["since"]
         if (rec.get("escalated") and (not self.primary or rec.get("captain_notified"))) or (
                 not rec["woke"] and age < bound):
@@ -751,6 +838,7 @@ class Scan:
         save(rec_path, rec)
 
     def scan(self) -> None:
+        self.wait_bound = set()
         try:
             self.autoland()
         except (OSError, ValueError, subprocess.TimeoutExpired) as error:
