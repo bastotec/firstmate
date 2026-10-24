@@ -11,9 +11,11 @@ watches its own. Overlapping scans of one home exit zero quietly under a
 non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
-  approval     the last blocked:, failed:, needs-decision: or paused: line
-               carries the task's exact nonempty approval-wait decision key,
-               parsed by bin/fm-classify-lib.sh. The wait still keeps automatic
+  approval     a record in force for FM_KEEPALIVE_APPROVAL_SECS (3600),
+               regardless of the worker's last status. While fresh, only an
+               exact nonempty decision key on a blocked:, failed:,
+               needs-decision: or paused: line takes precedence, parsed by
+               bin/fm-classify-lib.sh. The wait still keeps automatic
                retry, retirement and PR merge demands away from the worker
                (bin/fm-approval-wait.sh owns the binding and explicit release),
                but it is never an endpoint: FM_KEEPALIVE_APPROVAL_SECS (3600)
@@ -528,6 +530,7 @@ class Scan:
         self.primary = not (marker.exists() or marker.is_symlink())
         self.escalate_after = ESCALATE if self.primary else FOLLOW
         self._approval_keys = {}
+        self._approval_ids = {}
         self.wait_bound = set()
 
     def tell_captain(self, key: str, text: str, after: str) -> bool:
@@ -549,7 +552,8 @@ class Scan:
         """Raise (blocked) or resolve one plain line beyond this home."""
         script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
                   'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
-        rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, str(rec["first"]), text, timeout=120).returncode
+        episode = str(rec["first"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
+        rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, episode, text, timeout=120).returncode
         if rc == 1:  # the first mate's own home: its parent is the captain
             if verb == "blocked":
                 return self.tell_captain("keepalive:%s:escalate:%d" % (wid, NOW), text,
@@ -567,12 +571,18 @@ class Scan:
         status = self.state / ("%s.status" % wid)
         verb, text = last_status(status)
         self.wait_bound.discard(wid)
-        if verb in ("blocked", "failed", "needs-decision", "paused"):
-            key = self.approval_key(wid)
-            if key and decision_key(last_line(status)) == key:
+        key = self.approval_key(wid)
+        if key is not None:
+            try:
+                stamp = (self.state / ("%s.approval-wait" % wid)).lstat().st_mtime_ns
+            except OSError:
+                stamp = NOW * 1_000_000_000
+            declared = min(NOW, stamp // 1_000_000_000)
+            if NOW - declared >= APPROVAL or (verb in ("blocked", "failed", "needs-decision", "paused")
+                                              and key and decision_key(last_line(status)) == key):
                 self.wait_bound.add(wid)
-                declared = mtime(self.state / ("%s.approval-wait" % wid)) or NOW
-                return "approval", min(NOW, declared), verb, text
+                self._approval_ids[wid] = hashlib.sha256(("%d:%s" % (stamp, key)).encode()).hexdigest()[:16]
+                return "approval", declared, verb, text
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
@@ -661,12 +671,14 @@ class Scan:
             return
         if rec.get("cond") in STALL_CONDITIONS and cond in STALL_CONDITIONS:
             rec["cond"] = cond
-        elif rec.get("cond") != cond:
+        elif rec.get("cond") != cond or (cond == "approval" and rec.get("approval_id") != self._approval_ids[wid]):
             if rec.get("cond") and not self.resolve(wid, rec, "is no longer %s" % rec["cond"]):
                 save(rec_path, rec)
                 return
             rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "episode_fp": rec["fp"], "cond": cond, "since": since,
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
+            if cond == "approval":
+                rec["approval_id"] = self._approval_ids[wid]
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0,
                  "approval": APPROVAL}.get(cond, STUCK)
         age = NOW - rec["since"]
@@ -692,7 +704,8 @@ class Scan:
         waiting = result_trail(self.state) if cond == "undelivered" else ""
         reminder = (". A steer, acknowledgment or relay is not a fix: if it is still stuck, %s is told in %d minutes"
                     % ("the captain" if self.primary else "your parent mate", minutes(self.escalate_after)))
-        if self.wake("keepalive:%s:%s:%d" % (wid, cond, rec["since"]), instruction(wid, cond, age, verb, text, waiting) + reminder):
+        episode = str(rec["since"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
+        if self.wake("keepalive:%s:%s:%s" % (wid, cond, episode), instruction(wid, cond, age, verb, text, waiting) + reminder):
             rec.update(woke=NOW, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
