@@ -203,6 +203,9 @@
 #   FM_DECK_MAX_TURNS       model calls per turn (default 200; Deck's own 24 is
 #                           sized for a single question, not a coding task)
 #   FM_DECK_DEADLINE_SECS   wall-clock bound per turn (default 3600)
+#   FM_DECK_IDLE_POLL_SECS  idle and running-turn fallback poll interval
+#                           (integer seconds; default 1; empty, 0, or
+#                           nonnumeric values use the default)
 #   FM_DECK_CAPTAIN_RETRY_SECS  initial delay after a recoverably failed idle
 #                           direct-source wake (seconds; default 30; empty or
 #                           nonnumeric values use the default; 0 allows an
@@ -386,6 +389,28 @@ WATCH_PUBLICATION_SEQ=0
 TURN_STATUS="$WORK/turn-pipeline.status"
 TURN_PIPE="$WORK/turn-events.pipe"
 mkfifo "$TURN_PIPE" || exit 1
+# Keep waits fork-free with bash's builtin read -t; integer timeouts also work
+# on stock macOS bash 3.2. The stdin reader rings fd 7 on input and captain
+# sequence publication, and the secondmate render pipeline rings it at turn end.
+# Opening the FIFO read-write avoids waiting for a writer to attach; watcher,
+# captain-lane, Deck, and stdin-reader children must close the inherited fd 7.
+# tests/fm-deck-harness.test.sh::test_idle_host_waits_without_forking_and_wakes_on_input
+# covers idle process sampling and prompt /quit delivery.
+NAP_FIFO="$WORK/nap.doorbell"
+NAP_SECS=${FM_DECK_IDLE_POLL_SECS:-1}
+case "$NAP_SECS" in ''|*[!0-9]*) NAP_SECS=1 ;; esac
+[ "$NAP_SECS" -gt 0 ] 2>/dev/null || NAP_SECS=1
+mkfifo "$NAP_FIFO" || exit 1
+exec 7<>"$NAP_FIFO" || exit 1
+nap() {
+  local stopped=0
+  # Let read unwind its timeout before exiting: cleanup inside its signal trap
+  # can otherwise be interrupted by read's still-armed alarm.
+  trap 'stopped=1; printf x >&7' HUP TERM
+  read -r -t "$NAP_SECS" -n 1 -u 7 _ 2>/dev/null || true
+  trap 'exit 1' HUP TERM
+  [ "$stopped" -eq 0 ] || exit 1
+}
 TTY_SETTINGS=''
 [ ! -t 0 ] || TTY_SETTINGS=$(stty -g 2>/dev/null || true)
 tty_busy() { [ -z "$TTY_SETTINGS" ] || stty icanon 2>/dev/null || true; }
@@ -450,7 +475,7 @@ lane_start() {
       && [ "$(head -n 1 "$STATE/$ID.deck-session" 2>/dev/null || true)" = "$LANE_OLD_BINDING" ]; then
     fresh=1
   fi
-  FM_DECK_FRESH_SESSION=$fresh "$SCRIPT_DIR/fm-captain-lane.sh" "${lane[@]}" </dev/null 2>>"$STATE/$ID.captain-lane.log" >/dev/null &
+  FM_DECK_FRESH_SESSION=$fresh "$SCRIPT_DIR/fm-captain-lane.sh" "${lane[@]}" </dev/null 2>>"$STATE/$ID.captain-lane.log" >/dev/null 7>&- &
   LANE_PID=$!
 }
 lane_stop() {
@@ -462,7 +487,12 @@ lane_stop() {
 
 # The header's HOST SHUTDOWN section owns this order and its bounds.
 cleanup() {
+  # bash times `read -t` (nap) with an alarm that a TERM arriving mid-read can
+  # leave armed, and its default action would kill cleanup halfway. A no-op
+  # handler, not an ignore: an ignored ALRM would be inherited by every helper
+  # cleanup starts and break their own timeouts.
   trap '' TERM INT HUP
+  trap ':' ALRM
   deck_stream_end
   [ -z "$WATCH_PID" ] || fm_begin_child_stop "$WATCH_PID"
   [ -z "$LANE_PID" ] || fm_begin_child_stop "$LANE_PID"
@@ -763,7 +793,7 @@ watch_start() {
     else
       exec "$SCRIPT_DIR/fm-watch-arm.sh"
     fi
-  ) >> "$WORK/watch.out" 2>&1 &
+  ) >> "$WORK/watch.out" 2>&1 7>&- &
   WATCH_PID=$!
   [ -z "$predecessor" ] || watch_wait_handling_successor
 }
@@ -899,10 +929,21 @@ from fm_stream_deck import idle_captain_sequence
 signal.signal(signal.SIGINT, signal.SIG_IGN)
 root = pathlib.Path(sys.argv[1])
 seq, partial, captain = 0, b"", None
+try:
+    bell = os.open(sys.argv[5], os.O_WRONLY | os.O_NONBLOCK)
+except (OSError, IndexError):
+    bell = None
+def ring():
+    if bell is not None:
+        try:
+            os.write(bell, b"x")
+        except OSError:
+            pass
 def publish(name, data):
     tmp = root / (name + ".tmp")
     tmp.write_bytes(data)
     os.replace(tmp, root / name)
+    ring()
 while True:
     try:
         newest = idle_captain_sequence(sys.argv[3], sys.argv[4], 0)
@@ -927,7 +968,8 @@ if partial:
     publish("input." + str(seq), partial)
     publish("input.partial", b"")
 (root / "input.eof").touch()
-' "$WORK" "$SCRIPT_DIR" "$STATE" "$ID" <&0 &
+ring()
+' "$WORK" "$SCRIPT_DIR" "$STATE" "$ID" "$NAP_FIFO" <&0 7>&- &
 INPUT_PID=$!
 
 if [ "$SECONDMATE" = 1 ]; then
@@ -1124,6 +1166,7 @@ sys.stdout.write(recalled)
       write_status() {
         printf '%s %s\n' "$tee_rc" "$jq_rc" > "$TURN_STATUS.tmp" \
           && mv -f "$TURN_STATUS.tmp" "$TURN_STATUS"
+        printf x >&7 2>/dev/null || true
       }
       trap write_status EXIT
       tee "$EVENTS" < "$TURN_PIPE" | jq --unbuffered -rj "$RENDER" 2>/dev/null
@@ -1134,7 +1177,7 @@ sys.stdout.write(recalled)
       trap - EXIT
     ) &
     TURN_RENDER_PID=$!
-    "$DECK" "${args[@]}" </dev/null > "$TURN_PIPE" &
+    "$DECK" "${args[@]}" </dev/null > "$TURN_PIPE" 7>&- &
     TURN_PID=$!
     STOP_REQUESTED_AT=''
     while kill -0 "$TURN_PID" 2>/dev/null; do
@@ -1157,7 +1200,7 @@ sys.stdout.write(recalled)
       fi
       # A captain lane that dies mid-turn comes back now, not after the turn.
       lane_start || printf 'fm-deck-worker: could not restart the captain lane\n' >&2
-      sleep 0.1
+      nap
     done
     wait "$TURN_PID" 2>/dev/null
     deck_rc=$?
@@ -1176,7 +1219,7 @@ sys.stdout.write(recalled)
     turn_pipeline=("$deck_rc" "$tee_rc" "$jq_rc")
     [ "$monitor_failed" -eq 0 ] || return 1
   else
-    "$DECK" "${args[@]}" </dev/null | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
+    "$DECK" "${args[@]}" </dev/null 7>&- | tee "$EVENTS" | jq --unbuffered -rj "$RENDER" 2>/dev/null
     turn_pipeline=("${PIPESTATUS[@]}")
   fi
   deck_stream_end
@@ -1552,7 +1595,7 @@ while :; do
     elif ! kill -0 "$INPUT_PID" 2>/dev/null; then
       host_failure 'stdin reader failed'; exit 1
     else
-      sleep 0.1
+      nap
       continue
     fi
   elif pipeline_wait; then
@@ -1570,7 +1613,7 @@ while :; do
   elif ! kill -0 "$INPUT_PID" 2>/dev/null; then
     host_failure 'stdin reader failed'; exit 1
   else
-    sleep 0.1
+    nap
     continue
   fi
   case "$line" in

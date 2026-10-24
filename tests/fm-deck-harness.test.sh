@@ -147,6 +147,89 @@ run_worker() {
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- "$prompt" > "$dir/pane.out" 2>&1
 }
 
+test_idle_host_waits_without_forking_and_wakes_on_input() {
+  local dir gen host sleeps start elapsed poll cpu_before cpu_after
+  for poll in 1 0 00 000; do
+  dir="$TMP_ROOT/idle-no-fork-$poll"
+  sleeps=0
+  make_fake_deck "$dir"
+  mkdir -p "$dir/state"
+  mkfifo "$dir/stdin"
+  gen=$("$BUSY_EVENT" arm "$dir/state" t1)
+  FM_DECK_IDLE_POLL_SECS="$poll" \
+    FM_TEST_STATUS="$dir/state/t1.status" FM_TEST_BUSY_EVENT="$BUSY_EVENT" \
+    "$WORKER" --id t1 --state "$dir/state" --gen "$gen" \
+      --deck "$dir/deck" --model codex/gpt-5.6-luna -- write-status < "$dir/stdin" > "$dir/pane.out" 2>&1 &
+  host=$!
+  exec 8>"$dir/stdin"
+  for _ in $(seq 1 100); do
+    grep -q 'turn finished' "$dir/pane.out" 2>/dev/null && break
+    sleep 0.1
+  done
+  grep -q 'turn finished' "$dir/pane.out" || { exec 8>&-; kill "$host" 2>/dev/null; fail "setup: the first turn did not finish: $(cat "$dir/pane.out")"; }
+  sleep 0.5
+  cpu_before=$(ps -o time= -p "$host")
+  for _ in $(seq 1 30); do
+    if ps -Ao ppid=,comm= | awk -v p="$host" '$1 == p && $2 ~ /sleep$/ {found=1} END {exit !found}'; then
+      sleeps=$((sleeps + 1))
+    fi
+    sleep 0.1
+  done
+  cpu_after=$(ps -o time= -p "$host")
+  start=$(python3 -c 'import time; print(time.time())')
+  printf '/quit\n' >&8
+  for _ in $(seq 1 50); do
+    kill -0 "$host" 2>/dev/null || break
+    sleep 0.05
+  done
+  elapsed=$(python3 -c "import time; print(round(time.time() - $start, 2))")
+  exec 8>&-
+  if kill -0 "$host" 2>/dev/null; then kill "$host" 2>/dev/null; fail "the idle host did not exit on /quit"; fi
+  wait "$host" 2>/dev/null || true
+  [ "$sleeps" -le 3 ] || fail "an idle host kept forking sleep: seen in $sleeps of 30 samples"
+  python3 -c "import sys; sys.exit(0 if $elapsed < 0.9 else 1)" \
+    || fail "typed input waited for the poll instead of the doorbell (${elapsed}s)"
+  python3 - "$cpu_before" "$cpu_after" <<'PYTHON' || fail "an idle host busy-spun with poll=$poll"
+import sys
+
+def seconds(value):
+    total = 0.0
+    for part in value.strip().split(':'):
+        total = total * 60 + float(part)
+    return total
+
+assert seconds(sys.argv[2]) - seconds(sys.argv[1]) < 1, sys.argv[1:]
+PYTHON
+  pass "fm-deck-worker: an idle host waits without forking and wakes on typed input (poll=$poll)"
+  done
+}
+
+test_doorbell_initialization_failure_stops_startup() {
+  local dir mode rc
+  for mode in create open; do
+    dir="$TMP_ROOT/doorbell-failure-$mode"
+    make_fake_deck "$dir"
+    mkdir -p "$dir/bin"
+    cat > "$dir/bin/mkfifo" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  */nap.doorbell)
+    [ "$FM_TEST_DOORBELL_FAILURE" = open ] || exit 1
+    mkdir "$1"
+    ;;
+  *) exec "$FM_TEST_REAL_MKFIFO" "$@" ;;
+esac
+SH
+    chmod +x "$dir/bin/mkfifo"
+    rc=0
+    FM_TEST_REAL_MKFIFO="$(command -v mkfifo)" FM_TEST_DOORBELL_FAILURE="$mode" \
+      PATH="$dir/bin:$PATH" run_worker "$dir" $'/quit\n' write-status || rc=$?
+    [ "$rc" = 1 ] || fail "doorbell $mode failure did not stop startup (exit=$rc)"
+    [ ! -f "$dir/argv.log" ] || fail "doorbell $mode failure still launched Deck"
+  done
+  pass "fm-deck-worker: doorbell creation and open failures stop startup"
+}
+
 test_worker_does_not_inherit_async_ring() {
   local dir="$TMP_ROOT/ring-env"
   [ "${FM_SEND_RING_ASYNC+x}" != x ] || fail "the test library retained the supervisor's async ring setting"
@@ -1923,7 +2006,9 @@ SH
     chmod +x "$dir/bin/fm-watch.sh"
   fi
   chmod +x "$dir/bin/fm-watch-arm.sh"
-  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_DECK_CHILD_STOP_SECS=2 FM_ARM_CHILD_STOP_SECS=1 python3 - "$dir" "$mode" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
+  # Use the host's default child grace: the real arm needs time to stop its
+  # child and publish the cycle result before the host's outer deadline.
+  FM_TEST_SYSTEM_PS="$FM_TEST_SYSTEM_PS" FM_ARM_CHILD_STOP_SECS=1 python3 - "$dir" "$mode" <<'PYTHON' || fail "a secondmate host did not bound its watcher stop at shutdown"
 import os, pathlib, signal, subprocess, sys, time
 root = pathlib.Path(sys.argv[1])
 home = root / 'home'
@@ -1964,6 +2049,8 @@ with (root/'pane').open('w') as output:
         p.wait(timeout=30)
         took = time.monotonic() - started
         assert took < 8, (took, (root/'pane').read_text())
+        expected_rc = 0 if sys.argv[2] == 'quit-term' else 1
+        assert p.returncode == expected_rc, (p.returncode, (root/'pane').read_text())
         assert not alive(arm), 'the host left its watcher arm running'
         assert not alive(writer), "the host left its watcher's helper running"
         if sys.argv[2] == 'quit-term':
@@ -4372,4 +4459,6 @@ test_pipeline_input_wins_during_state_probe
 test_pipeline_deadline_expiring_during_probe_does_not_wake
 test_pipeline_clear_and_doorbell_preempt_polling
 test_pipeline_disabled_scout_and_already_parked_do_not_wake
+test_idle_host_waits_without_forking_and_wakes_on_input
+test_doorbell_initialization_failure_stops_startup
 echo "fm-deck-harness: all cases passed"
