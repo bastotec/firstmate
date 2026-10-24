@@ -142,7 +142,8 @@
 # bin/fm_primary_chat.py), so every restart resumes that role's deck session.
 #
 # ENVIRONMENT
-#   FM_DECK_BIN            deck executable (default: deck on PATH)
+#   FM_DECK_BIN            deck executable (default: deck on PATH, else on the
+#                          composed tool PATH of bin/fm-remote-job-lib.sh)
 #   FM_DECK_MCP_CONFIG     as for bin/fm-deck-worker.sh: non-empty = pass as-is,
 #                          empty = no MCP; unset = <home>/config/deck-mcp.json
 #                          when it exists
@@ -543,6 +544,12 @@ fi
 unset FM_DECK_CHAT_HOST
 cd "$FM_HOME" || exit 2
 DECK=${FM_DECK_BIN:-$(command -v deck 2>/dev/null || true)}
+if [ -z "$DECK" ]; then
+  # A bare post-reboot PATH lacks the user-level install dirs; the remote job
+  # library owns the composed tool PATH that covers them.
+  DECK=$(bash -c '. "$1" && fm_remote_job_compose_operator_path "$2" >/dev/null &&
+    fm_remote_job_operator_tool deck' fm-deck-chat "$SCRIPT_DIR/fm-remote-job-lib.sh" "${HOME:-}" 2>/dev/null || true)
+fi
 [ -n "$DECK" ] && [ -x "$DECK" ] || die 'deck is not installed (set FM_DECK_BIN)' 2
 chat_help=$("$DECK" chat --help 2>&1) || die "$DECK has no chat command" 2
 case "$chat_help" in *--steer-dir*) ;; *) die "$DECK chat has no --steer-dir" 2 ;; esac

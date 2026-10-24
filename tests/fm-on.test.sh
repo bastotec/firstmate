@@ -255,6 +255,9 @@ expect_dir "$REMOTE_ROOT/bin"
 if [ -d "$ACCOUNT_HOME/.local/bin" ] && [ ! -L "$ACCOUNT_HOME/.local/bin" ]; then
   expect_dir "$ACCOUNT_HOME/.local/bin"
 fi
+for candidate in "$ACCOUNT_HOME/.cargo/bin" "$ACCOUNT_HOME/.no-mistakes/bin"; do
+  [ -d "$candidate" ] && [ ! -L "$candidate" ] && expect_dir "$candidate"
+done
 for candidate in "${NVM_CHILD_DIRS[@]}"; do expect_dir "$candidate"; done
 for candidate in "${MANAGER_DIRS[@]}"; do
   [ -d "$candidate" ] && [ ! -L "$candidate" ] && expect_dir "$candidate"
@@ -432,12 +435,13 @@ pass "tracked-command authorization excludes checkout-local git"
 
 set +e
 out=$(
+  # Model an unavailable operator git at the filesystem lookup boundary.
   # shellcheck disable=SC2329 # Exported for indirect use by fm_on.
-  command() {
-    if [ "${1:-}" = -v ] && [ "${2:-}" = git ]; then return 1; fi
-    builtin command "$@"
+  function [ {
+    if [[ ${1:-} = -f && ${2:-} = */git ]]; then return 1; fi
+    builtin [ "$@"
   }
-  export -f command
+  export -f '['
   fm_on ios fm-remote-doctor.sh 2>&1
 )
 set -e
@@ -445,12 +449,13 @@ assert_contains "$out" 'mode=check' "the trusted doctor could not bootstrap whil
 printf '\n' >> "$REMOTE_ROOT/bin/fm-remote-doctor.sh"
 set +e
 out=$(
+  # Model an unavailable operator git at the filesystem lookup boundary.
   # shellcheck disable=SC2329 # Exported for indirect use by fm_on.
-  command() {
-    if [ "${1:-}" = -v ] && [ "${2:-}" = git ]; then return 1; fi
-    builtin command "$@"
+  function [ {
+    if [[ ${1:-} = -f && ${2:-} = */git ]]; then return 1; fi
+    builtin [ "$@"
   }
-  export -f command
+  export -f '['
   fm_on ios fm-remote-doctor.sh 2>&1
 )
 rc=$?
