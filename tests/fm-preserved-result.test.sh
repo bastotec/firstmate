@@ -218,7 +218,11 @@ cmp "$C/result.md" "$H/data/finite/preserved-result/result.md"
 [ "$(fm_test_fake_stream_endpoints | jq -r --arg e "${target##*:}" '.endpoints[] | select(.endpoint_id == $e) | .closed_by')" = agent ] || fail 'endpoint did not confirm stop'
 run_retirement
 assert_preserved
-if FM_HOME="$H" "$ROOT/bin/fm-teardown.sh" finite --force > "$C/cleanup" 2>&1; then fail 'ordinary force cleanup released retained allocation'; fi
+cleanup_rc=0
+FM_HOME="$H" "$ROOT/bin/fm-teardown.sh" finite --force > "$C/cleanup" 2>&1 || cleanup_rc=$?
+[ "$cleanup_rc" = 1 ] || fail "ordinary force cleanup returned $cleanup_rc instead of guard refusal"
+assert_contains "$(cat "$C/cleanup")" 'REFUSED: finite retains its original allocation for an accepted result; ordinary teardown cannot release it.' 'ordinary cleanup did not reach the retained-allocation guard'
+assert_preserved
 if FM_HOME="$H" "$RETIRE" --finished finite > "$C/cleanup" 2>&1; then fail 'automatic retirement accepted retained allocation'; fi
 if FM_HOME="$H" "$ROOT/bin/fm-control.sh" finite recover-missing > "$C/control" 2>&1; then fail 'recovery resumed retained work'; fi
 pass 'accepted knowledge closes a confirmed live endpoint, preserves original dirty bytes/history/claim and converges on retry'
