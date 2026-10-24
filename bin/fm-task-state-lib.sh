@@ -89,15 +89,17 @@
 #      running/fixing with recent reported activity: a killed or timed-out drive
 #      call is not daemon death, so that claim is answered by steering the crew
 #      to reattach, not by escalating.
-#   4. A failed or timed-out validation query reports unknown with run-step
-#      evidence. This intentionally replaces the former pane fallback: a busy
-#      worker cannot establish an unavailable validation outcome and can mask a
-#      dead run; unavailability is not proof the task stopped.
-#      A successful lookup with no attributable run (including an empty response),
-#      or a task that skips validation lookup under step 2: fall back to the
-#      recorded backend's pane busy state, then the status log's last line only
-#      when its verb maps to a recognized run-state. Decision-only events such as
-#      `resolved` never become current state or detail.
+#   4. A failed `axi status` query answering `error: repo not initialized`
+#      establishes that no run exists for this copy; tests/fm-crew-state.test.sh
+#      pins this exception and the fail-closed behavior of other failed reads.
+#      Every other failed or timed-out validation query reports unknown with
+#      run-step evidence: a busy worker cannot establish an unavailable validation
+#      outcome and can mask a dead run; unavailability is not proof the task stopped.
+#      An uninitialized repository, a successful lookup with no attributable run
+#      (including an empty response), or a task that skips validation lookup under
+#      step 2: fall back to the recorded backend's pane busy state, then the status
+#      log's last line only when its verb maps to a recognized run-state.
+#      Decision-only events such as `resolved` never become current state or detail.
 #   5. Missing meta or torn-down worktree: report unknown · none. If no run is
 #      attributed to this crew, a dead endpoint also reports unknown · none rather
 #      than trusting a stale status log. On classifier-backed runtimes, only
@@ -934,11 +936,7 @@ DELIVERY_MODE=$(meta_value mode)
 if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1 \
   && [ "$DELIVERY_MODE" != local-only ] && [ "$DELIVERY_MODE" != direct-PR ]; then
   if ! RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status); then
-    # A repository never initialized for no-mistakes is a definite answer,
-    # not an unreadable one: no run can exist for this copy, so read the
-    # worker's own pane/log like any run-less task. Treating it as unknown
-    # left such workers unclassifiable forever, so bin/fm-idle-sweep.sh
-    # could never apply its stopped-worker rule or hand them off.
+    # Step 4 above owns the sole failed-query exception and fallback contract.
     if printf '%s\n' "$RUN_OUT" | grep -q '^error: repo not initialized'; then
       RUN_OUT=
     else
@@ -974,8 +972,8 @@ if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/n
       # branch with a head this copy cannot verify (a pipeline-advanced fix
       # round, or a rewritten tip). Deliberately nested inside
       # `[ -n "$RUN_OUT" ]`: a successful empty response supplies no run to
-      # reconcile through the ledger. Failed or timed-out primary calls already
-      # returned unknown above, without a second bounded query.
+      # reconcile through the ledger. Step 4 above owns failed-query handling;
+      # no second bounded query is made after a failed or timed-out primary call.
       runs_list=$(nm_runs_list)
       COARSE_STATUS=$(fm_nm_runs_status_for_worktree "$WT" "$CREW_BRANCH" "$runs_list")
       if [ -n "$COARSE_STATUS" ]; then
