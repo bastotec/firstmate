@@ -1102,6 +1102,63 @@ test_arm_reports_an_unparseable_wake_library_as_a_broken_install() {
   pass "watch-arm: an unparseable wake library is a broken install, not a resource problem"
 }
 
+test_handling_successor_starts_while_queue_is_owned() {
+  local dir state home holder watcher_pid i
+  dir=$(make_case handling-queue-contention)
+  state="$dir/state"
+  home="$dir/home"
+  mkdir -p "$home/data"
+  printf 'announced:handling:queue-fixture\n' > "$state/.watcher-down"
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" bash -c '
+    . "$1/bin/fm-wake-lib.sh"
+    fm_lock_try_acquire "$STATE/.wake-queue.lock" || exit 1
+    trap '\''fm_lock_release "$STATE/.wake-queue.lock"'\'' EXIT
+    trap '\''exit 143'\'' TERM INT
+    printf "ready\n" > "$STATE/queue-held"
+    for ((i=0; i<1200; i++)); do
+      [ -d "$STATE" ] && [ ! -e "$STATE/release-queue" ] || exit 0
+      sleep 0.1
+    done
+    exit 1
+  ' _ "$ROOT" > "$dir/holder.out" 2>&1 &
+  holder=$!
+  fm_test_track_helper_pid "$holder"
+  wait_for_file_text "$state/queue-held" '' || fail "queue owner did not start"
+
+  FM_HOME="$home" FM_STATE_OVERRIDE="$state" FM_WATCH_PREDECESSOR_ARM_PID=4242 \
+    FM_POLL=1 FM_SIGNAL_GRACE=0 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_CONFIRM_TIMEOUT=30 "$WATCH_ARM" > "$dir/arm.out" 2>&1 &
+  ARM_PID=$!
+  fm_test_track_helper_pid "$ARM_PID"
+  i=0
+  while [ "$i" -lt 600 ]; do
+    grep -q 'beacon fresh.*recovery-generation=queue-fixture' "$dir/arm.out" && break
+    is_live_non_zombie "$ARM_PID" || break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  grep -q 'beacon fresh.*recovery-generation=queue-fixture' "$dir/arm.out" \
+    || fail "successor waited for the driver's queue owner before readiness: $(cat "$dir/arm.out")"
+  watcher_pid=$(cat "$state/.watch.lock/pid")
+  [ -s "$state/.watch.lock/pid-identity" ] && [ -e "$state/.last-watcher-beat" ] \
+    || fail "readiness lacked singleton identity or beacon"
+  [ "$(cat "$state/.wake-queue.lock/pid")" = "$holder" ] \
+    || fail "successor stole the live queue owner's lock"
+  [ "$(cat "$state/.watcher-down")" = announced:handling:queue-fixture ] \
+    || fail "successor changed the driver-owned recovery episode"
+  is_live_non_zombie "$watcher_pid" || fail "successor exited instead of supervising"
+
+  touch "$state/release-queue"
+  wait "$holder" || fail "queue owner did not release normally"
+  printf 'done: fixture finished\n' > "$state/demo.status"
+  wait_for_exit "$ARM_PID" 180 || fail "successor did not deliver work after queue release"
+  grep -q '^signal:.*demo.status' "$dir/arm.out" \
+    || fail "successor did not deliver the real status event: $(cat "$dir/arm.out")"
+  grep -q 'demo.status' "$state/.wake-queue" || fail "status wake was not durable"
+  ! grep -q 'watcher: FAILED' "$dir/arm.out" || fail "successor failed after readiness"
+  pass "watch-arm: handling successor confirms readiness without taking the driver's queue lock"
+}
+
 test_handling_child_stderr_is_retained() {
   local dir mode rc i
   for mode in exits interrupted; do
@@ -1239,6 +1296,7 @@ SH
   pass "watch-arm: a TERM stops a slow watcher and its helpers within the arm's bound"
 }
 
+test_handling_successor_starts_while_queue_is_owned
 test_handling_child_stderr_is_retained
 test_interrupted_arm_stops_a_slow_watcher_within_its_bound
 test_handling_inspection_failure_retains_completed_capture

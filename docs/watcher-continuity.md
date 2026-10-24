@@ -18,7 +18,8 @@ It accumulates watcher results that arrive while a Deck turn runs and delivers t
 The watcher surfaces specialist and task-group results without waiting for an unrelated monitoring check; the [`fm-watch.sh` header](../bin/fm-watch.sh) owns the queued-key and announcement contract.
 
 The recovery-episode contract below owns once-per-generation announcement.
-A handling successor does not re-announce; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
+A handling successor does not re-announce or take the driver's queue lock to initialize recovery; it enters its poll loop immediately and keeps scanning signals, stale panes, and checks.
+The arm still verifies its singleton identity, fresh beacon, and recovery generation before confirming the handoff.
 The model does not re-arm after ordinary wakes.
 A periodic beat is that continuity, not a failure: the driver may replace only its watcher child, so a fresh watcher pid can appear carrying the SAME recovery-generation without restarting the home agent or its Deck session.
 The driver replays any unacked durable inbox record as that turn's instruction.
@@ -91,6 +92,7 @@ Only the watcher process touches `state/.last-watcher-beat`; no helper process c
 ## Regression coverage
 
 `tests/fm-watch-arm.test.sh` covers durable queue replay, real remote parent-replies ingestion into the authoritative status log, decision-only OPEN DECISIONS recovery, interrupted handling replay, generation-bound acknowledgement, a persistent live successor after recovery, a watcher close inside the handling window that must leave the printed acknowledgement valid, the self-healing moved-generation acknowledgement that consumes its handled rows and names its remedy, and a bootstrap that binds to its own home without forking and types a refused fork apart from a broken install.
+Its `test_handling_successor_starts_while_queue_is_owned` case checks readiness under live queue-lock contention, preservation of the queue owner's lock and recovery generation, and durable status delivery after the lock is released.
 `tests/fm-wake-queue.test.sh` covers the relaunch publication contract: first launch records only an acknowledged baseline even over a queued prelaunch wake, its startup drain reopens that wake as ordinary downtime, relaunch after either the baseline or a marker-loss completed startup mints a fresh generation, pending, announced, and acknowledged episodes are replaced, watcher-close publication resolves against the live episode without resurrecting the stale generation, and the origin check rejects a live-watcher reopen while accepting a driver relaunch.
 `tests/fm-deck-harness.test.sh` covers the secondmate driver side: a relaunch claims the session lock and mints its fresh generation before session start, a recovery drain names that generation, and a duplicate launch over a live lock holder mints nothing.
 `tests/fm-deck-chat.test.sh` covers the primary driver side: first launch records the closed baseline, a live-lock duplicate leaves it unchanged, and relaunch publishes a new pending generation before session start.
