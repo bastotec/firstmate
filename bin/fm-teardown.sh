@@ -345,6 +345,10 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   exit 2
 fi
 ID=$1
+if [ -e "$STATE/$ID.preserved-result" ] || [ -L "$STATE/$ID.preserved-result" ]; then
+  echo "REFUSED: $ID retains its original allocation for an accepted result; ordinary teardown cannot release it." >&2
+  exit 1
+fi
 FORCE=
 LEGACY_RECORD_GIVEN=0
 KEEP_COMMITS=0
@@ -475,6 +479,10 @@ fm_lock_try_acquire "$CONTROL_LOCK" || {
   exit 1
 }
 CONTROL_LOCK_HELD=1
+if [ -e "$STATE/$ID.preserved-result" ] || [ -L "$STATE/$ID.preserved-result" ]; then
+  echo "REFUSED: $ID's original allocation is retained; retry its explicit accepted-result retirement." >&2
+  exit 1
+fi
 if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
   || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
   printf 'worker record %s changed or vanished\n' "$ID" >&2
@@ -2609,6 +2617,13 @@ validate_firstmate_home_for_removal() {
   [ -n "$home" ] || return 0
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_removal_target "$home" "$label") || return 1
+  local retained_result
+  for retained_result in "$abs_home_path/state/"*.preserved-result; do
+    if [ -e "$retained_result" ] || [ -L "$retained_result" ]; then
+      echo "REFUSED: $label retains accepted-result evidence and original allocations; ordinary home teardown cannot discard them." >&2
+      return 1
+    fi
+  done
   if [ ! -f "$abs_home_path/$SUB_HOME_MARKER" ]; then
     echo "REFUSED: unsafe $label removal target $home is not a seeded secondmate home" >&2
     return 1
