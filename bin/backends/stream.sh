@@ -367,10 +367,10 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval
     # The endpoint's harness and every tool it runs inherit this PATH, so it
     # always carries the explicit user-level install dirs even when the caller
     # started from a bare post-reboot PATH; the caller's own order still wins.
-    PATH=$(bash -c '. "$1" && fm_remote_job_path_union "$2" "$(fm_remote_job_service_path "$3")"' \
+    local agent_path
+    agent_path=$(bash -c '. "$1" && fm_remote_job_path_union "$2" "$(fm_remote_job_service_path "$3")"' \
       fm-stream "$(dirname -- "${BASH_SOURCE[0]}")/../fm-remote-job-lib.sh" "${PATH:-}" "${HOME:-}") || exit 1
-    export PATH
-    fm_backend_stream_detached "${launcher[@]}" serve \
+    PATH="$agent_path" fm_backend_stream_detached "${launcher[@]}" serve \
       --hub "$(fm_backend_stream_hub_url)" \
       --token-file "$token_file" \
       --machine "$machine" \

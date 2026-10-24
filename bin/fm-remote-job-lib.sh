@@ -375,15 +375,20 @@ fm_remote_job_worker_env_path() { # <remote-root> <account-home>
   printf '%s\n' "$value"
 }
 
-fm_remote_job_path_has_tool() { # <path> <tool>
+fm_remote_job_path_lookup() { # <path> <tool>
   local path=$1 tool=$2 directory
   while :; do
     directory=${path%%:*}
     if [ -f "${directory:-.}/$tool" ] && [ -x "${directory:-.}/$tool" ]; then
+      printf '%s\n' "${directory:-.}/$tool"
       return 0
     fi
     case "$path" in *:*) path=${path#*:} ;; *) return 1 ;; esac
   done
+}
+
+fm_remote_job_path_has_tool() { # <path> <tool>
+  fm_remote_job_path_lookup "$1" "$2" >/dev/null
 }
 
 # 0 when the running worker has the gap a reboot leaves behind: deck resolves
@@ -414,7 +419,7 @@ fm_remote_job_build_child_path() { # <remote-root>
 
 fm_remote_job_operator_tool() { # <tool>; resolves only outside the checkout bin
   local tool=$1 resolved
-  resolved=$(PATH="$FM_REMOTE_JOB_OPERATOR_PATH" command -v "$tool" 2>/dev/null || true)
+  resolved=$(fm_remote_job_path_lookup "$FM_REMOTE_JOB_OPERATOR_PATH" "$tool" 2>/dev/null || true)
   case "$resolved" in
     /*)
       [ -x "$resolved" ] || return 1
