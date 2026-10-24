@@ -558,6 +558,10 @@ NEW=
 HANDOFFS=
 PENDING_RAISED=
 STALL_CANDIDATES=
+STALL_DELIVERY_ARGS=()
+if stall_delivery_log=$(fm_parent_channel_destination "$FM_HOME" "$STATE" 2>/dev/null); then
+  STALL_DELIVERY_ARGS=(--delivery-log "$stall_delivery_log")
+fi
 ROWS=
 add_row() {  # <id> <class> <detail> <action>
   ROWS="$ROWS$(jq -cn --arg id "$1" --arg class "$2" --argjson age "$AGE" \
@@ -574,7 +578,8 @@ while IFS= read -r meta; do
   TIMED_STALL=0
   decisions=$(status_open_decisions "$STATE/$id.status")
   stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
-    "$meta" "$STALL_CURRENT" "$decisions" --observe --now "$NOW" 2>/dev/null) || stall='{}'
+    "$meta" "$STALL_CURRENT" "$decisions" --observe --now "$NOW" \
+    "${STALL_DELIVERY_ARGS[@]+"${STALL_DELIVERY_ARGS[@]}"}" 2>/dev/null) || stall='{}'
   if [ "$(printf '%s' "$stall" | jq -r '.state // ""')" = stalled ]; then
     CLASS=stalled
     TIMED_STALL=1
@@ -837,7 +842,8 @@ while IFS= read -r candidate; do
   classify "$id"
   decisions=$(status_open_decisions "$STATE/$id.status")
   stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$RAISED_DIR/$id.stall.json" \
-    "$STATE/$id.meta" "$STALL_CURRENT" "$decisions" --observe --now "$(date +%s)" 2>/dev/null) || stall='{}'
+    "$STATE/$id.meta" "$STALL_CURRENT" "$decisions" --observe --now "$(date +%s)" \
+    "${STALL_DELIVERY_ARGS[@]+"${STALL_DELIVERY_ARGS[@]}"}" 2>/dev/null) || stall='{}'
   if [ "$(printf '%s' "$stall" | jq -r '.notify // false')" != true ] \
     || [ "$(printf '%s' "$stall" | jq -r .episode)" != "$(printf '%s' "$candidate" | jq -r .stall.episode)" ]; then
     fm_lock_release "$STATE/$handoff_lock" >/dev/null 2>&1 || true

@@ -526,9 +526,9 @@ PY
   pass "keyed receipts preserve survivors, failed publication and restart retry on $route route"
 done
 
-for recovery in queued consumed parent; do
+for recovery in queued consumed parent parent-closed; do
   dir=$(new_case "stall-interrupted-$recovery")
-  [ "$recovery" != parent ] || make_secondmate_home "$dir" mate
+  case "$recovery" in parent*) make_secondmate_home "$dir" mate ;; esac
   add_worker "$dir" decision 'state: parked · source: run-step · evidence: run=run-one; step=review' 90000
   printf 'needs-decision [key=choice]: Original question?\n' > "$dir/home/state/decision.status"
   old=$(( $(date +%s) - 8000 ))
@@ -536,7 +536,7 @@ for recovery in queued consumed parent; do
     "$dir/home/state/decision.meta" "$(cat "$dir/home/crew/decision")" \
     $'choice\tneeds-decision\tOriginal question?' --observe --now "$old" >/dev/null
   touch "$dir/home/interrupt-after-publication"
-  if [ "$recovery" = parent ]; then
+  if [[ "$recovery" = parent* ]]; then
     cat >> "$dir/bin/fm-parent-channel-lib.sh" <<'SH'
 eval "$(declare -f fm_parent_channel_report | sed '1s/fm_parent_channel_report/fm_test_real_report/')"
 fm_parent_channel_report() {
@@ -563,10 +563,36 @@ SH
   fi
   sweep "$dir" scan --now || fail 'interrupted publication scan'
   target="$dir/home/state/.wake-queue"
-  [ "$recovery" != parent ] || target="$dir/parent/state/mate.status"
+  case "$recovery" in parent*) target="$dir/parent/state/mate.status" ;; esac
   [ "$(grep -c 'Original question?' "$target")" = 1 ] || fail 'interrupted publication was not delivered'
   [ "$(jq -r .reported "$dir/home/state/idle-sweep/decision.stall.json")" = null ] || fail 'interruption did not precede acknowledgment'
   [ ! -e "$dir/home/state/idle-sweep/decision.stall-delivered" ] || fail 'interruption did not precede queue reconciliation'
+  if [ "$recovery" = parent-closed ]; then
+    printf 'resolved [key=choice]: Keep the old behavior.\n' >> "$dir/home/state/decision.status"
+    printf 'run=run-one\nstep=review\nsince=%s\nnudged=0\nescalated=0\n' "$old" > "$dir/home/state/decision.parked-run"
+    cat > "$dir/bin/fm-crew-state.sh" <<'SH'
+#!/usr/bin/env bash
+if [ "$1" = --publish ]; then
+  shift
+  printf 'verdict=parked\nrun=run-one\nstep=review\n' > "$FM_HOME/state/$1.crew-state"
+fi
+cat "$FM_HOME/crew/$1"
+SH
+    chmod +x "$dir/bin/fm-crew-state.sh"
+    for _ in 1 2; do
+      sweep "$dir" scan --now || fail 'closed interrupted publication recovery'
+      [ "$(jq -r .episode "$dir/home/state/idle-sweep/decision.stall.json")" = null ] || fail 'resolved question kept an active episode'
+      [ "$(python3 "$dir/bin/fm_stall_record.py" "$dir/home/state/idle-sweep/decision.stall.json" \
+        "$dir/home/state/decision.meta" "$(cat "$dir/home/crew/decision")" '' --reported-run)" = true ] \
+        || fail 'closed question lost successful parent publication suppression'
+      PATH="$dir/bin:$PATH" TASKS_AXI_BACKEND=markdown FM_HOME="$dir/home" FM_PARKED_RUN_SECS=0 \
+        "$dir/bin/fm-parked-run-watch.sh" scan || fail 'closed interrupted publication watchdog'
+      [ ! -s "$dir/home/state/.wake-queue" ] || fail 'watchdog repeated delivered closed question'
+      [ "$(grep -c 'stalled tasks digest:' "$target")" = 1 ] || fail 'closed question duplicated on parent channel'
+    done
+    pass 'parent publication survives publisher death and question resolution before idle observation and watchdog'
+    continue
+  fi
   if [ "$recovery" = consumed ]; then
     seq=$(cat "$dir/home/state/.wake-queue.seq")
     generation=$(cat "$dir/home/state/.watcher-down")
