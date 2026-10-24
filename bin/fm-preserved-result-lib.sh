@@ -82,11 +82,40 @@ preserved_result_retire() ( # <id> <acceptance-json>
   if command -v no-mistakes >/dev/null 2>&1; then
     # shellcheck source=bin/fm-nm-run-lib.sh
     . "$SCRIPT_DIR/fm-nm-run-lib.sh"
-    local ledger branch run_state
+    local ledger branch run_state status run_branch
     ledger=$(fm_nm_run_bounded "$wt" 10 runs --limit 200) || refuse "cannot establish validation run ownership"
     branch=$(git -C "$wt" symbolic-ref --quiet --short HEAD) || refuse "original branch is detached"
     run_state=$(fm_nm_runs_status_for_worktree "$wt" "$branch" "$ledger")
     [ "$(fm_nm_run_status_class "$run_state")" != live ] || refuse "finish or abort the original validation run before accepting its result"
+    status=$(fm_nm_run_bounded "$wt" 10 axi status) || refuse "cannot establish validation run ownership"
+    [ -n "$status" ] && ! printf '%s\n' "$status" | grep -q '^error:' \
+      || refuse "cannot establish validation run ownership"
+    if printf '%s\n' "$status" | grep -q '^run:'; then
+      run_branch=$(fm_nm_strip_quotes "$(fm_nm_field "$status" branch)")
+      [ "$run_branch" = "$branch" ] || refuse "cannot establish validation run ownership"
+      if fm_nm_run_is_pipeline_owned_active "$status" \
+        || { fm_nm_head_matches_worktree "$wt" "$(fm_nm_strip_quotes "$(fm_nm_field "$status" head)")" \
+          && fm_nm_run_is_active "$status"; }; then
+        refuse "finish or abort the original validation run before accepting its result"
+      fi
+      if fm_nm_run_is_active "$status"; then
+        refuse "cannot establish validation run ownership"
+      fi
+    fi
+  else
+    refuse "cannot establish validation run ownership without no-mistakes"
+  fi
+  # shellcheck source=bin/fm-public-followup-lib.sh
+  . "$SCRIPT_DIR/fm-public-followup-lib.sh"
+  fm_pf_resolve_work_owner "$FM_HOME" "$STATE" ship "$id"
+  [ "$PUBLIC_FOLLOWUP_PARENT_UNRESOLVED" != 1 ] \
+    || refuse "cannot resolve the primary home for this task's public commitments"
+  if [ -n "$PUBLIC_FOLLOWUP_STATE" ] && [ "$PUBLIC_FOLLOWUP_RELAY_ACTIVE" = 1 ] \
+    && fm_pf_has_registrations "$PUBLIC_FOLLOWUP_STATE"; then
+    FM_HOME="$PUBLIC_FOLLOWUP_HOME" FM_STATE_OVERRIDE="$PUBLIC_FOLLOWUP_STATE" \
+      FM_DATA_OVERRIDE="$PUBLIC_FOLLOWUP_HOME/data" FM_CONFIG_OVERRIDE="$PUBLIC_FOLLOWUP_HOME/config" \
+      "$SCRIPT_DIR/fm-public-followup.sh" guard-work "$PUBLIC_FOLLOWUP_WORK_HOME" "$id" \
+      || refuse "task $id still owes a public reply through the myfirstmate relay"
   fi
   python3 "$SCRIPT_DIR/fm_preserved_result.py" prepare "$STATE" "$DATA" "$id" "$acceptance" "$snapshot" || exit 1
   if [ -f "$meta" ]; then

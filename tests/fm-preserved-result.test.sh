@@ -4,6 +4,7 @@
 set -eu
 # shellcheck source=tests/fixtures.sh
 . "$(dirname "${BASH_SOURCE[0]}")/fixtures.sh"
+unset FMX_PAIRING_TOKEN FM_PUBLIC_FOLLOWUP_PRIMARY_HOME FM_STATE_OVERRIDE FM_DATA_OVERRIDE FM_CONFIG_OVERRIDE
 fm_git_identity
 TMP_ROOT=$(fm_test_tmproot fm-preserved-result)
 TMP_ROOT=$(cd "$TMP_ROOT" && pwd -P)
@@ -13,7 +14,26 @@ mkdir -p "$TMP_ROOT/fakebin"
 # below exercises the actual Treehouse allocator and sweeps on fixtures only.
 printf '#!/usr/bin/env bash\nprintf "v2.3.0\\n"\n' > "$TMP_ROOT/fakebin/treehouse"
 chmod +x "$TMP_ROOT/fakebin/treehouse"
-fm_test_fake_no_mistakes "$TMP_ROOT/fakebin"
+cat > "$TMP_ROOT/fakebin/no-mistakes" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  'runs --limit 200')
+    [ ! -f "$FM_RETIRE_TEST_CASE/nm-ledger-fail" ] || exit 1
+    [ ! -f "$FM_RETIRE_TEST_CASE/nm-ledger" ] || cat "$FM_RETIRE_TEST_CASE/nm-ledger"
+    ;;
+  'axi status')
+    [ ! -f "$FM_RETIRE_TEST_CASE/nm-status-fail" ] || exit 1
+    if [ -f "$FM_RETIRE_TEST_CASE/nm-status" ]; then
+      cat "$FM_RETIRE_TEST_CASE/nm-status"
+    else
+      printf 'run:\n  id: "01FIXTURE"\n  branch: %s\n  status: completed\n  outcome: passed\n  head: "%s"\n' \
+        "$(git symbolic-ref --short HEAD)" "$(git rev-parse HEAD)"
+    fi
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$TMP_ROOT/fakebin/no-mistakes"
 export PATH="$TMP_ROOT/fakebin:$PATH"
 RETIRE="$ROOT/bin/fm-retire-endpoint.sh"
 
@@ -57,7 +77,7 @@ PY
   git -C "$W" status --porcelain=v1 --untracked-files=all > "$C/before.status"
 }
 run_retirement() {
-  FM_HOME="$H" FM_ROOT_OVERRIDE="$ROOT" "$RETIRE" --accepted-result "$C/acceptance.json" finite
+  FM_RETIRE_TEST_CASE="$C" FM_HOME="$H" FM_ROOT_OVERRIDE="$ROOT" "$RETIRE" --accepted-result "$C/acceptance.json" finite
 }
 assert_preserved() {
   git -C "$W" show-ref > "$C/after.refs"
@@ -75,6 +95,116 @@ expect_refusal() {
   cmp "$H/state/finite.meta" "$C/before.meta" || fail 'refusal rewrote original record'
   assert_preserved
 }
+
+assert_admission_refused() {
+  local reason=$1 endpoint
+  expect_refusal
+  assert_contains "$(cat "$C/out")" "$reason" 'wrong admission refusal'
+  [ ! -e "$H/state/finite.preserved-result" ] || fail 'refusal prepared retention'
+  [ ! -e "$H/data/finite/preserved-result" ] || fail 'refusal published evidence'
+  [ "$(jq -r '.worktrees[0].leased // false' "$C/pool/treehouse-state.json")" = false ] || fail 'refusal leased allocation'
+  endpoint=$(fm_test_fake_stream_endpoints | jq --arg e "${target##*:}" '.endpoints[] | select(.endpoint_id == $e)')
+  [ -n "$endpoint" ] && [ "$(printf '%s' "$endpoint" | jq -r '.closed_by // empty')" = '' ] || fail 'refusal stopped endpoint'
+}
+
+for validation in pipeline-owned matching-live ledger-live status-failure ledger-failure status-error partial unbound foreign-branch; do
+  make_case "validation-$validation"
+  missing_head=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
+  if git -C "$W" cat-file -e "$missing_head" 2>/dev/null; then fail 'fixture gate head exists locally'; fi
+  branch=$(git -C "$W" symbolic-ref --short HEAD)
+  printf 'running %s %.8s 2026-08-01 10:00\n' "$branch" "$missing_head" > "$C/nm-ledger"
+  printf 'run:\n  id: "01ACTIVE"\n  branch: %s\n  status: running\n  head: "%s"\nbranch_sync:\n  state: pipeline_owned\n' \
+    "$branch" "$missing_head" > "$C/nm-status"
+  reason='finish or abort the original validation run'
+  case "$validation" in
+    pipeline-owned) ;;
+    matching-live)
+      printf 'run:\n  id: "01ACTIVE"\n  branch: %s\n  status: running\n  head: "%s"\n' \
+        "$branch" "$(git -C "$W" rev-parse HEAD)" > "$C/nm-status"
+      ;;
+    ledger-live)
+      printf 'running %s %s 2026-08-01 10:00\n' "$branch" "$(git -C "$W" rev-parse --short HEAD)" > "$C/nm-ledger"
+      rm "$C/nm-status"
+      ;;
+    *)
+      reason='cannot establish validation run ownership'
+      case "$validation" in
+        status-failure) touch "$C/nm-status-fail" ;;
+        ledger-failure) touch "$C/nm-ledger-fail" ;;
+        status-error) printf 'error: daemon unavailable\n' > "$C/nm-status" ;;
+        partial) printf 'run:\n  id: "PARTIAL"\n' > "$C/nm-status" ;;
+        unbound)
+          printf 'run:\n  branch: %s\n  status: running\n  head: "%s"\n' "$branch" "$missing_head" > "$C/nm-status"
+          ;;
+        foreign-branch) printf 'run:\n  branch: foreign\n  status: running\n' > "$C/nm-status" ;;
+      esac
+      ;;
+  esac
+  assert_admission_refused "$reason"
+  pass "validation $validation refuses before endpoint or allocation mutation"
+done
+
+make_case no-validation-run
+branch=$(git -C "$W" symbolic-ref --short HEAD)
+printf 'branch: %s\nhelp[1]:\n  No run on this branch\n' "$branch" > "$C/nm-status"
+run_retirement
+assert_preserved
+pass 'branch with no validation run can accept a finite result'
+
+make_case unresolved-parent
+printf 'mate\n' > "$H/.fm-secondmate-home"
+printf 'invalid parent record\n' > "$H/.fm-secondmate-parent"
+assert_admission_refused 'cannot resolve allocation lock'
+pass 'invalid delegated parent refuses before endpoint retirement'
+
+if command -v tasks-axi >/dev/null 2>&1; then
+  for public_home in main delegated; do
+    make_case "public-$public_home"
+    P=$H
+    work_home=main
+    if [ "$public_home" = delegated ]; then
+      P="$C/primary"
+      work_home=secondmate:mate
+      mkdir -p "$P/state" "$P/data" "$P/config"
+      printf 'mate\n' > "$H/.fm-secondmate-home"
+      printf 'schema=fm-secondmate-parent.v1\nroute=local\nparent_home=%s\n' "$P" > "$H/.fm-secondmate-parent"
+      printf 'kind=secondmate\nhome=%s\n' "$H" > "$P/state/mate.meta"
+      printf -- '- mate - synthetic (home: %s; scope: synthetic; projects: ; added 2026-08-01)\n' "$H" > "$P/data/secondmates.md"
+    fi
+    printf 'FMX_PAIRING_TOKEN=test-token\n' > "$P/.env"
+    cp "$ROOT/.tasks.toml" "$P/.tasks.toml"
+    printf '## In flight\n\n## Queued\n\n## Done\n' > "$P/data/backlog.md"
+    printf '%s\n' '{"request_id":"req-finite","platform":"x","context_binding":{"version":"ctx1","value":"ctx1_finite"},"public_safe_summary":"finish the diagnosis","received_at":"2026-07-30T10:00:00Z","followup_expires_at":"2099-10-01T00:00:00Z","reservation_expires_at":"2099-10-01T00:00:00Z"}' > "$P/request.json"
+    printf '%s\n' '{"type":"report-ready","project":"firstmate","required_deliverables":["report_path"],"completion_policy":"all-required"}' > "$P/expected.json"
+    jq -nc --arg h "$work_home" '{relation_id:"rel-finite",work_ref:{home_id:$h,task_id:"finite"},role:"fulfills",required:true,generation:1}' > "$P/relation.json"
+    (
+      cd "$P"
+      if [ "$public_home" = main ]; then
+        tasks-axi add finite 'Accepted diagnosis; no fix shipped' >/dev/null
+        tasks-axi start finite >/dev/null
+      fi
+      tasks-axi public-followup add pf-finite --request-context-file request.json \
+        --purpose promised-final --expected-final-file expected.json --expires-at 2099-10-01T00:00:00Z >/dev/null
+      tasks-axi public-followup bind-work pf-finite --relation-file relation.json >/dev/null
+    )
+    FM_HOME="$P" FM_ROOT_OVERRIDE="$ROOT" "$ROOT/bin/fm-public-followup.sh" register pf-finite \
+      --relation rel-finite --work-home "$work_home" --work-id finite --generation 1 >/dev/null
+    cp "$P/data/backlog.md" "$C/public-backlog.before"
+    assert_admission_refused 'still owes a public reply'
+    assert_contains "$(cat "$C/out")" 'pending-work' 'pending public commitment was not inspected'
+    cmp "$C/public-backlog.before" "$P/data/backlog.md"
+    if [ "$public_home" = delegated ]; then
+      printf 'kind=secondmate\nhome=%s\n' "$C/not-the-child" > "$P/state/mate.meta"
+      assert_admission_refused 'cannot resolve the primary home'
+      printf 'kind=secondmate\nhome=%s\n' "$H" > "$P/state/mate.meta"
+    fi
+    (cd "$P" && tasks-axi public-followup waive pf-finite --reason 'synthetic test approval' --approved-by captain >/dev/null)
+    run_retirement
+    assert_preserved
+    [ ! -e "$H/state/finite.meta" ] || fail 'settled public commitment blocked retirement'
+    pass "$public_home pending public commitment refuses until reconciled through its owner"
+  done
+fi
 
 make_case success
 fm_test_fake_stream_foreground "$target" deck
