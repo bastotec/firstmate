@@ -934,7 +934,16 @@ DELIVERY_MODE=$(meta_value mode)
 if [ "$KIND" = ship ] && [ -n "$CREW_BRANCH" ] && command -v no-mistakes >/dev/null 2>&1 \
   && [ "$DELIVERY_MODE" != local-only ] && [ "$DELIVERY_MODE" != direct-PR ]; then
   if ! RUN_OUT=$(fm_nm_run_checked "$WT" "$NM_TIMEOUT" axi status); then
-    emit unknown run-step "no-mistakes run unavailable or unreadable for branch $CREW_BRANCH"
+    # A repository never initialized for no-mistakes is a definite answer,
+    # not an unreadable one: no run can exist for this copy, so read the
+    # worker's own pane/log like any run-less task. Treating it as unknown
+    # left such workers unclassifiable forever, so bin/fm-idle-sweep.sh
+    # could never apply its stopped-worker rule or hand them off.
+    if printf '%s\n' "$RUN_OUT" | grep -q '^error: repo not initialized'; then
+      RUN_OUT=
+    else
+      emit unknown run-step "no-mistakes run unavailable or unreadable for branch $CREW_BRANCH"
+    fi
   fi
   if [ -n "$RUN_OUT" ]; then
     run_branch=$(strip_quotes "$(nm_field branch)")
