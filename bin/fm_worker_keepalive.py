@@ -11,17 +11,17 @@ watches its own. Overlapping scans of one home exit zero quietly under a
 non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
-  approval-wait the last blocked:, failed:, needs-decision: or paused: line
+  approval     the last blocked:, failed:, needs-decision: or paused: line
                carries the task's exact nonempty approval-wait decision key,
-               parsed by bin/fm-classify-lib.sh. This preserved approval/publication
-               wait takes precedence over backlog delivery, PR demands and
-               liveness recovery, including when the endpoint disappears.
-               Entering it resolves any outstanding keep-alive escalation and
-               resets the action-episode markers without changing the worker or
-               approval record. Its stuck bound refreshes each scan, so release
-               starts a fresh recovery interval. PR clocks are retained without
-               PR observation while this exact-key match is active.
-               bin/fm-approval-wait.sh owns the binding and explicit release;
+               parsed by bin/fm-classify-lib.sh. The wait still keeps automatic
+               retry, retirement and PR merge demands away from the worker
+               (bin/fm-approval-wait.sh owns the binding and explicit release),
+               but it is never an endpoint: FM_KEEPALIVE_APPROVAL_SECS (3600)
+               after the wait was declared (its record's mtime) the mate is
+               woken to release it, fix what it waits on, retire the worker, or
+               put a truly captain-owned decision to him in one line, and the
+               usual parent and captain escalation follows (2026-10-24: twelve
+               workers sat up to two days under untimed waits).
   undelivered  the worker's backlog item is done (accepted, read once per
                scan through bin/fm-tasks-axi.sh list --state done), or its last
                status line is done: with no recorded pr=, and the worker is
@@ -212,6 +212,7 @@ ASK = env_int("FM_KEEPALIVE_ASK_SECS", 600)
 MACHINE_KEYS = ("keepalive-", "pending-reply-", "parked-run-", "ci-stall-", "child-outcome-")
 ESCALATE = env_int("FM_KEEPALIVE_ESCALATE_SECS", 1800)
 FOLLOW = env_int("FM_KEEPALIVE_FOLLOW_SECS", 600)
+APPROVAL = env_int("FM_KEEPALIVE_APPROVAL_SECS", 3600)
 PR_GREEN = env_int("FM_KEEPALIVE_PR_GREEN_SECS", 1800)
 CI_STEP = env_int("FM_KEEPALIVE_CI_STEP_SECS", 7200)
 NOW = env_int("FM_KEEPALIVE_NOW", int(time.time()))
@@ -472,6 +473,12 @@ def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: st
     if cond == "dead":
         return ("worker %s has had no live agent for %d minutes: %s now; never leave it waiting"
                 % (wid, minutes(age), relaunch))
+    if cond == "approval":
+        return ("worker %s has waited %d minutes on your approval wait (\"%s\"): decide it now - release it "
+                "(bin/fm-approval-wait.sh release) and send it back to the deliverable, fix what it is waiting on "
+                "(a refused PR step is yours to fix: sanitize and retry, or open the PR by hand), or retire it; if the "
+                "decision is truly the captain's, raise it in one plain line - an approval wait is never an endpoint"
+                % (wid, minutes(age), quote))
     if cond == "unmerged":
         return ("worker %s's PR %s has been green and mergeable for %d minutes and is not merged: merge it now with "
                 "bin/fm-pr-merge.sh %s when bin/fm-merge-policy.sh allows, or close it if it is superseded; a PR "
@@ -504,6 +511,7 @@ def unstick(cond: str) -> str:
     return {"dead": "a relaunch or replacement of the worker",
             "blocked": "an answer to its blocker or a relaunch",
             "undelivered": "delivering its finished result and cleaning it up",
+            "approval": "a decision on its approval wait (release, fix, retire, or one captain line)",
             "unmerged": "merging its green PR",
             "ci-stuck": "landing or closing its PR",
             "held": "releasing its hold so it resumes the deliverable",
@@ -563,7 +571,8 @@ class Scan:
             key = self.approval_key(wid)
             if key and decision_key(last_line(status)) == key:
                 self.wait_bound.add(wid)
-                return "blocked", NOW, verb, text
+                declared = mtime(self.state / ("%s.approval-wait" % wid)) or NOW
+                return "approval", min(NOW, declared), verb, text
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
@@ -658,16 +667,8 @@ class Scan:
                 return
             rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "episode_fp": rec["fp"], "cond": cond, "since": since,
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
-        bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0}.get(cond, STUCK)
-        if cond == "blocked" and wid in self.wait_bound:
-            if not self.resolve(wid, rec, "is waiting for approval"):
-                save(rec_path, rec)
-                return
-            rec.update(since=NOW, woke=0, nudges=0, escalated=False, episode_fp=rec["fp"])
-            rec.pop("first", None)
-            rec.pop("captain_notified", None)
-            save(rec_path, rec)
-            return
+        bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0,
+                 "approval": APPROVAL}.get(cond, STUCK)
         age = NOW - rec["since"]
         if (rec.get("escalated") and (not self.primary or rec.get("captain_notified"))) or (
                 not rec["woke"] and age < bound):

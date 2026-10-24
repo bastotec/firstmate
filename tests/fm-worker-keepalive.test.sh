@@ -1215,7 +1215,7 @@ test_approval_wait_excludes_action_demands_while_bound() {
 # preserved wait itself, not a blocker the mate must unblock: the release path
 # is fm-approval-wait.sh release, not a steer. A blocked line on any other key
 # still wakes the mate.
-test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
+test_approval_wait_is_bounded_and_wakes_the_mate_to_decide() {
   local dir record line verb i=0
   for line in \
     'blocked [key=publication-recovery-01M5]: terminal publication refusal preserved' \
@@ -1227,18 +1227,16 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
     dir=$(make_home "approval-wait-blocked-$i" ship)
     record="$dir/home/state/keepalive/w1.json"
     make_approval_wait "$dir" publication-recovery-01M5
+    at "$T0" "$dir/home/state/w1.approval-wait"
     status "$dir" "$T0" "$line"
     scan "$dir" $((T0 + 1200))
-    scan "$dir" $((T0 + 4000))
-    assert_equals 0 "$(wake_count "$dir")" "a preserved blocked line bound to the approval wait woke the mate: $line"
-    assert_equals 0 "$(notice_count "$dir" 'worker w1')" "a preserved blocked line bound to the approval wait reached the captain"
-    jq -e '(.cond == null) or (.cond == "blocked" and (.woke // 0) == 0 and (.escalated | not))' "$record" >/dev/null \
-      || fail "the preserved blocked line opened an episode that demanded action"
-    rm "$dir/home/state/w1.approval-wait"
-    scan "$dir" $((T0 + 4001))
-    assert_equals 0 "$(wake_count "$dir")" "releasing the wait woke the mate before its own stuck bound"
-    scan "$dir" $((T0 + 4001 + 1200))
-    assert_equals 1 "$(wake_count "$dir")" "releasing the wait did not restore the blocked demand"
+    scan "$dir" $((T0 + 3599))
+    assert_equals 0 "$(wake_count "$dir")" "an approval wait woke the mate before its one-hour bound: $line"
+    jq -e '.cond == "approval"' "$record" >/dev/null || fail "the approval wait was not tracked as its own episode"
+    scan "$dir" $((T0 + 3600))
+    assert_equals 1 "$(wake_count "$dir")" "an approval wait an hour old did not wake the mate to decide it: $line"
+    assert_contains "$(wakes "$dir")" 'an approval wait is never an endpoint' "the wake lets the mate keep waiting"
+    assert_contains "$(wakes "$dir")" 'bin/fm-approval-wait.sh release' "the wake does not say how to release it"
   done
   for verb in needs-decision paused; do
     dir=$(make_home "approval-wait-unrelated-$verb" ship)
@@ -1250,7 +1248,7 @@ test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker() {
     scan "$dir" $((T0 + 3000))
     assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck')" "an unrelated $verb lost real stuck escalation"
   done
-  pass "supported status formats preserve exact waits without excluding unrelated decisions"
+  pass "an approval wait keeps automatic actions away but wakes the mate to decide it after an hour"
 }
 
 # A green PR whose forge state carries a hold label (fm-pr-lib's hold-label
@@ -1300,16 +1298,21 @@ test_exact_approval_wait_survives_endpoint_loss() {
       printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
       make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
     fi
+    at "$T0" "$dir/home/state/w1.approval-wait"
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
     echo dead > "$dir/liveness"
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1200))
-    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5000))
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 3500))
     assert_equals 0 "$(wake_count "$dir")" "endpoint loss released an exact approval wait"
     assert_equals 0 "$(notice_count "$dir" 'worker w1')" "endpoint loss escalated an exact approval wait"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5000))
+    assert_equals 1 "$(wake_count "$dir")" "an hour-old approval wait did not wake the mate to decide it"
+    assert_contains "$(wakes "$dir")" 'approval wait is never an endpoint' "the wake for a dead worker's wait was not the approval decision"
+    assert_not_contains "$(wakes "$dir")" 'merge it now' "an approval wait let a merge demand through"
     status "$dir" $((T0 + 5001)) 'blocked [key=other]: unrelated failure'
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5001))
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5301))
-    assert_equals 1 "$(wake_count "$dir")" "an unrelated dead worker was excluded by the approval wait"
+    assert_equals 2 "$(wake_count "$dir")" "an unrelated dead worker was excluded by the approval wait"
     assert_contains "$(wakes "$dir")" 'no live agent' "an unrelated dead worker lost recovery escalation"
   done
   pass "exact approval waits survive endpoint loss without excluding unrelated dead workers"
@@ -1353,7 +1356,7 @@ test_unreadable_approval_wait_keeps_pr_actions_excluded() {
 }
 
 test_approval_wait_retires_escalation_and_restarts_recovery() {
-  local dir verb initial_verb channel record before first open
+  local dir verb initial_verb channel record before
   for verb in blocked needs-decision paused; do
     dir=$(make_home "approval-after-escalation-$verb" ship)
     make_secondmate "$dir" helper
@@ -1371,33 +1374,24 @@ test_approval_wait_retires_escalation_and_restarts_recovery() {
     FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
       --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" \
       || fail "could not declare a wait for $verb"
+    at $((T0 + 1801)) "$dir/home/state/w1.approval-wait"
     if [ "$verb" = paused ]; then
       status "$dir" $((T0 + 1801)) 'paused [key=publication]: awaiting your release'
     fi
     before=$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")
     scan "$dir" $((T0 + 1801))
-    assert_grep "resolved [key=keepalive-helper-w1-$T0]" "$channel" "entering the wait left the escalation open"
-    open=$(bash -c '. "$1/bin/fm-classify-lib.sh"; status_open_decisions "$2"' _ "$ROOT" "$channel")
-    assert_equals '' "$open" "the parent still has an actionable keepalive question"
-    jq -e '.woke == 0 and .nudges == 0 and (.escalated | not) and .first == null and .captain_notified == null' \
-      "$record" >/dev/null || fail "entering the wait retained action-episode markers"
-    scan "$dir" $((T0 + 5000))
-    assert_equals 1 "$(wake_count "$dir")" "the bound wait demanded more action"
-    assert_equals 2 "$(wc -l < "$channel" | tr -d ' ')" "the wait repeated its escalation or resolution"
+    assert_grep "resolved [key=keepalive-helper-w1-$T0]" "$channel" "entering the wait left the old escalation open"
+    jq -e '.cond == "approval" and .woke == 0 and (.escalated | not)' "$record" >/dev/null \
+      || fail "entering the wait did not start its own approval episode"
+    scan "$dir" $((T0 + 5400))
+    assert_equals 1 "$(wake_count "$dir")" "the approval wait woke the mate before its one-hour bound"
+    scan "$dir" $((T0 + 5401))
+    assert_equals 2 "$(wake_count "$dir")" "declaring an approval wait silenced the watchdog for good"
+    assert_contains "$(wakes "$dir")" 'approval wait is never an endpoint' "the approval wake lets the mate keep waiting"
     assert_equals "$before" "$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")" \
       "keepalive changed preserved worker or approval state"
-    rm "$dir/home/state/w1.approval-wait"
-    scan "$dir" $((T0 + 5001))
-    assert_equals 1 "$(wake_count "$dir")" "releasing the wait skipped the fresh recovery bound"
-    scan "$dir" $((T0 + 6201))
-    assert_equals 2 "$(wake_count "$dir")" "releasing the wait did not restore recovery"
-    scan "$dir" $((T0 + 6801))
-    first=$(jq -r '.first' "$record")
-    [ "$first" -gt "$T0" ] || fail "the new escalation reused the old episode key"
-    assert_grep "blocked [key=keepalive-helper-w1-$first]" "$channel" "the new recovery episode did not escalate"
-    assert_equals 3 "$(wc -l < "$channel" | tr -d ' ')" "the fresh recovery episode did not escalate exactly once"
   done
-  pass "entering an approval wait resolves escalation and release starts fresh recovery"
+  pass "declaring an approval wait closes the old episode and opens a bounded approval episode"
 }
 
 test_shared_hold_label_inputs() {
@@ -1418,7 +1412,7 @@ EOF
 }
 
 test_approval_wait_excludes_action_demands_while_bound
-test_blocked_line_bound_to_the_approval_wait_key_is_not_a_mate_blocker
+test_approval_wait_is_bounded_and_wakes_the_mate_to_decide
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand
 test_exact_approval_wait_survives_endpoint_loss
 test_unreadable_approval_wait_keeps_pr_actions_excluded
