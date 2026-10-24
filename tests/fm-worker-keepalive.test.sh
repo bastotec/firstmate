@@ -1221,10 +1221,6 @@ test_approval_wait_excludes_action_demands_while_bound() {
   pass "an approval wait excludes merge and CI demands while bound and restores them on release"
 }
 
-# A blocked line bound to the approval wait's exact open decision key is the
-# preserved wait itself, not a blocker the mate must unblock: the release path
-# is fm-approval-wait.sh release, not a steer. A blocked line on any other key
-# still wakes the mate.
 test_approval_wait_is_bounded_and_wakes_the_mate_to_decide() {
   local dir record line verb i=0
   for line in \

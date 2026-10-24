@@ -11,19 +11,18 @@ watches its own. Overlapping scans of one home exit zero quietly under a
 non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
-  approval     a record in force for FM_KEEPALIVE_APPROVAL_SECS (3600),
-               regardless of the worker's last status. While fresh, only an
-               exact nonempty decision key on a blocked:, failed:,
+  approval     an approval exclusion record in force for
+               FM_KEEPALIVE_APPROVAL_SECS (3600) from its declaration (the
+               record object's mtime), regardless of the worker's last status
+               or decision key, even if the record is unreadable. While fresh,
+               only an exact nonempty decision key on a blocked:, failed:,
                needs-decision: or paused: line takes precedence, parsed by
-               bin/fm-classify-lib.sh. The wait still keeps automatic
-               retry, retirement and PR merge demands away from the worker
-               (bin/fm-approval-wait.sh owns the binding and explicit release),
-               but it is never an endpoint: FM_KEEPALIVE_APPROVAL_SECS (3600)
-               after the wait was declared (its record's mtime) the mate is
-               woken to release it, fix what it waits on, retire the worker, or
-               put a truly captain-owned decision to him in one line, and the
-               usual parent and captain escalation follows (2026-10-24: twelve
-               workers sat up to two days under untimed waits).
+               bin/fm-classify-lib.sh. This condition retains PR clocks without
+               PR observation. The mate is woken at the bound to release the
+               wait, fix what it waits on, retire the worker, or put a truly
+               captain-owned decision to him in one line; the usual escalation
+               follows. No wake releases the automatic-action exclusion:
+               bin/fm-approval-wait.sh owns its binding and explicit release.
   undelivered  the worker's backlog item is done (accepted, read once per
                scan through bin/fm-tasks-axi.sh list --state done), or its last
                status line is done: with no recorded pr=, and the worker is
@@ -96,7 +95,8 @@ Each scan reads one condition per worker, first match wins:
                and the recorded pr=. Status lines and report edits never count.
 
 A condition reaching its bound queues one `check: worker keep-alive:` wake
-keyed keepalive:<id>:<condition>:<epoch> to this home's own supervisor.
+keyed keepalive:<id>:<condition>:<epoch> to this home's own supervisor
+(with an approval identity suffix as described below).
 Dead uses FM_KEEPALIVE_DEAD_SECS (300) from first observation; blocked and held
 use FM_KEEPALIVE_STUCK_SECS (1200), initially measured from the status file's
 mtime when the condition is observed. Undelivered uses FM_KEEPALIVE_DONE_SECS
@@ -104,8 +104,12 @@ from first observation of backlog acceptance, or the status file's mtime for
 an unaccepted done: worker without a PR.
 Later status edits and transitions between blocked, held and no-progress
 retain the episode's clock, wake, escalation state and parent key; a change to
-dead, undelivered, unmerged or ci-stuck starts a new episode. The wake's text is a concrete
-instruction - decide and resume it, relaunch it with
+dead, undelivered, unmerged, ci-stuck or approval resolves the old escalation
+and starts a new episode. Approval episodes also reset when the record's
+nanosecond mtime or decision key changes, including release and redeclaration
+between scans. Approval wake and parent-channel keys append -<approval_id>
+to their epoch so replacements have distinct identities.
+The wake's text is a concrete instruction - decide and resume it, relaunch it with
 `bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
 A steer, an acknowledgment or a relay upward is not a fix, so the inbox is not
 read. A worker still stuck FM_KEEPALIVE_FOLLOW_SECS (600) after
@@ -115,8 +119,7 @@ to its parent channel (bin/fm-parent-channel-lib.sh). The first mate has no
 parent mate, so its own home waits FM_KEEPALIVE_ESCALATE_SECS (1800) after the
 wake and then tells the captain (see Captain lines). A stall clears when the
 worker resumes with real progress, reports done: with a PR, or enters an
-external, approval-wait or non-mate-decidable wait, unless a higher-priority
-condition applies.
+external or non-mate-decidable wait, unless a higher-priority condition applies.
 An escalated episode's resolution is published through the same route when it
 clears or the worker leaves.
 
