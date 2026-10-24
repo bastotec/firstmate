@@ -147,10 +147,13 @@ is recorded and never stops the next:
            --yes`); auto-land (bin/fm-autoland.sh) merges it under its own
            authority, attestation and risk cap and rolls it out with the firstmate
            deploy hook. A PR above that cap, or a gate --yes cannot pass, is
-           reported for the captain, never merged here. A parked gate is reported
-           as 'needs a decision'; a spent budget as 'timed out'; other nonzero
-           gate replies fail unless they report a bounded wait ending. These
-           outcomes and an interrupted gate trigger a separately bounded abort;
+           reported for the captain, never merged here. A parked gate or a
+           passed-with-override outcome is reported as 'needs a decision'; an
+           override means a failing CI check was approved past, not fixed, and
+           is never a clean 'pr opened' result. A spent budget is 'timed out';
+           other nonzero gate replies fail unless they report a bounded wait
+           ending. These outcomes and an interrupted gate trigger a separately
+           bounded abort;
            an unconfirmed stop is named in the step reason. The committed branch
            and worktree stay for the gate's CI monitor or human follow-up.
            Later nights prune earlier worktrees once the branch is an ancestor
@@ -1778,9 +1781,9 @@ def stop_run(tree):
 
 def drive_gate(ctx, tree, intent):
     """Drive one no-mistakes run in tree to its outcome with --yes, within the
-    step budget. Returns (outcome, pr_url, detail); outcome is the pipeline's
-    word, 'gate' when a gate --yes cannot pass, or 'timed out'. Gates are read
-    by bin/fm_gate_record.py's parser, which knows both AXI response shapes."""
+    step budget. Returns (outcome, pr_url, detail) under the instructions outcome
+    policy in the module header. Gates are read by bin/fm_gate_record.py's parser,
+    which knows both AXI response shapes."""
     from fm_gate_record import parse as parse_gate
     args = [nm_bin(), 'axi', 'run', '--yes', '--intent', intent]
     pr = None
@@ -1795,6 +1798,10 @@ def drive_gate(ctx, tree, intent):
         if pr and isinstance(ctx.facts.get('instructions'), dict):
             ctx.facts['instructions']['pr'] = pr  # known even if the night is interrupted next
         outcome = re.search(r'^outcome: (\S+)', out, re.M)
+        if outcome and outcome.group(1) == 'passed-with-override':
+            # An override is someone approving past a failing check; nobody did
+            # tonight, so it is a gate for a person, never a result (2026-10-24).
+            return 'gate', pr, 'ci gate: a failing check was approved past, not fixed'
         if outcome:
             return outcome.group(1), pr, ''
         _run, gate = parse_gate(out)
