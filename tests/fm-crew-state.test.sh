@@ -27,6 +27,7 @@
 #        outranks a terminal row sitting at the worktree's exact commit
 #   (f) no run + semantic busy                                    -> pane
 #   (g) no run + semantic idle falls to the status-log verb       -> status-log
+#   (g2) repo never initialized for no-mistakes                  -> status-log
 #   (h) dead pane: no run -> unknown/none; with a run -> run-step (not the shell)
 #   (i) kind=scout skips the run lookup                           -> pane/status-log
 #   (j) torn-down worktree / missing meta                         -> unknown/none
@@ -87,6 +88,12 @@ case "${1:-}" in
       status)
         shift
         [ "${FM_FAKE_STATUS_FAIL:-0}" != 1 ] || exit 1
+        if [ "${FM_FAKE_STATUS_UNINIT:-0}" = 1 ]; then
+          # The real CLI's answer in a repository never set up for the gate.
+          printf '%s\n' "error: repo not initialized (run 'no-mistakes init' first)" \
+            'help[1]: Run `no-mistakes init` to set up the gate in this repository'
+          exit 1
+        fi
         [ -z "${FM_FAKE_STATUS_OBSERVED:-}" ] || : > "$FM_FAKE_STATUS_OBSERVED"
         if [ -n "${FM_FAKE_STATUS_HOLD:-}" ]; then
           snapshot=$(cat "$FM_FAKE_AXI_STATUS_FILE")
@@ -1932,6 +1939,26 @@ test_no_run_idle_pane_uses_log() {
   pass "no run + idle pane uses the status-log verb"
 }
 
+# (g2) a repository never initialized for no-mistakes has no run by
+# definition: the worker's own log decides, instead of a permanent unknown
+# that left bin/fm-idle-sweep.sh unable to ever settle the worker.
+test_uninitialized_repo_uses_log() {
+  reset_fakes
+  local d out; d=$(new_case uninit)
+  make_repo_on_branch "$d/wt" fm/feat-u
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-u.meta" $(fm_test_stream_task "$d/state" "feat-u") "worktree=$d/wt" "kind=ship" "harness=deck" "mode=no-mistakes"
+  printf 'blocked: waiting on the tooling owner\n' > "$d/state/feat-u.status"
+  arm_idle_record "$d/state" feat-u
+  out=$(FM_FAKE_STATUS_UNINIT=1 run_crew_state "$d" feat-u)
+  assert_contains "$out" "state: blocked" "uninitialized repo -> the worker's blocked log"
+  assert_contains "$out" "source: status-log" "uninitialized repo -> status-log source"
+  assert_not_contains "$out" "run unavailable or unreadable" "uninitialized repo is not an unreadable run"
+  out=$(FM_FAKE_STATUS_FAIL=1 run_crew_state "$d" feat-u)
+  assert_contains "$out" "state: unknown" "any other failed read stays unknown"
+  pass "uninitialized repo falls back to the status-log verb"
+}
+
 test_no_run_idle_pane_uses_keyed_log() {
   reset_fakes
   local d; d=$(new_case keyed-idle)
@@ -2800,6 +2827,7 @@ test_other_branch_run_ignored
 test_no_run_busy_pane
 test_no_run_footer_text_alone_is_not_working
 test_no_run_idle_pane_uses_log
+test_uninitialized_repo_uses_log
 test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused
 test_no_run_idle_pane_custom_paused_verb
