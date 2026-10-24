@@ -485,9 +485,12 @@ lane_stop() {
 
 # The header's HOST SHUTDOWN section owns this order and its bounds.
 cleanup() {
-  # ALRM too: bash 3.2 times `read -t` (nap) with an alarm that a TERM arriving
-  # mid-read leaves armed, and its default action would kill cleanup halfway.
-  trap '' TERM INT HUP ALRM
+  # bash times `read -t` (nap) with an alarm that a TERM arriving mid-read can
+  # leave armed, and its default action would kill cleanup halfway. A no-op
+  # handler, not an ignore: an ignored ALRM would be inherited by every helper
+  # cleanup starts and break their own timeouts.
+  trap '' TERM INT HUP
+  trap ':' ALRM
   deck_stream_end
   [ -z "$WATCH_PID" ] || fm_begin_child_stop "$WATCH_PID"
   [ -z "$LANE_PID" ] || fm_begin_child_stop "$LANE_PID"

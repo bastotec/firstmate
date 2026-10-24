@@ -148,7 +148,7 @@ run_worker() {
 }
 
 test_idle_host_waits_without_forking_and_wakes_on_input() {
-  local dir="$TMP_ROOT/idle-no-fork" gen host i sleeps=0 start elapsed
+  local dir="$TMP_ROOT/idle-no-fork" gen host sleeps=0 start elapsed
   make_fake_deck "$dir"
   mkdir -p "$dir/state"
   mkfifo "$dir/stdin"
@@ -158,13 +158,13 @@ test_idle_host_waits_without_forking_and_wakes_on_input() {
       --deck "$dir/deck" --model codex/gpt-5.6-luna -- write-status < "$dir/stdin" > "$dir/pane.out" 2>&1 &
   host=$!
   exec 8>"$dir/stdin"
-  for i in $(seq 1 100); do
+  for _ in $(seq 1 100); do
     grep -q 'turn finished' "$dir/pane.out" 2>/dev/null && break
     sleep 0.1
   done
   grep -q 'turn finished' "$dir/pane.out" || { exec 8>&-; kill "$host" 2>/dev/null; fail "setup: the first turn did not finish: $(cat "$dir/pane.out")"; }
   sleep 0.5
-  for i in $(seq 1 30); do
+  for _ in $(seq 1 30); do
     if ps -Ao ppid=,comm= | awk -v p="$host" '$1 == p && $2 ~ /sleep$/ {found=1} END {exit !found}'; then
       sleeps=$((sleeps + 1))
     fi
@@ -172,7 +172,7 @@ test_idle_host_waits_without_forking_and_wakes_on_input() {
   done
   start=$(python3 -c 'import time; print(time.time())')
   printf '/quit\n' >&8
-  for i in $(seq 1 50); do
+  for _ in $(seq 1 50); do
     kill -0 "$host" 2>/dev/null || break
     sleep 0.05
   done
