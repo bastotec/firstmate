@@ -24,6 +24,16 @@ A worker rebases only while its branch is still its own to rewrite, and the bran
 Once custody is settled, getting the branch current is yours to own by steering or relaunching the worker.
 A semantic conflict a worker reports is yours to decide or escalate, never to hand back.
 
+## Implementation intervention
+
+The ship template in `bin/fm-brief.sh` owns worker implementation deadlines, local pre-run checks, and repeated-failure root-cause notes.
+At dispatch and each supervision review, compare no-mistakes tasks' implementation age with their actual run history rather than treating a prior status event as proof that validation started.
+When a task passes 2h of implementation with zero runs, its mate intervenes within the next hour: narrow to the smallest reviewable slice of accepted intent, decide an in-scope open question under `ask-user-authority`, or split the task into bounded deliverables.
+Apply the accepted-intent decision policy directly rather than seeking endorsement for a choice already within the mate's authority.
+When a worker sends a repeated-failure root-cause note, review it in the same turn and return a concrete correction or scope reduction before another run starts.
+For a fleet-tool defect, arrange the repair or workaround through the current worker or a bounded repair task and return the continuation instructions, rather than leaving the diagnostic intervention as a tooling wait.
+The worker continues to own validation commands and the active gate response flow.
+
 ## When a worker reports blocked
 
 Follow `fm_act_within_scope_section` in `bin/fm-dod-lib.sh`, referenced by `AGENTS.md` section 7's "Acting within scope", when judging a reported blocker.
