@@ -253,6 +253,7 @@ You are in an isolated firstmate home. The local \`AGENTS.md\` is your job descr
 $PROJECT_CLONES_NOTE
 Delegate project work to your own crewmates with the normal firstmate lifecycle: brief, spawn, status, watcher, steer, teardown, and recovery.
 Do not invent a second delegation system.
+Apply \`task-delivery\`'s implementation intervention policy: when a no-mistakes task exceeds 2h of implementation with zero runs, intervene within the next hour rather than leaving its worker implementing indefinitely.
 When a task reaches \`needs-decision\` or parks at a gate, load \`ask-user-authority\` and follow its 15-minute mate decision/escalation and default-continuation policy through the parent channel.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
@@ -438,6 +439,15 @@ The path check is authoritative: \`git rev-parse --git-dir\` and \`git rev-parse
 If the top-level path is the primary checkout or not the worktree you were launched in, STOP - do not branch or commit here - append \`blocked: launched in primary checkout, not an isolated worktree\` to the status file and stop.
 
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
+
+# Implementation and validation cadence
+For a no-mistakes task, start the first no-mistakes run within 2h of spawn, reducing to the smallest reviewable slice of the accepted intent when needed and telling your mate what remains.
+If that deadline is at risk, report the concrete obstacle to your mate early enough for it to narrow or split the task under \`task-delivery\`'s implementation intervention policy.
+Before every no-mistakes run, execute the repository's own documented local test and lint commands and require them to pass, following its targeted-test policy where provided.
+When a single run reaches its third fix round, or the same check fails in two runs, stop patching and send your mate a short root-cause note naming the failing check, its cause, and the planned fix.
+Your mate reviews that note before another run starts and returns a concrete repair plan under \`task-delivery\`; this is a diagnostic intervention, not an indefinite tooling wait.
+While a run is active, route the agreed repair through its supported gate response flow rather than hand-editing its branch.
+These timing and diagnostic rules do not bypass existing action boundaries or validation gates.
 
 # Rules
 $RULE1
