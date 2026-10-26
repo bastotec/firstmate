@@ -665,9 +665,9 @@ class Scan:
             valid = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_validate "$2" "$3"',
                          str(SCRIPT_DIR), str(self.state), wid).returncode == 0
             if valid:
+                self.wait_bound.add(wid)
                 unrelated = unrelated_decision(status, key)
                 if not unrelated:
-                    self.wait_bound.add(wid)
                     return None, NOW, verb, text
                 self.pr_condition(m, rec)
                 verb, text = unrelated
@@ -786,6 +786,7 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
             if cond == "approval":
                 rec["approval_id"] = self._approval_ids[wid]
+        answer_only = wid in self.wait_bound and cond in ("blocked", "held")
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "frozen": DONE, "unmerged": 0, "ci-stuck": 0,
                  "approval": APPROVAL}.get(cond, STUCK)
         age = NOW - rec["since"]
@@ -802,6 +803,10 @@ class Scan:
                            "I could not unstick it" if self.primary
                            else "its mate did not fix it within %d minutes of the keep-alive wake" % minutes(FOLLOW),
                            unstick(cond)))
+                if answer_only:
+                    line = ("worker %s has an unanswered independent question since %s (\"%s\"): "
+                            "answer only that question now; its explicit prohibition remains binding and unchanged"
+                            % (wid, timestamp(rec["first"]), text[:160]))
                 if self.report(wid, rec, "blocked", line):
                     rec["escalated"] = True
                     if self.primary:
@@ -812,7 +817,11 @@ class Scan:
         reminder = (". A steer, acknowledgment or relay is not a fix: if it is still stuck, %s is told in %d minutes"
                     % ("the captain" if self.primary else "your parent mate", minutes(self.escalate_after)))
         episode = str(rec["since"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
-        if self.wake("keepalive:%s:%s:%s" % (wid, cond, episode), instruction(wid, cond, age, verb, text, waiting) + reminder):
+        prompt = (("worker %s has had an unanswered independent question for %d minutes (\"%s\"): "
+                   "answer only that question now; its explicit prohibition remains binding and unchanged"
+                   % (wid, minutes(age), text[:160])) if answer_only
+                  else instruction(wid, cond, age, verb, text, waiting))
+        if self.wake("keepalive:%s:%s:%s" % (wid, cond, episode), prompt + reminder):
             rec.update(woke=NOW, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)

@@ -141,6 +141,7 @@ test_spawn_refusal_in_the_first_mates_home_reaches_the_captain() {
   assert_equals 0 "$(notice_count "$dir" .)" "the captain was told before the first mate had 30 minutes"
   scan "$dir" $((T0 + 3000))
   assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck (blocked)')" "a worker the first mate only steered did not reach the captain"
+  assert_grep 'an answer to its blocker or a relaunch' "$dir/notices" "ordinary blocked escalation lost its remediation"
   assert_contains "$(wakes "$dir")" 'the captain was told in one line - keep fixing it' "the first mate was not told the captain knows"
   scan "$dir" $((T0 + 6000))
   assert_equals 1 "$(notice_count "$dir" .)" "the captain line repeated"
@@ -2091,8 +2092,8 @@ test_valid_untimed_prohibition() {
 }
 
 test_independent_decision_with_prohibited_green_pr() {
-  local dir verb scenario cond before record
-  for scenario in needs-decision paused hidden-done hidden-bound; do
+  local dir verb scenario cond before record emitted forbidden
+  for scenario in needs-decision blocked paused hidden-done hidden-bound; do
     verb=$scenario
     case "$scenario" in hidden-*) verb=needs-decision ;; esac
     dir=$(make_home "prohibited-green-decision-$scenario" ship)
@@ -2130,8 +2131,14 @@ test_independent_decision_with_prohibited_green_pr() {
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 88201))
     assert_grep "blocked [key=keepalive-helper-w1-$((T0 + 86401))]" "$dir/parent/state/helper.status" \
       "the independent decision did not escalate to its parent"
-    assert_not_contains "$(wakes "$dir")" 'merge it now' "independent decision lifted the PR prohibition"
-    assert_not_contains "$(wakes "$dir")" 'land it or close it now' "independent decision allowed CI action demands"
+    for emitted in "$(wakes "$dir")" "$(cat "$dir/parent/state/helper.status")"; do
+      for forbidden in relaunch retry replace retir 'close it' release 'merge it now' 'land it or close it now'; do
+        assert_not_contains "$emitted" "$forbidden" "independent $verb instruction demanded prohibited recovery: $forbidden"
+      done
+      assert_contains "$emitted" 'awaiting your approval' "the independent question was missing from its instruction"
+      assert_contains "$emitted" 'answer only that question now' "the instruction was not scoped to answering the question"
+      assert_contains "$emitted" 'explicit prohibition remains binding and unchanged' "the instruction did not preserve the prohibition"
+    done
     assert_equals "$before" "$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/instruction")" \
       "independent decision changed the prohibition binding"
     FM_HOME="$dir/home" bash -c '. "$1/bin/fm-approval-wait.sh"; fm_approval_wait_validate "$2" w1' \
