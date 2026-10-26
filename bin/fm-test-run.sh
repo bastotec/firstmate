@@ -379,7 +379,7 @@ family_for_basename() {
     fm-send-inbox.test.sh|fm-spawn-batch.test.sh|\
     fm-spawn-dispatch-profile.test.sh|\
     fm-trace-context-spawn.test.sh|fm-spawn-worktree-settle.test.sh|\
-    fm-teardown-endpoint-safety.test.sh)
+    fm-preserved-result.test.sh|fm-teardown-endpoint-safety.test.sh)
       printf '%s\n' backend-dispatch
       ;;
     fm-check-unregister.test.sh|fm-pr-check-security.test.sh|fm-pr-merge.test.sh|fm-pr-record-audit.test.sh|\
@@ -623,15 +623,9 @@ list_portable_serial() {
 # Invoked indirectly by emit_via_file.
 # shellcheck disable=SC2329
 list_portable_serial_unbuffered() {
-  local s base fam
-  while IFS= read -r s; do
-    [ -n "$s" ] || continue
-    base=$(basename "$s")
-    if is_proven_isolated_script "$s"; then
-      continue
-    fi
-    printf '%s\n' "$s"
-  done < <(all_repo_tests)
+  # Set subtraction avoids a per-script child while reading a live pipe: on
+  # Bash 3.2 its SIGCHLD can interrupt read and silently truncate a long list.
+  LC_ALL=C comm -23 <(all_repo_tests) <(list_proven_isolated | LC_ALL=C sort -u)
 }
 
 # Measured portable-serial script durations in milliseconds, from the CI timing
@@ -753,6 +747,8 @@ tests/fm-peek-remote.test.sh 1331
 tests/fm-parked-run-watch.test.sh 6057
 tests/fm-pending-reply.test.sh 95487
 tests/fm-pr-check-security.test.sh 213897
+# Completed in green serial shard 7 of CI run 40127380039 (2026-10-24).
+tests/fm-preserved-result.test.sh 29814
 tests/fm-procevent-quota.test.sh 3314
 tests/fm-procevent-when.test.sh 52742
 tests/fm-procevent.test.sh 258040

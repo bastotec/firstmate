@@ -499,6 +499,9 @@ To retire a retired-backend record instead, stop any process still behind it by 
 The owning mate retires its own finished work on those backends under the captain's standing instruction through [`task-delivery`'s finished-work sweep](../.agents/skills/task-delivery/SKILL.md#finished-work-sweep); [`fm-retire-endpoint.sh`'s header and `--help`](../bin/fm-retire-endpoint.sh) own the narrower `--finished` checks and assertion basis.
 Refusals follow the same finished-work sweep policy, never a captain card.
 
+For explicit completion that retains an accepted finite diagnosis or superseded ship's original allocation, use the separate [accepted-result path](../bin/fm-preserved-result-lib.sh), not a shipped-code claim or a stopped-endpoint assertion.
+Its header owns acceptance evidence, admission safeguards, preservation, and retry; [`tests/fm-preserved-result.test.sh`](../tests/fm-preserved-result.test.sh) exercises that contract on isolated allocations.
+
 The opposite leftover is a stream endpoint the hub still lists live after its task record is gone, for example when a captain decision removed the record.
 `FM_HOME=<home> bin/fm-retire-endpoint.sh --orphan <task-id> [--endpoint <endpoint-id>]` closes it, and `--list-orphans` lists that home's candidates read-only; for a remote home, run it through `bin/fm-on.sh <secondmate> fm-retire-endpoint.sh --orphan <task-id>`.
 [`fm-retire-orphan-lib.sh`'s header](../bin/fm-retire-orphan-lib.sh) owns the endpoint-bound ownership proof, stopped-or-idle and work-protection checks, assertion logging, and the remaining check-to-kill race; [`fm-retire-endpoint.sh --help`](../bin/fm-retire-endpoint.sh) owns invocation mechanics and the read-only listing's limits.

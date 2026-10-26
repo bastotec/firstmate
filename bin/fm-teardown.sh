@@ -311,7 +311,6 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
 SECONDMATE_REG="$DATA/secondmates.md"
 SUB_HOME_MARKER=".fm-secondmate-home"
-SUB_HOME_PARENT_MARKER=".fm-secondmate-parent"
 # shellcheck source=bin/fm-tasks-axi-lib.sh
 . "$SCRIPT_DIR/fm-tasks-axi-lib.sh"
 # shellcheck source=bin/fm-backlog-transition-lib.sh
@@ -345,6 +344,10 @@ if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   exit 2
 fi
 ID=$1
+if [ -e "$STATE/$ID.preserved-result" ] || [ -L "$STATE/$ID.preserved-result" ]; then
+  echo "REFUSED: $ID retains its original allocation for an accepted result; ordinary teardown cannot release it." >&2
+  exit 1
+fi
 FORCE=
 LEGACY_RECORD_GIVEN=0
 KEEP_COMMITS=0
@@ -475,6 +478,10 @@ fm_lock_try_acquire "$CONTROL_LOCK" || {
   exit 1
 }
 CONTROL_LOCK_HELD=1
+if [ -e "$STATE/$ID.preserved-result" ] || [ -L "$STATE/$ID.preserved-result" ]; then
+  echo "REFUSED: $ID's original allocation is retained; retry its explicit accepted-result retirement." >&2
+  exit 1
+fi
 if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
   || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
   printf 'worker record %s changed or vanished\n' "$ID" >&2
@@ -1113,145 +1120,7 @@ if [ "$TEARDOWN_LEGACY_PENDING" = 1 ]; then
   TEARDOWN_LEGACY_ACCEPTED=1
 fi
 
-PUBLIC_FOLLOWUP_HOME=$FM_HOME
-PUBLIC_FOLLOWUP_STATE=$STATE
-PUBLIC_FOLLOWUP_WORK_HOME=main
-PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=0
-PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE=0
-PUBLIC_FOLLOWUP_RELAY_ACTIVE=0
-public_followup_canonical_home() {
-  local home=$1
-  case "$home" in /*) ;; *) return 1 ;; esac
-  CDPATH='' cd -- "$home" 2>/dev/null && pwd -P
-}
-public_followup_resolve_primary_home() {
-  local parent=$1 child=$2 id=$3 parent_meta registry meta_home
-  fm_pf_home_id_valid "secondmate:$id" || return 1
-  parent=$(public_followup_canonical_home "$parent") || return 1
-  child=$(public_followup_canonical_home "$child") || return 1
-  [ "$parent" != "$child" ] || return 1
-  parent_meta="$parent/state/$id.meta"
-  [ -f "$parent_meta" ] && [ ! -L "$parent_meta" ] || return 1
-  [ "$(fm_meta_get "$parent_meta" kind)" = secondmate ] || return 1
-  meta_home=$(fm_meta_get "$parent_meta" home)
-  meta_home=$(CDPATH='' cd -- "$meta_home" 2>/dev/null && pwd -P) || return 1
-  [ "$meta_home" = "$child" ] || return 1
-  registry="$parent/data/secondmates.md"
-  secondmate_registry_validate_bindings "$registry" secondmate_registry_path_key "$id" "$child" || return 1
-  printf '%s\n' "$parent"
-}
-if [ -f "$FM_HOME/$SUB_HOME_MARKER" ]; then
-  SECOND_MATE_ID=$(sed -n '1p' "$FM_HOME/$SUB_HOME_MARKER")
-  # The durable parent record (written once at seeding, next to the identity
-  # marker) names this home's route to its parent: "local" when they share a
-  # filesystem, "remote" when the parent lives on another machine. Absent for
-  # a home seeded before this record existed, which preserves today's exact
-  # env-var-only behavior for that legacy home rather than guessing its route.
-  PARENT_ROUTE_FILE="$FM_HOME/$SUB_HOME_PARENT_MARKER"
-  PARENT_ROUTE_RECORD=absent
-  PARENT_ROUTE=
-  PARENT_ROUTE_HOME=
-  if [ -e "$PARENT_ROUTE_FILE" ] || [ -L "$PARENT_ROUTE_FILE" ]; then
-    PARENT_ROUTE_RECORD=invalid
-    if fm_secondmate_parent_record_parse "$PARENT_ROUTE_FILE"; then
-      PARENT_ROUTE=$FM_SECONDMATE_PARENT_ROUTE
-      PARENT_ROUTE_HOME=$FM_SECONDMATE_PARENT_HOME
-      PARENT_ROUTE_RECORD=valid
-    fi
-  fi
-  if [ "$PARENT_ROUTE_RECORD" = invalid ]; then
-    PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=1
-  elif [ "$PARENT_ROUTE" = remote ]; then
-    # The entire promised-public-reply subsystem is same-filesystem by
-    # construction (bin/fm-public-followup-emit.sh header): a parent recorded
-    # on another machine can never hold a delegated promise for this child, so
-    # the delegated-parent path is out of scope and never refuses cleanup on
-    # its own. A token committed directly to THIS home's own .env is still a
-    # real, same-filesystem signal, so it is still checked - but read only
-    # from the file, never from the process environment, so an unrelated
-    # export in the remote host's own login shell cannot trigger it the way
-    # fm_pf_relay_active's environment-wins rule would.
-    if [ -f "$FM_HOME/.env" ]; then
-      HOME_ENV_TOKEN=$(fmx_env_get FMX_PAIRING_TOKEN "$FM_HOME/.env")
-      [ -z "$HOME_ENV_TOKEN" ] || PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE=1
-    fi
-    if [ "$PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE" = 1 ]; then
-      PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=1
-    else
-      PUBLIC_FOLLOWUP_HOME=
-      PUBLIC_FOLLOWUP_STATE=
-    fi
-  elif [ "$PARENT_ROUTE" = local ]; then
-    PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=1
-    PRIMARY_HOME_CANDIDATE=${FM_PUBLIC_FOLLOWUP_PRIMARY_HOME:-$PARENT_ROUTE_HOME}
-    PARENT_BINDINGS_MATCH=1
-    if [ -n "${FM_PUBLIC_FOLLOWUP_PRIMARY_HOME:-}" ]; then
-      LIVE_PARENT_HOME=$(public_followup_canonical_home \
-        "$FM_PUBLIC_FOLLOWUP_PRIMARY_HOME") || PARENT_BINDINGS_MATCH=0
-      DURABLE_PARENT_HOME=$(public_followup_canonical_home \
-        "$PARENT_ROUTE_HOME") || PARENT_BINDINGS_MATCH=0
-      if [ "$PARENT_BINDINGS_MATCH" = 1 ] \
-        && [ "$LIVE_PARENT_HOME" != "$DURABLE_PARENT_HOME" ]; then
-        PARENT_BINDINGS_MATCH=0
-      fi
-    fi
-    if [ "$PARENT_BINDINGS_MATCH" = 1 ] \
-      && fm_pf_home_id_valid "secondmate:$SECOND_MATE_ID"; then
-      PUBLIC_FOLLOWUP_WORK_HOME="secondmate:$SECOND_MATE_ID"
-      if PUBLIC_FOLLOWUP_HOME=$(public_followup_resolve_primary_home \
-          "$PRIMARY_HOME_CANDIDATE" "$FM_HOME" "$SECOND_MATE_ID"); then
-        PUBLIC_FOLLOWUP_STATE="$PUBLIC_FOLLOWUP_HOME/state"
-        PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=0
-        if [ "$FORCE" != "--force" ] \
-          && fm_pf_relay_active "$PUBLIC_FOLLOWUP_HOME"; then
-          PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
-        fi
-      else
-        PUBLIC_FOLLOWUP_HOME=
-        PUBLIC_FOLLOWUP_STATE=
-      fi
-    fi
-  else
-    # A home seeded before the durable record existed retains the legacy
-    # launch-time binding behavior unchanged.
-    PRIMARY_HOME_CANDIDATE=${FM_PUBLIC_FOLLOWUP_PRIMARY_HOME:-}
-    if [ -n "$PRIMARY_HOME_CANDIDATE" ]; then
-      if fm_pf_relay_active "$PRIMARY_HOME_CANDIDATE"; then
-        PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE=1
-      fi
-    elif fm_pf_relay_active "$FM_HOME"; then
-      PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE=1
-    fi
-    if [ "$PUBLIC_FOLLOWUP_PARENT_RELAY_ACTIVE" = 1 ]; then
-      PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=1
-      if fm_pf_home_id_valid "secondmate:$SECOND_MATE_ID"; then
-        PUBLIC_FOLLOWUP_WORK_HOME="secondmate:$SECOND_MATE_ID"
-        if PUBLIC_FOLLOWUP_HOME=$(public_followup_resolve_primary_home \
-            "$PRIMARY_HOME_CANDIDATE" "$FM_HOME" "$SECOND_MATE_ID"); then
-          PUBLIC_FOLLOWUP_STATE="$PUBLIC_FOLLOWUP_HOME/state"
-          PUBLIC_FOLLOWUP_PARENT_UNRESOLVED=0
-          if [ "$FORCE" != "--force" ] \
-            && fm_pf_relay_active "$PUBLIC_FOLLOWUP_HOME"; then
-            PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
-          fi
-        else
-          PUBLIC_FOLLOWUP_HOME=
-          PUBLIC_FOLLOWUP_STATE=
-        fi
-      fi
-    else
-      PUBLIC_FOLLOWUP_HOME=
-      PUBLIC_FOLLOWUP_STATE=
-    fi
-  fi
-elif [ "$KIND" = secondmate ]; then
-  PUBLIC_FOLLOWUP_WORK_HOME="secondmate:$ID"
-  if [ "$FORCE" != "--force" ] && fm_pf_relay_active "$FM_HOME"; then
-    PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
-  fi
-elif [ "$FORCE" != "--force" ] && fm_pf_relay_active "$FM_HOME"; then
-  PUBLIC_FOLLOWUP_RELAY_ACTIVE=1
-fi
+fm_pf_resolve_work_owner "$FM_HOME" "$STATE" "$KIND" "$ID" "$FORCE"
 
 default_branch() {
   local ref branch
@@ -2609,6 +2478,13 @@ validate_firstmate_home_for_removal() {
   [ -n "$home" ] || return 0
   [ -e "$home" ] || return 0
   abs_home_path=$(validate_removal_target "$home" "$label") || return 1
+  local retained_result
+  for retained_result in "$abs_home_path/state/"*.preserved-result; do
+    if [ -e "$retained_result" ] || [ -L "$retained_result" ]; then
+      echo "REFUSED: $label retains accepted-result evidence and original allocations; ordinary home teardown cannot discard them." >&2
+      return 1
+    fi
+  done
   if [ ! -f "$abs_home_path/$SUB_HOME_MARKER" ]; then
     echo "REFUSED: unsafe $label removal target $home is not a seeded secondmate home" >&2
     return 1

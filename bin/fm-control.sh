@@ -523,6 +523,9 @@ trap control_cleanup EXIT
 fm_lock_try_acquire "$CONTROL_LOCK" \
   || die "another lifecycle action is already running for task $ID"
 CONTROL_LOCK_HELD=1
+if [ -e "$STATE/$ID.preserved-result" ] || [ -L "$STATE/$ID.preserved-result" ]; then
+  die "task $ID retains its original allocation for an accepted result; retry its explicit retirement instead of resuming it"
+fi
 META="$STATE/$ID.meta"
 if [ "$EXPECTED_RECORD_SET" = 1 ] && { [ ! -f "$META" ] \
   || ! current_record=$(cat "$META" 2>/dev/null) || [ "$current_record" != "$EXPECTED_RECORD" ]; }; then
