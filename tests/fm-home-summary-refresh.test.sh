@@ -648,8 +648,14 @@ import sys
 note = ("the crewmate ran validation and reported checks on the branch "
         "after review ") * 25
 with open(sys.argv[1], "w") as handle:
+    # Busy persistent homes retain several wide, still-open decisions while
+    # routine history and unrelated resolutions continue to accumulate.
+    for i in range(16):
+        handle.write(f"needs-decision [key=retained-{i}]: {note}({i})\n")
     for i in range(300):
         handle.write(f"working: {note}({i})\n")
+        handle.write(f"resolved [key=unrelated-{i}]: settled elsewhere\n")
+    handle.write("resolved [key=retained-0]: settled\n")
     handle.write("needs-decision [key=cost-gate]: which base to rebuild from\n")
 PY
 PATH="$FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$COST_HOME" \
@@ -661,6 +667,9 @@ PATH="$FAKEBIN:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$COST_HOME" \
 jq -e --arg home "$COST_HOME" '
   .schema == "fm-secondmate-home-summary.v1"
   and .home == $home
+  and (.decisions_open | length) == 16
+  and all(.decisions_open[]; .key != "retained-0")
+  and any(.decisions_open[]; .key == "retained-15" and (.summary | startswith("the crewmate ran validation")))
   and any(.decisions_open[]; .key == "cost-gate")
 ' "$COST_HOME/state/home-summary.json" >/dev/null \
   || fail "the accumulated home published a ledger missing its open decision"

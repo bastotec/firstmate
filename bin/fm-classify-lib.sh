@@ -631,7 +631,7 @@ _fm_decision_fold_line() {  # <open-set> <status-line> <resolve-verb> <held-verb
   _fm_decision_fold_line_into "$1" "$2" "$3" "$4"
   printf '%s' "$_FM_OPEN"
 }
-_fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held-verb>
+_fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held-verb> [<note-reference>]
   local open=$1 line=$2 resolve=$3 held=$4 verb key note
   local _FM_VERB _FM_KEY _FM_NOTE _FM_SET
   # Blank-line guard. A `case` glob answers "does this line hold any non-space
@@ -647,6 +647,9 @@ _fm_decision_fold_line_into() {  # <open-set> <status-line> <resolve-verb> <held
   _fm_status_line_note_into "$line"; note=$_FM_NOTE
   _fm_decision_key_transition_allowed "$key" "$note" \
     || { _FM_OPEN=$open; return 0; }
+  # A whole-file reader can retain notes separately and fold small references.
+  # Validate the real note first, especially for reserved-key transitions.
+  [ "$#" -lt 5 ] || note=$5
   case "$verb" in
     needs-decision|blocked)
       _fm_decision_drop_into "$open" "$key"; open=$_FM_SET
@@ -682,14 +685,33 @@ _fm_decision_fold_step() {  # <open-var> <status-line> <resolve-verb> <held-verb
 # subprocess read, which exists for that function's much narrower payload-driven
 # path resolution rather than this directory-local glob.
 status_open_decisions() {  # <status-file>
-  local f=$1 line resolve held open=''
+  local f=$1 line resolve held open='' number=0 key verb reference result='' _FM_OPEN _FM_NOTE _FM_VERB _FM_STRIPPED
+  local -a notes=()
   [ -f "$f" ] && [ -r "$f" ] && [ ! -L "$f" ] || return 0
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
-    _fm_decision_fold_step open "$line" "$resolve" "$held"
+    # Keep the fold's mutable set small: copying lifetime-sized notes at every
+    # transition makes Bash 3.2 publication exceed its deadline on busy homes.
+    _fm_status_line_verb_into "$line"
+    case "$_FM_VERB" in
+      needs-decision|blocked|"$resolve"|"$held") ;;
+      *) continue ;;
+    esac
+    number=$((number + 1))
+    notes[number]=$line
+    _fm_decision_fold_line_into "$open" "$line" "$resolve" "$held" "$number"
+    open=$_FM_OPEN
   done < "$f"
-  printf '%s' "$open"
+  while IFS=$'\t' read -r key verb reference; do
+    [ -n "$key" ] || continue
+    _fm_status_line_note_into "${notes[reference]}"
+    result="${result}${key}"$'\t'"${verb}"$'\t'"${_FM_NOTE}"$'\n'
+  done <<EOF
+$open
+EOF
+  _fm_strip_trailing_newlines_into "$result"
+  printf '%s' "$_FM_STRIPPED"
 }
 
 # 0 when <key> has a record in a folded "<key>\t<verb>\t<note>" open set.

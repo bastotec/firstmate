@@ -336,5 +336,36 @@ EOF
   pass "status_key_closing_verb reports the last real transition, in either key position"
 }
 
+test_whole_file_retains_wide_notes_and_transition_semantics() {
+  local dir f expected actual reference='' line resolve=settled held=transferred i note
+  dir=$(case_dir wide-notes)
+  f="$dir/a.status"
+  note=$(printf '%0800d' 1)
+  : > "$f"
+  for i in 1 2 3 4 5; do
+    printf 'blocked [key=wide-%s]: %s\twith tabs and backslash \\ literal\n' "$i" "$note" >> "$f"
+  done
+  cat >> "$f" <<'EOF'
+working: unrelated history
+settled [key=wide-2]: answered
+transferred [key=wide-4]: transferred elsewhere
+blocked [key=pending-reply-sample]: pending-reply-missed: real lifecycle opener
+settled [key=pending-reply-sample]: unrelated note must not close the reserved key
+blocked [key=wide-1]: replacement note
+EOF
+  printf 'blocked [key=last]: final unterminated note\twith tab' >> "$f"
+  # Compare the compact reader with the original note-carrying shared core,
+  # including custom closing verbs, reserved keys, order and exact note bytes.
+  while IFS= read -r line || [ -n "$line" ]; do
+    reference=$(_fm_decision_fold_line "$reference" "$line" "$resolve" "$held")
+  done < "$f"
+  actual=$(FM_CLASSIFY_RESOLVE_VERB="$resolve" FM_CLASSIFY_CAPTAIN_HELD_VERB="$held" status_open_decisions "$f")
+  expected=$(printf 'wide-3\tblocked\t%s\twith tabs and backslash \\ literal\nwide-5\tblocked\t%s\twith tabs and backslash \\ literal\npending-reply-sample\tblocked\tpending-reply-missed: real lifecycle opener\nwide-1\tblocked\treplacement note\nlast\tblocked\tfinal unterminated note\twith tab' "$note" "$note")
+  [ "$actual" = "$expected" ] || fail "wide-note fold lost ordering, transitions or note bytes"
+  [ "$actual" = "$reference" ] || fail "compact fold differs from the shared note-carrying core"
+  pass "whole-file folding retains exact notes, custom verbs and reserved-key authority"
+}
+
+test_whole_file_retains_wide_notes_and_transition_semantics
 test_closing_verb_separates_resolution_from_durable_transfer
 test_closing_verb_tracks_the_last_transition_in_both_positions
