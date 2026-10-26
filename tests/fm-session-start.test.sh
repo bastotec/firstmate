@@ -1851,13 +1851,23 @@ EOF
 # refresh already in flight, as it does behind the watcher's in a large home on
 # a loaded machine - must not spend the digest's runtime bound: it is side-band.
 test_slow_home_summary_does_not_block_session_start() {
-  local rec root home fakebin out holder started elapsed waited=0
+  local rec root home fakebin out holder started elapsed waited=0 python
   rec=$(new_world slow-home-summary)
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
   make_fake_toolchain "$fakebin"
   make_fake_ps_deck "$fakebin"
+  python=$(command -v python3)
+  printf '#!%s\n' "$python" > "$fakebin/setsid"
+  cat >> "$fakebin/setsid" <<'PY'
+import os, pathlib, sys
+os.setsid()
+pathlib.Path(os.environ['FM_HOME'], 'refresh-detached').write_text(
+    str(os.getpid() == os.getsid(0)) + '\n' + ' '.join(sys.argv[1:]))
+os.execvp(sys.argv[1], sys.argv[1:])
+PY
+  chmod +x "$fakebin/setsid"
   # shellcheck disable=SC2016 # Expanded by the holder.
   bash -c '. "$1"; fm_lock_try_acquire "$2" || exit 1; touch "$3"; exec sleep 120' _ \
     "$ROOT/bin/fm-wake-lib.sh" "$home/state/.home-summary-refresh.lock" "$home/holder.ready" &
@@ -1881,6 +1891,9 @@ EOF
   while [ ! -s "$home/state/home-summary.json" ] && [ "$waited" -lt 600 ]; do sleep 0.1; waited=$((waited + 1)); done
   jq -e '.schema == "fm-secondmate-home-summary.v1"' "$home/state/home-summary.json" >/dev/null \
     || fail "the detached publication never published once the lock was free"
+  assert_equals "True
+$ROOT/bin/fm-home-summary-refresh.sh --best-effort" "$(cat "$home/refresh-detached")" \
+    "the available setsid launcher runs the refresh in its own session"
   pass "a slow home-summary publication runs beside session start, not inside its bound"
 }
 

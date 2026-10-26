@@ -556,8 +556,14 @@ if [ "$READ_ONLY" -eq 0 ]; then
   # machine one publication, plus the wait for another one already in flight,
   # can take its whole 60-second deadline. Its own deadline still bounds it.
   startup_diagnostic enter home-summary
-  perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV or exit 127' \
-    "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort </dev/null >/dev/null 2>&1 &
+  (
+    if command -v setsid >/dev/null 2>&1; then
+      exec setsid "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort
+    else
+      exec perl -MPOSIX -e 'my $r = POSIX::setsid(); (defined $r && $r != -1) or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' \
+        "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort
+    fi
+  ) </dev/null >/dev/null 2>&1 &
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
   # whole digest below instead of in front of it. Step 7 harvests whatever has

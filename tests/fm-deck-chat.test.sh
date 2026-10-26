@@ -612,8 +612,8 @@ test_stream_endpoint_host() {
 # loaded machine into a crash loop. Unusable overrides fall back to the default.
 test_host_session_start_bound() {
   local value expected home rc
-  for value in unset 900 '' abc 0 00; do
-    case "$value" in 900) expected=900 ;; *) expected=600 ;; esac
+  for value in unset 900 0900 0600 000600 '' abc 0 00; do
+    case "$value" in 900|0900) expected=900 ;; *) expected=600 ;; esac
     home=$(new_home "start-bound-$value")
     rc=0
     if [ "$value" = unset ]; then
@@ -627,6 +627,66 @@ test_host_session_start_bound() {
     assert_equals "$expected" "$(cat "$home/start-budgets" 2>/dev/null)" "session start bound for override '$value'"
   done
   pass "fm-deck-chat.sh: the host gives session start its own bound and rejects unusable overrides"
+}
+
+test_stream_incomplete_process_readings() {
+  local bundle="$LAB/process-readings" home mode frame out rc value expected
+  command -v jq >/dev/null 2>&1 || { pass "skip: jq not found"; return; }
+  mkdir -p "$bundle"
+  cp -R "$BIN" "$bundle/bin"
+  cat > "$bundle/bin/backends/stream.sh" <<'SH'
+fm_backend_stream_tool_check() { :; }
+fm_backend_stream_container_ensure() { :; }
+fm_backend_stream_machine() { printf fixture; }
+fm_backend_stream_hub_tag() { printf fixture; }
+fm_backend_stream_parse_target() { FM_BACKEND_STREAM_ENDPOINT=${1#*:}; }
+fm_backend_stream_list_live() { printf 'fixture\tprimary-chat\tstale\n'; }
+fm_backend_stream_current_path() { printf '%s' "$FM_HOME"; }
+fm_backend_stream_create_task() {
+  if [ "$FM_TEST_READING_MODE" = stale ]; then
+    printf 'duplicate_label\n' >&2
+    return 1
+  fi
+  printf 'fixture fresh'
+}
+fm_backend_stream_api() {
+  case "$2" in
+    */processes) printf '%s' "$FM_TEST_PROCESS_FRAME" ;;
+    *) printf '{"task":{}}' ;;
+  esac
+}
+fm_backend_stream_kill() { touch "$FM_HOME/killed"; }
+fm_backend_stream_send_text_line() { :; }
+fm_backend_stream_capture() { printf 'fixture screen\n'; }
+sleep() { SECONDS=$((SECONDS + 2000)); }
+SH
+  for mode in stale launch; do
+    for frame in '[]' '[{"argv0":"","args":""}]' '[{"argv0":"bash"},{}]' null; do
+      home=$(new_home "process-$mode-${frame//[^a-zA-Z]/}")
+      rc=0
+      out=$(FM_TEST_READING_MODE=$mode FM_TEST_PROCESS_FRAME="{\"stale\":false,\"alive\":true,\"foreground\":$frame}" \
+        FM_DECK_CHAT_LAUNCH_VERIFY_SECS=0 "$bundle/bin/fm-deck-chat.sh" --stream --home "$home" 2>&1) || rc=$?
+      expect_code 1 "$rc" "incomplete process inspection refuses recovery"
+      assert_absent "$home/killed" "incomplete process inspection must not close an endpoint"
+      if [ "$mode" = stale ]; then
+        assert_contains "$out" 'cannot read stream endpoint fixture:stale' "an ambiguous stale endpoint is refused"
+      else
+        assert_contains "$out" 'the endpoint is left running for inspection' "an ambiguous launch is left alone"
+      fi
+    done
+  done
+  for value in 0600 0900; do
+    case "$value" in 0600) expected=750 ;; 0900) expected=1050 ;; esac
+    home=$(new_home "registration-$value")
+    rc=0
+    out=$(FM_TEST_READING_MODE=launch \
+      FM_TEST_PROCESS_FRAME='{"stale":false,"alive":true,"foreground":[{"argv0":"fm-deck-chat"},{}]}' \
+      FM_DECK_SESSION_START_TIMEOUT=$value "$bundle/bin/fm-deck-chat.sh" --stream --home "$home" 2>&1) || rc=$?
+    expect_code 1 "$rc" "the unregistered fixture host times out"
+    assert_contains "$out" "within ${expected}s" "registration uses the decimal session-start bound"
+    assert_absent "$home/killed" "a present host is left alone even with an incomplete sibling identity"
+  done
+  pass "fm-deck-chat.sh --stream: incomplete process identities are left alone and registration uses decimal bounds"
 }
 
 # Run a stream backend function against the test hub. Positional: <function> <args...>.
@@ -1720,6 +1780,7 @@ test_service_inherited_outage
 test_service_captain_start_grace
 test_startup_completion_required
 test_host_session_start_bound
+test_stream_incomplete_process_readings
 test_stream_launch_survives_a_swallowed_keystroke
 test_stream_recovers_its_own_stale_endpoint
 test_service_reminds_while_down

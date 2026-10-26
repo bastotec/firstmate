@@ -207,7 +207,8 @@ session_start_timeout() {
   local t=${FM_DECK_SESSION_START_TIMEOUT:-600}
   # A padded zero such as 00 is still zero, which would disable the bound.
   case "$t" in ''|*[!0-9]*) t=600 ;; esac
-  [ "$t" -gt 0 ] 2>/dev/null || t=600
+  while [ "${t#0}" != "$t" ]; do t=${t#0}; done
+  [ "${t:-0}" -gt 0 ] 2>/dev/null || t=600
   printf '%s' "$t"
 }
 
@@ -550,6 +551,8 @@ if [ "$STREAM" = 1 ]; then
           ((.argv0 // "") | split("/") | last) == "fm-deck-chat"
           or ((.args // "") | split(" ") | map(split("/") | last) | index("fm-deck-chat.sh")) != null)
         then "present"
+      elif (.foreground | type) != "array" or (.foreground | length) == 0 then "unreadable"
+      elif any(.foreground[]; (.argv0 // "") == "" and (.args // "") == "") then "unreadable"
       else "absent" end' 2>/dev/null || printf unreadable
   }
 
