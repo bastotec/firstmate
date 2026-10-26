@@ -126,9 +126,13 @@ Subcommands:
       logs that delay once and leaves it to finish independently on shutdown.
       After a start attempt returns, or while backing off or waiting for a captain
       start, down past the alert window (default 120s) writes service-down and raises
-      `fm-deck-chat.sh service-alert` once per outage, across keeper replacement;
-      a stable run or explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
+      `fm-deck-chat.sh service-alert`; while the outage lasts it raises it again with
+      --repeat once the marker is older than the reminder cadence (default 3600s;
+      0 disables reminders). The marker's age carries the cadence across keeper
+      replacement, so a replacement keeper never re-alerts sooner; a stable run or
+      explicit stop clears the marker. Env: FM_DECK_CHAT_SERVICE_POLL (2),
       _BACKOFF (5), _BACKOFF_MAX (300), _STABLE_SECS (120), _ALERT_SECS (120),
+      _REALERT_SECS (3600),
       _START_TIMEOUT (200, expected launcher window, not a termination deadline),
       _START_GRACE (60, captain-start grace seconds).
 """
@@ -934,6 +938,7 @@ class Keeper:
         self.backoff_max = env_seconds('FM_DECK_CHAT_SERVICE_BACKOFF_MAX', 300)
         self.stable = env_seconds('FM_DECK_CHAT_SERVICE_STABLE_SECS', 120)
         self.alert_after = env_seconds('FM_DECK_CHAT_SERVICE_ALERT_SECS', 120)
+        self.realert = env_seconds('FM_DECK_CHAT_SERVICE_REALERT_SECS', 3600)
         self.start_timeout = env_seconds('FM_DECK_CHAT_SERVICE_START_TIMEOUT', 200)
         self.start_grace = env_seconds('FM_DECK_CHAT_SERVICE_START_GRACE', 60)
         self.view = None
@@ -1043,7 +1048,18 @@ class Keeper:
             self.host_pid = record['host_pid'] if record else None
         return rc == 0
 
-    def alert(self, down_for):
+    def last_alert(self):
+        """When the outage was last alerted (the marker's mtime), else None."""
+        try:
+            return (self.root / 'service-down').stat().st_mtime
+        except OSError:
+            return None
+
+    def reminder_due(self):
+        last = self.last_alert()
+        return self.realert > 0 and last is not None and time.time() - last >= self.realert
+
+    def alert(self, down_for, repeat=False):
         summary = ('firstmate %s for %s has been down %ds despite the service; '
                    'see %s' % ('supervisor' if self.role == 'supervisor' else 'primary',
                                self.home, down_for, self.root / 'service.log'))
@@ -1054,7 +1070,8 @@ class Keeper:
             pass
         self.log('ALERT: ' + summary)
         rc, out = self.run_deck_chat(['service-alert'] + (['--role', 'supervisor'] if self.role == 'supervisor' else [])
-                                     + ['--home', str(self.home), '--summary', summary], 120)
+                                     + ['--home', str(self.home)] + (['--repeat'] if repeat else [])
+                                     + ['--summary', summary], 120)
         if rc != 0:
             self.log('service-alert exit %d: %s' % (rc, out.strip()[-300:]))
 
@@ -1184,10 +1201,12 @@ class Keeper:
                 next_try = time.time() + delay
             else:
                 self.publish('down', 'next start at %s' % time.strftime('%H:%M:%S', time.localtime(next_try)))
-            if (not alerted and outage is not None and live_record(self.home) is None
-                    and time.time() - outage >= self.alert_after):
+            if (outage is not None and live_record(self.home) is None
+                    and time.time() - outage >= self.alert_after
+                    and (not alerted or self.reminder_due())):
+                repeat = alerted
                 alerted = True
-                self.alert(int(time.time() - outage))
+                self.alert(int(time.time() - outage), repeat)
             self.stop.wait(self.poll)
         self.log('keeper stopped')
         return 0

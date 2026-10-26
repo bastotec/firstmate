@@ -19,6 +19,7 @@ export FM_DECK_CHAT_WATCH_BACKOFF=0.2
 
 cat > "$BIN/fm-session-start.sh" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "${FM_SESSION_START_TIMEOUT-unset}" >> "$FM_HOME/start-budgets"
 "$(dirname "$0")/fm-lock.sh" >/dev/null || exit 1
 "$(dirname "$0")/fm-harness.sh" > "$FM_HOME/startup.harness"
 case "${FM_TEST_STARTUP_COMPLETION:-complete}" in
@@ -605,6 +606,130 @@ test_stream_endpoint_host() {
   pass "fm-deck-chat.sh --stream: the host runs inside a stream endpoint and registers it"
 }
 
+# The host gets its own bound on its one session start (the deck second-mate
+# host's FM_DECK_SESSION_START_TIMEOUT): it refuses an incomplete digest, so
+# session start's 120s interactive bound would turn a slow healthy start on a
+# loaded machine into a crash loop. Unusable overrides fall back to the default.
+test_host_session_start_bound() {
+  local value expected home rc
+  for value in unset 900 '' abc 0 00; do
+    case "$value" in 900) expected=900 ;; *) expected=600 ;; esac
+    home=$(new_home "start-bound-$value")
+    rc=0
+    if [ "$value" = unset ]; then
+      env -u FM_DECK_SESSION_START_TIMEOUT FM_SESSION_START_TIMEOUT=120 FM_TEST_STARTUP_COMPLETION=missing \
+        FAKE_DECK_LOG="$LAB/deck-bound.log" "$BIN/fm-deck-chat.sh" --home "$home" </dev/null >/dev/null 2>&1 || rc=$?
+    else
+      FM_DECK_SESSION_START_TIMEOUT=$value FM_SESSION_START_TIMEOUT=120 FM_TEST_STARTUP_COMPLETION=missing \
+        FAKE_DECK_LOG="$LAB/deck-bound.log" "$BIN/fm-deck-chat.sh" --home "$home" </dev/null >/dev/null 2>&1 || rc=$?
+    fi
+    expect_code 1 "$rc" "the incomplete fixture start is refused"
+    assert_equals "$expected" "$(cat "$home/start-budgets" 2>/dev/null)" "session start bound for override '$value'"
+  done
+  pass "fm-deck-chat.sh: the host gives session start its own bound and rejects unusable overrides"
+}
+
+# Run a stream backend function against the test hub. Positional: <function> <args...>.
+stream_call() {
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  bash -c '. "$1/fm-backend.sh"; fm_backend_source stream || exit 2; shift; "$@"' _ "$BIN" "$@"
+}
+# A bare endpoint holding <label> in <cwd>; prints its target.
+stale_endpoint() {  # <label> <cwd>
+  local created
+  created=$(stream_call fm_backend_stream_create_task "$1" "$2" "" "") || return 1
+  printf '%s:%s' "${created% *}" "${created#* }"
+}
+endpoint_closed() {  # <target>
+  local ep=${1#*:}
+  [ "$(stream_call fm_backend_stream_api GET "/v1/tasks/$ep" | jq -r '.task.closed_at // empty')" != '' ]
+}
+endpoint_runs() {  # <target> <word>
+  local ep=${1#*:}
+  stream_call fm_backend_stream_api GET "/v1/tasks/$ep/processes" \
+    | jq -e --arg w "$2" 'any(.foreground[]?; (.args // "") | contains($w))' >/dev/null
+}
+
+# A startup prompt in the endpoint's interactive shell (oh-my-zsh's update
+# question) reads the launch line's first keystroke, so the shell runs
+# `xec ...` and sits at a prompt. The endpoint is created with that prompt
+# switched off, and a launch whose shell still did not start the host is
+# replaced by a fresh endpoint once.
+test_stream_launch_survives_a_swallowed_keystroke() {
+  local home out target saved_shell=${SHELL-}
+  if ! start_test_hub "$LAB/swallow-hub"; then
+    pass "fm-deck-chat.sh --stream swallowed-keystroke recovery skipped without curl and jq"
+    return
+  fi
+  home=$(new_home swallow-home)
+  cat > "$LAB/tools/prompting-shell" <<'SH'
+#!/bin/bash
+printf '%s %s\n' "${DISABLE_AUTO_UPDATE-unset}" "${DISABLE_UPDATE_PROMPT-unset}" >> "$PROMPT_SHELL_LOG.env"
+# The first shell asks a question its settings do not switch off, as an rc
+# file's own prompt would: it takes one keystroke before the shell starts.
+if mkdir "$PROMPT_SHELL_LOG.first" 2>/dev/null; then
+  printf 'Would you like to update? [Y/n] '
+  IFS= read -r -n 1 _
+  printf '\n'
+fi
+exec /bin/bash --norc --noprofile -i
+SH
+  chmod +x "$LAB/tools/prompting-shell"
+  export FM_STREAM_HUB="$HUB_URL" FM_STREAM_TOKEN="$HUB_TOKEN" FM_STREAM_MACHINE=box-swallow
+  out=$(SHELL="$LAB/tools/prompting-shell" PROMPT_SHELL_LOG="$LAB/prompting-shell" \
+    FM_DECK_CHAT_LAUNCH_VERIFY_SECS=12 FM_DECK_SESSION_START_TIMEOUT=20 FAKE_DECK_LOG="$LAB/deck-swallow.log" \
+    "$BIN/fm-deck-chat.sh" --stream --home "$home" 2>&1) || fail "--stream did not recover a swallowed keystroke: $out"
+  assert_contains "$out" 'did not start the host within 12s' "the unstarted launch is reported"
+  assert_contains "$out" 'launching once more in a fresh endpoint' "the launch is retried once"
+  target=$(printf '%s\n' "$out" | sed -n 's/^primary-chat: running in stream endpoint //p')
+  [ -n "$target" ] || fail "the retried launch registers: $out"
+  assert_equals 'true true
+true true' "$(cat "$LAB/prompting-shell.env")" "endpoint shells start with the oh-my-zsh update prompt off"
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE
+  export SHELL="$saved_shell"
+  pass "fm-deck-chat.sh --stream: endpoint shells skip startup prompts and a lost launch is retried once"
+}
+
+# A stale endpoint of this role's own label (its shell never ran the host)
+# makes every later creation "endpoint superseded". With no live host record,
+# --stream closes it when nothing runs there and its shell sits in this home,
+# and refuses to touch one that runs a host.
+test_stream_recovers_its_own_stale_endpoint() {
+  local home out stale target rc saved_shell=${SHELL-}
+  if ! start_test_hub "$LAB/stale-hub"; then
+    pass "fm-deck-chat.sh --stream stale-endpoint recovery skipped without curl and jq"
+    return
+  fi
+  home=$(new_home stale-home)
+  export SHELL=/bin/bash FM_STREAM_HUB="$HUB_URL" FM_STREAM_TOKEN="$HUB_TOKEN" FM_STREAM_MACHINE=box-stale
+
+  # A host still in session start runs in its endpoint before it registers.
+  stale=$(stale_endpoint primary-chat "$home") || fail "could not create the busy endpoint"
+  stream_call fm_backend_stream_send_text_line "$stale" 'exec -a fm-deck-chat sleep 300' \
+    || fail "could not start the busy endpoint's process"
+  wait_for 30 "the busy endpoint's process" endpoint_runs "$stale" fm-deck-chat
+  rc=0
+  out=$(FM_DECK_SESSION_START_TIMEOUT=20 FAKE_DECK_LOG="$LAB/deck-stale.log" "$BIN/fm-deck-chat.sh" --stream --home "$home" 2>&1) || rc=$?
+  expect_code 1 "$rc" "an endpoint running a host is not taken over"
+  assert_contains "$out" "a primary-chat host runs in stream endpoint $stale" "the refusal names the busy endpoint"
+  endpoint_closed "$stale" && fail "an endpoint running a host was closed"
+  stream_call fm_backend_stream_kill "$stale" "" primary-chat >/dev/null || fail "could not close the busy endpoint"
+
+  # The shell never ran the host: nothing runs there and it sits in this home.
+  stale=$(stale_endpoint primary-chat "$home") || fail "could not create the stale endpoint"
+  out=$(FM_DECK_SESSION_START_TIMEOUT=20 FAKE_DECK_LOG="$LAB/deck-stale.log" "$BIN/fm-deck-chat.sh" --stream --home "$home" 2>&1) \
+    || fail "--stream did not recover from its own stale endpoint: $out"
+  assert_contains "$out" "closed stale primary-chat endpoint $stale (no host ran in it)" "the stale endpoint is closed"
+  wait_for 10 "the stale endpoint closes" endpoint_closed "$stale"
+  target=$(printf '%s\n' "$out" | sed -n 's/^primary-chat: running in stream endpoint //p')
+  [ -n "$target" ] && [ "$target" != "$stale" ] || fail "the host runs in a fresh endpoint: $out"
+  "$BIN/fm-deck-chat.sh" stop --home "$home" >/dev/null
+  unset FM_STREAM_HUB FM_STREAM_TOKEN FM_STREAM_MACHINE
+  export SHELL="$saved_shell"
+  pass "fm-deck-chat.sh --stream: an own-label stale endpoint without a host is closed and replaced"
+}
+
 test_startup_completion_required() {
   local mode home rc
   for mode in missing wrong; do
@@ -780,7 +905,19 @@ test_service_alert() {
   ALARM_LOG="$LAB/alarm.log" FM_WEDGE_ALARM_EXEC="$LAB/tools/alarm" FM_WEDGE_ALARM_CHANNEL=osascript \
     "$BIN/fm-deck-chat.sh" service-alert --home "$home" --summary 'primary down' || fail "service-alert failed"
   assert_equals 'osascript|primary down' "$(cat "$LAB/alarm.log")" "service-alert goes through the wedge alarm channels"
-  pass "fm-deck-chat.sh service-alert: reuses the wedge alarm channels and seam"
+  # The captain's own notice feed carries it too: urgent first, a plain reminder after.
+  ALARM_LOG="$LAB/alarm.log" FM_WEDGE_ALARM_EXEC="$LAB/tools/alarm" FM_WEDGE_ALARM_CHANNEL=osascript \
+    "$BIN/fm-deck-chat.sh" service-alert --home "$home" --repeat --summary 'primary still down' \
+    || fail "service-alert --repeat failed"
+  python3 - "$home/state/notices" <<'PY' || fail "service-alert did not publish the expected captain notices"
+import json, pathlib, sys
+notices = sorted((json.loads(p.read_text()) for p in pathlib.Path(sys.argv[1]).glob('nt-*.json')),
+                 key=lambda n: n['body'])
+assert [(n['title'], n['body'], n['urgent']) for n in notices] == [
+    ('firstmate: primary DOWN', 'primary down', True),
+    ('firstmate: primary DOWN', 'primary still down', False)], notices
+PY
+  pass "fm-deck-chat.sh service-alert: notifies the captain and reuses the wedge alarm channels and seam"
 }
 
 test_attach_follows_restarts() {
@@ -1062,6 +1199,43 @@ SH
   assert_present "$home/state/primary-chat/service-down" "an ongoing outage retains its alert marker"
   assert_absent "$home/alerts" "a replacement keeper never re-alerts the same outage"
   pass "fm-deck-chat.sh service-run: an inherited outage is already alerted"
+}
+
+# An outage that lasts is raised again at a bounded cadence, measured from the
+# last alert's marker, so a day-long outage cannot hide behind one banner.
+test_service_reminds_while_down() {
+  local home keeper
+  home=$(new_home keeper-reminder)
+  mkdir -m 700 "$home/state/primary-chat"
+  echo 'previously alerted outage' > "$home/state/primary-chat/service-down"
+  touch -t 202001010000 "$home/state/primary-chat/service-down"
+  cat > "$LAB/tools/reminder-start" <<'SH'
+#!/usr/bin/env bash
+case "$1" in
+  --stream) exit 1 ;;
+  service-alert) printf '%s\n' "$*" >> "$FM_HOME/alerts" ;;
+esac
+SH
+  chmod +x "$LAB/tools/reminder-start"
+  FM_DECK_CHAT_SERVICE_POLL=0.1 FM_DECK_CHAT_SERVICE_BACKOFF=0.1 FM_DECK_CHAT_SERVICE_BACKOFF_MAX=0.1 \
+    FM_DECK_CHAT_SERVICE_ALERT_SECS=0 FM_DECK_CHAT_SERVICE_REALERT_SECS=2 \
+    python3 "$BIN/fm_primary_chat.py" service --home "$home" \
+    --deck-chat "$LAB/tools/reminder-start" > "$LAB/keeper-reminder.out" 2>&1 &
+  keeper=$!
+  fm_test_track_helper_pid "$keeper"
+  # shellcheck disable=SC2016 # Expanded by the inner bash.
+  wait_for 30 "two reminders" bash -c '[ "$(wc -l < "$1")" -ge 2 ]' _ "$home/alerts"
+  kill -TERM "$keeper"
+  wait_for 10 "the reminder keeper exits" dead "$keeper"
+  wait "$keeper"
+  assert_grep '--repeat' "$home/alerts" "a reminder is marked as one"
+  python3 - "$home/state/primary-chat/service-down" <<'PY' || fail "a reminder refreshes the marker that paces the next one"
+import os, sys, time
+assert time.time() - os.stat(sys.argv[1]).st_mtime < 60
+PY
+  # Reminders are paced: a 2s cadence over the run can not have fired every poll.
+  [ "$(wc -l < "$home/alerts" | tr -d ' ')" -lt 10 ] || fail "reminders fired on every poll"
+  pass "fm-deck-chat.sh service-run: a lasting outage is raised again at a bounded cadence"
 }
 
 test_service_captain_start_grace() {
@@ -1545,6 +1719,10 @@ test_service_late_registration
 test_service_inherited_outage
 test_service_captain_start_grace
 test_startup_completion_required
+test_host_session_start_bound
+test_stream_launch_survives_a_swallowed_keystroke
+test_stream_recovers_its_own_stale_endpoint
+test_service_reminds_while_down
 test_startup_handoff
 test_host_lifecycle
 test_oversized_watcher_output

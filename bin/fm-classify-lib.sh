@@ -687,6 +687,15 @@ status_open_decisions() {  # <status-file>
   resolve=${FM_CLASSIFY_RESOLVE_VERB:-$FM_CLASSIFY_RESOLVE_VERB_DEFAULT}
   held=${FM_CLASSIFY_CAPTAIN_HELD_VERB:-$FM_CLASSIFY_CAPTAIN_HELD_VERB_DEFAULT}
   while IFS= read -r line || [ -n "$line" ]; do
+    # Only a line whose verb is one of the four transition verbs can change
+    # the set, and that verb sits before the line's first colon. Every other
+    # line would fold to the same, already-stripped set, so it skips the fold;
+    # most of a long log is such lines, and folding each one copies the whole
+    # open set several times.
+    case "${line%%:*}" in
+      *needs-decision*|*blocked*|*"$resolve"*|*"$held"*) ;;
+      *) continue ;;
+    esac
     _fm_decision_fold_step open "$line" "$resolve" "$held"
   done < "$f"
   printf '%s' "$open"

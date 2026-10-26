@@ -382,6 +382,11 @@ EOF
 
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
+  # Publication runs detached from the digest, so give it a bounded wait.
+  local waited=0
+  while [ ! -s "$home/state/home-summary.json" ] && [ "$waited" -lt 600 ]; do
+    sleep 0.1; waited=$((waited + 1))
+  done
   jq -e --arg home "$home" '
     .schema == "fm-secondmate-home-summary.v1"
     and .home == $home
@@ -1842,6 +1847,43 @@ EOF
   pass "a session start inside its budget prints no truncation banner"
 }
 
+# A home-summary publication that cannot finish quickly - here it waits on a
+# refresh already in flight, as it does behind the watcher's in a large home on
+# a loaded machine - must not spend the digest's runtime bound: it is side-band.
+test_slow_home_summary_does_not_block_session_start() {
+  local rec root home fakebin out holder started elapsed waited=0
+  rec=$(new_world slow-home-summary)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_deck "$fakebin"
+  # shellcheck disable=SC2016 # Expanded by the holder.
+  bash -c '. "$1"; fm_lock_try_acquire "$2" || exit 1; touch "$3"; exec sleep 120' _ \
+    "$ROOT/bin/fm-wake-lib.sh" "$home/state/.home-summary-refresh.lock" "$home/holder.ready" &
+  holder=$!
+  fm_test_track_helper_pid "$holder"
+  while [ ! -e "$home/holder.ready" ] && [ "$waited" -lt 100 ]; do sleep 0.1; waited=$((waited + 1)); done
+  [ -e "$home/holder.ready" ] || fail "the fixture could not hold the summary refresh lock"
+
+  started=$(date +%s)
+  out=$(FM_SESSION_START_TIMEOUT=20 FM_HOME_SUMMARY_TIMEOUT=60 \
+    run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  elapsed=$(( $(date +%s) - started ))
+  assert_not_contains "$out" "STARTUP TRUNCATED - SESSION START HIT ITS" \
+    "a stalled home-summary publication truncated the digest"
+  assert_contains "$out" "NEXT STEP" "a stalled home-summary publication cut the digest short"
+  [ "$elapsed" -lt 20 ] || fail "session start waited ${elapsed}s on a stalled home-summary publication"
+
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+  waited=0
+  while [ ! -s "$home/state/home-summary.json" ] && [ "$waited" -lt 600 ]; do sleep 0.1; waited=$((waited + 1)); done
+  jq -e '.schema == "fm-secondmate-home-summary.v1"' "$home/state/home-summary.json" >/dev/null \
+    || fail "the detached publication never published once the lock was free"
+  pass "a slow home-summary publication runs beside session start, not inside its bound"
+}
+
 test_runtime_bound_leaves_harness_ancestry_headroom() {
   local rec root home fakebin nest out
   rec=$(new_world runtime-bound-ancestry)
@@ -2214,5 +2256,6 @@ test_private_startup_diagnostics
 test_wake_probe_descendant_does_not_block_startup
 test_runtime_bound_leaves_a_healthy_digest_untouched
 test_runtime_bound_leaves_harness_ancestry_headroom
+test_slow_home_summary_does_not_block_session_start
 
 echo "# fm-session-start.test.sh: all assertions passed"

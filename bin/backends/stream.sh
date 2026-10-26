@@ -370,6 +370,13 @@ fm_backend_stream_create_task() {  # <label> <cwd> [status-path] [state-interval
     local agent_path
     agent_path=$(bash -c '. "$1" && fm_remote_job_path_union "$2" "$(fm_remote_job_service_path "$3")"' \
       fm-stream "$(dirname -- "${BASH_SOURCE[0]}")/../fm-remote-job-lib.sh" "${PATH:-}" "${HOME:-}") || exit 1
+    # The endpoint runs the operator's own interactive shell, and a launch is
+    # typed into it, so an rc file's interactive startup prompt would read the
+    # launch line's first keystroke and leave the shell running the rest.
+    # oh-my-zsh asks "Would you like to update?" in every new shell once its
+    # update check is due; these two settings switch that check off for
+    # endpoint shells only.
+    export DISABLE_AUTO_UPDATE=true DISABLE_UPDATE_PROMPT=true
     PATH="$agent_path" fm_backend_stream_detached "${launcher[@]}" serve \
       --hub "$(fm_backend_stream_hub_url)" \
       --token-file "$token_file" \

@@ -52,9 +52,20 @@
 #       Refuses (exit 1) while a live host is already registered for the home.
 #       Before creating a new endpoint, waits for the previous recorded endpoint
 #       to close and requests its close if still open (one live label per machine).
-#       After dispatch, waits up to 150s for host registration and fails fast
-#       when the endpoint's agent reports the host exited. A registration
-#       timeout leaves the endpoint running for inspection.
+#       A creation the hub refuses as superseded or a duplicate label (another live
+#       endpoint holds this role's label on this machine, as one whose shell
+#       never ran the host does) closes each such endpoint that runs no host
+#       and whose shell sits in this home, then creates once more; an endpoint
+#       running a host, or one it cannot read, is left alone and refused.
+#       The launch line is typed into the endpoint's interactive shell, so the
+#       launcher then waits up to FM_DECK_CHAT_LAUNCH_VERIFY_SECS for the host
+#       to show in the endpoint's foreground; a shell that is readable and has
+#       not started it (a startup prompt ate part of the line) is shown, closed
+#       and replaced by a fresh endpoint once.
+#       It then waits for host registration for the session-start bound
+#       (FM_DECK_SESSION_START_TIMEOUT) plus 150s and fails fast when the
+#       endpoint's agent reports the host exited. A registration timeout leaves
+#       the endpoint running for inspection.
 #   fm-deck-chat.sh stop [--home H]
 #       Write the "stopped on purpose" marker state/primary-chat/stopped, then
 #       SIGTERM the live registered host: deck quits and the host exits cleanly.
@@ -122,10 +133,13 @@
 #       The keeper the agent runs: `bin/fm_primary_chat.py service` (its
 #       docstring owns the restart, backoff and alert rules; it logs to
 #       state/primary-chat/service.log and publishes service.json).
-#   fm-deck-chat.sh service-alert [--home H] --summary TEXT
-#       Raise the keeper's primary-down alert through the away-mode wedge alarm
-#       channels (config/wedge-alarm; docs/wedge-alarm.md), titled
-#       "firstmate: primary DOWN".
+#   fm-deck-chat.sh service-alert [--home H] [--repeat] --summary TEXT
+#       Raise the keeper's primary-down alert: a captain notice through
+#       bin/fm-notify.sh titled "firstmate: primary DOWN" ("supervisor" for
+#       that role), urgent unless --repeat marks a reminder for an outage
+#       already alerted, then the away-mode wedge alarm channels
+#       (config/wedge-alarm; docs/wedge-alarm.md). A refused notice is logged
+#       to the role's service.log and does not stop the alarm.
 # --role supervisor (every mode, before --home) selects the supervisor;
 #   omitted means captain. bin/fm_primary_chat.py's header owns split mode,
 #   role names, keeper labels and what each role holds.
@@ -151,8 +165,19 @@
 #                          watcher restart backoff seconds (default 2, max 60)
 #   FM_DECK_CHAT_SERVICE   1 marks a start made by the keeper, which leaves the
 #                          stopped marker alone
-#   FM_DECK_CHAT_SERVICE_* keeper cadence, backoff and alert window
-#                          (bin/fm_primary_chat.py service)
+#   FM_DECK_CHAT_SERVICE_* keeper cadence, backoff, alert window and reminder
+#                          cadence (bin/fm_primary_chat.py service)
+#   FM_DECK_SESSION_START_TIMEOUT
+#                          runtime bound in seconds on the host's one
+#                          bin/fm-session-start.sh run (default 600; empty,
+#                          zero or nonnumeric values use the default). The
+#                          host refuses to start without a complete digest, so
+#                          session start's own 120s interactive bound would
+#                          turn a slow but healthy start into a failed one
+#   FM_DECK_CHAT_LAUNCH_VERIFY_SECS
+#                          how long --stream waits for the host to show in its
+#                          endpoint's foreground before replacing the endpoint
+#                          (default 60)
 #   FM_LAUNCHCTL, FM_LAUNCH_AGENTS_DIR
 #                          launchctl and LaunchAgents directory (tests); with
 #                          FM_LAUNCHCTL set the service commands run off macOS
@@ -177,6 +202,14 @@ BUSY_EVENT="$SCRIPT_DIR/fm-busy-event.sh"
 usage() { sed -n '/^# USAGE/,/^# ENVIRONMENT/p' "$SCRIPT_DIR/fm-deck-chat.sh" | sed '$d' >&2; exit 2; }
 die() { printf 'fm-deck-chat: %s\n' "$1" >&2; exit "${2:-1}"; }
 q() { printf '%q' "$1"; }
+# The host's own bound on its one session start (FM_DECK_SESSION_START_TIMEOUT).
+session_start_timeout() {
+  local t=${FM_DECK_SESSION_START_TIMEOUT:-600}
+  # A padded zero such as 00 is still zero, which would disable the bound.
+  case "$t" in ''|*[!0-9]*) t=600 ;; esac
+  [ "$t" -gt 0 ] 2>/dev/null || t=600
+  printf '%s' "$t"
+}
 
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
@@ -189,7 +222,7 @@ case "${1:-}" in
   stop|attach|open|model|install-service|uninstall-service|service-run|service-alert) MODE=$1; shift ;;
 esac
 HOME_DIR=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
-MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY='' ROUTE='' ROLE=captain
+MODEL='' SESSION='' ENDPOINT='' STREAM=0 SUMMARY='' ROUTE='' ROLE=captain REPEAT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --home) HOME_DIR=${2-}; shift 2 || usage ;;
@@ -198,6 +231,7 @@ while [ $# -gt 0 ]; do
     --endpoint) ENDPOINT=${2-}; shift 2 || usage ;;
     --summary) SUMMARY=${2-}; shift 2 || usage ;;
     --stream) STREAM=1; shift ;;
+    --repeat) REPEAT=1; shift ;;
     --role) ROLE=${2-}; shift 2 || usage ;;
     -h|--help) usage ;;
     *) if [ "$MODE" = model ] && [ -z "$ROUTE" ]; then ROUTE=$1; shift; continue; fi
@@ -365,6 +399,13 @@ if [ "$MODE" = service-alert ]; then
     . "$SCRIPT_DIR/fm-supervise-daemon.sh"
     if [ -n "$exec_was_set" ]; then FM_WEDGE_ALARM_EXEC=$exec_was; else unset FM_WEDGE_ALARM_EXEC; fi
     LOG="$STATE/$ROOT_NAME/service.log"
+    # The captain's own notice feed comes first: a banner on a Mac nobody is
+    # looking at is not an alert that reaches him.
+    notice_args=(--title "firstmate: $SERVICE_KIND DOWN")
+    [ "$REPEAT" = 1 ] || notice_args=(--urgent "${notice_args[@]}")
+    if ! notice=$(FM_STATE_OVERRIDE="$STATE" "$SCRIPT_DIR/fm-notify.sh" "${notice_args[@]}" "$SUMMARY" 2>&1); then
+      log "primary alert: captain notice refused: $(printf '%s' "$notice" | tail -n 1)"
+    fi
     # The daemon's banner title names away-mode escalations; this alert is not one.
     # shellcheck disable=SC2329 # Called through wedge_alarm_notify.
     wedge_alarm_via_osascript() {
@@ -489,19 +530,140 @@ if [ "$STREAM" = 1 ]; then
       fm_backend_stream_kill "$previous" "" "$ROOT_NAME" >/dev/null 2>&1 || true
     fi
   fi
-  clear_stopped
-  created=$(fm_backend_stream_create_task "$ROOT_NAME" "$FM_HOME" "" "") || exit 1
-  target="${created% *}:${created#* }"
-  launch="exec $(q "$SCRIPT_DIR/fm-deck-chat.sh")${ROLE_ARGS[*]:+ ${ROLE_ARGS[*]}} --home $(q "$FM_HOME") --endpoint $(q "$target")"
-  [ -z "$MODEL" ] || launch="$launch --model $(q "$MODEL")"
-  [ -z "$SESSION" ] || launch="$launch --session $(q "$SESSION")"
-  fm_backend_stream_send_text_line "$target" "$launch" || {
-    fm_backend_stream_kill "$target" >/dev/null 2>&1 || true
-    die "could not launch the host in stream endpoint $target"
+  # host_in_endpoint <target>: present (a process in the endpoint's foreground
+  # runs this script: argv[0] fm-deck-chat, or fm-deck-chat.sh as an
+  # argument), absent (a fresh reading shows none), closed (the endpoint's
+  # agent reported its shell gone), or unreadable. The shell execs the launch
+  # line in place and every later stage of the host keeps one of those on its
+  # command line, so the reading is the kernel's, not a rendered screen.
+  host_in_endpoint() {
+    local out
+    fm_backend_stream_parse_target "$1" >/dev/null 2>&1 || { printf unreadable; return 0; }
+    out=$(fm_backend_stream_api GET "/v1/tasks/$FM_BACKEND_STREAM_ENDPOINT/processes" 2>/dev/null) \
+      || { printf unreadable; return 0; }
+    printf '%s' "$out" | jq -r '
+      if .closed_by == "agent" then "closed"
+      elif .stale != false then "unreadable"
+      elif .alive == false then "closed"
+      elif .alive != true then "unreadable"
+      elif any(.foreground[]?;
+          ((.argv0 // "") | split("/") | last) == "fm-deck-chat"
+          or ((.args // "") | split(" ") | map(split("/") | last) | index("fm-deck-chat.sh")) != null)
+        then "present"
+      else "absent" end' 2>/dev/null || printf unreadable
   }
-  # The endpoint's interactive shell reads the operator's rc files first,
-  # which can take a while.
-  deadline=$((SECONDS + 150)) checked=$SECONDS
+
+  # close_stale_endpoints: the hub refused this role's endpoint because
+  # another live endpoint on this machine holds the label. No live host is
+  # registered for this home (checked above), so such an endpoint is one
+  # whose shell never ran the host, or never got as far as registering.
+  # Close each one that runs no host and whose shell sits in this home; an
+  # endpoint running a host (still in session start, say), or one that
+  # cannot be read, is left alone and refused.
+  close_stale_endpoints() {
+    local live machine tag m label ep stale cwd closed=0
+    machine=$(fm_backend_stream_machine) || return 1
+    tag=$(fm_backend_stream_hub_tag) || return 1
+    live=$(fm_backend_stream_list_live) || {
+      printf 'fm-deck-chat: could not list live stream endpoints to find the stale %s one\n' "$ROOT_NAME" >&2
+      return 1
+    }
+    while IFS=$'\t' read -r m label ep; do
+      [ "$m" = "$machine" ] && [ "$label" = "$ROOT_NAME" ] && [ -n "$ep" ] || continue
+      stale="$tag:$ep"
+      case "$(host_in_endpoint "$stale")" in
+        absent|closed) ;;
+        present)
+          printf 'fm-deck-chat: a %s host runs in stream endpoint %s without a live record (still starting?); not closing it\n' "$ROOT_NAME" "$stale" >&2
+          return 1 ;;
+        *)
+          printf 'fm-deck-chat: cannot read stream endpoint %s, which holds the %s label; not closing it\n' "$stale" "$ROOT_NAME" >&2
+          return 1 ;;
+      esac
+      cwd=$(fm_backend_stream_current_path "$stale" "$ROOT_NAME" 2>/dev/null) || cwd=''
+      [ -n "$cwd" ] && cwd=$(cd "$cwd" 2>/dev/null && pwd -P) || cwd=''
+      if [ "$cwd" != "$FM_HOME" ]; then
+        printf 'fm-deck-chat: stream endpoint %s holds the %s label but its shell is not in this home (%s); not closing it\n' \
+          "$stale" "$ROOT_NAME" "${cwd:-unreadable}" >&2
+        return 1
+      fi
+      fm_backend_stream_kill "$stale" "" "$ROOT_NAME" >/dev/null || {
+        printf 'fm-deck-chat: could not close the stale %s endpoint %s\n' "$ROOT_NAME" "$stale" >&2
+        return 1
+      }
+      printf 'fm-deck-chat: closed stale %s endpoint %s (no host ran in it)\n' "$ROOT_NAME" "$stale" >&2
+      closed=1
+    done <<EOF
+$live
+EOF
+    [ "$closed" = 1 ] || printf 'fm-deck-chat: the hub refused the %s endpoint as superseded, but no stale one was found\n' "$ROOT_NAME" >&2
+    [ "$closed" = 1 ]
+  }
+
+  # create_endpoint: sets created to "<tag> <endpoint-id>".
+  create_endpoint() {
+    local err rc=0
+    err=$(mktemp "${TMPDIR:-/tmp}/fm-deck-chat-create.XXXXXX") || return 1
+    created=$(fm_backend_stream_create_task "$ROOT_NAME" "$FM_HOME" "" "" 2>"$err") || rc=$?
+    cat "$err" >&2
+    if [ "$rc" != 0 ] && grep -qE 'endpoint superseded|endpoint_superseded|duplicate_label|already has a live endpoint labelled' "$err"; then
+      rm -f "$err"
+      close_stale_endpoints || return 1
+      created=$(fm_backend_stream_create_task "$ROOT_NAME" "$FM_HOME" "" "") || return 1
+      return 0
+    fi
+    rm -f "$err"
+    return "$rc"
+  }
+
+  # verify_launch <target>: 0 when the host started (or the endpoint closed,
+  # which the registration wait reports), 1 when a fresh reading still shows
+  # a shell that did not start it at the deadline, 2 when it cannot be told.
+  verify_launch() {
+    local target=$1 seen=unreadable deadline
+    deadline=$((SECONDS + LAUNCH_VERIFY_SECS))
+    while :; do
+      seen=$(host_in_endpoint "$target")
+      case "$seen" in present|closed) return 0 ;; esac
+      [ "$SECONDS" -lt "$deadline" ] || break
+      sleep 1
+    done
+    [ "$seen" = absent ] && return 1
+    return 2
+  }
+
+  LAUNCH_VERIFY_SECS=${FM_DECK_CHAT_LAUNCH_VERIFY_SECS:-60}
+  case "$LAUNCH_VERIFY_SECS" in ''|*[!0-9]*) LAUNCH_VERIFY_SECS=60 ;; esac
+  REGISTER_SECS=$(( $(session_start_timeout) + 150 ))
+  clear_stopped
+  attempt=1
+  while :; do
+    create_endpoint || exit 1
+    target="${created% *}:${created#* }"
+    launch="exec $(q "$SCRIPT_DIR/fm-deck-chat.sh")${ROLE_ARGS[*]:+ ${ROLE_ARGS[*]}} --home $(q "$FM_HOME") --endpoint $(q "$target")"
+    [ -z "$MODEL" ] || launch="$launch --model $(q "$MODEL")"
+    [ -z "$SESSION" ] || launch="$launch --session $(q "$SESSION")"
+    fm_backend_stream_send_text_line "$target" "$launch" || {
+      fm_backend_stream_kill "$target" >/dev/null 2>&1 || true
+      die "could not launch the host in stream endpoint $target"
+    }
+    # The endpoint's interactive shell reads the operator's rc files before it
+    # reads the line, and an interactive prompt there would take its first
+    # keystroke and leave the shell running the rest: `xec ...` at a prompt
+    # that holds the label forever.
+    verified=0
+    verify_launch "$target" || verified=$?
+    [ "$verified" = 1 ] || break
+    printf 'fm-deck-chat: the shell in stream endpoint %s did not start the host within %ss; its screen:\n' \
+      "$target" "$LAUNCH_VERIFY_SECS" >&2
+    fm_backend_stream_capture "$target" 40 2>/dev/null | tail -n 20 >&2 || true
+    fm_backend_stream_kill "$target" "" "$ROOT_NAME" >/dev/null 2>&1 || true
+    [ "$attempt" -lt 2 ] || die "the host did not start in a fresh stream endpoint either; closed $target"
+    attempt=$((attempt + 1))
+    printf 'fm-deck-chat: closed %s; launching once more in a fresh endpoint\n' "$target" >&2
+  done
+  # Registration follows the host's one session start, which has its own bound.
+  deadline=$((SECONDS + REGISTER_SECS)) checked=$SECONDS
   while [ "$SECONDS" -lt "$deadline" ]; do
     if status=$("$SCRIPT_DIR/fm-primary-steer.sh" status --home "$FM_HOME" 2>/dev/null); then
       registered=$(printf '%s' "$status" | jq -r '.endpoint // empty')
@@ -529,7 +691,7 @@ if [ "$STREAM" = 1 ]; then
     sleep 0.1
   done
   fm_backend_stream_capture "$target" 40 2>/dev/null | tail -n 20 >&2 || true
-  die "the host did not register from stream endpoint $target within 150s; the endpoint is left running for inspection"
+  die "the host did not register from stream endpoint $target within ${REGISTER_SECS}s; the endpoint is left running for inspection"
 fi
 
 # Run mode. Re-exec once under the harness name the session lock recognises.
@@ -629,7 +791,7 @@ EVENTS=$(printf '%s\n' "$prepared" | sed -n 's/^events_file=//p')
 EVENTS_OFFSET=$(printf '%s\n' "$prepared" | sed -n 's/^events_offset=//p')
 LOG="$STATE/$ROOT_NAME/host.log"
 if [ "$LOCK_BOUND" = 1 ]; then
-  if ! "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
+  if ! FM_SESSION_START_TIMEOUT="$(session_start_timeout)" "$SCRIPT_DIR/fm-session-start.sh" > "$WORK/startup" 2>&1; then
     cat "$WORK/startup" >&2
     die 'session start failed'
   fi

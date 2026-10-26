@@ -31,7 +31,8 @@ See [`examples/wedge-alarm`](examples/wedge-alarm) for a copyable config.
 
 ## Primary down alert
 
-The `deck chat` primary service also uses these channels, seam and bounds; the [chat host header](../bin/fm-deck-chat.sh) owns service commands and the [keeper's `service` docstring](../bin/fm_primary_chat.py) owns outage detection, alert deduplication and marker recovery.
+The `deck chat` primary service also uses these channels, seam and bounds, after first publishing a captain notice through [`bin/fm-notify.sh`](../bin/fm-notify.sh), because a banner on an unattended Mac does not reach the captain.
+The [chat host header](../bin/fm-deck-chat.sh) owns service commands and the [keeper's `service` docstring](../bin/fm_primary_chat.py) owns outage detection, the reminder cadence while an outage lasts, and marker recovery.
 
 ## Test safety
 
@@ -42,5 +43,5 @@ The primary's `service-alert` entrypoint restores the caller's seam after sourci
 Production leaves the seam unset and uses the configured real channels.
 
 `tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
-`tests/fm-deck-chat.test.sh` covers the primary down alert's channel use, its once-per-outage rule, and its marker.
+`tests/fm-deck-chat.test.sh` covers the primary down alert's notice and channel use, its paced reminders, and its marker.
 [`verification/supervision.md`](verification/supervision.md#wedge-alarm-channels) records the bounded manual macOS channel proof.
