@@ -122,7 +122,7 @@ Shared test helpers live in `tests/lib.sh` (reporters, temp roots, git fixtures,
 Source those instead of copying a fake toolchain into a new suite.
 A fixture may shorten a production timeout to keep a failure path prompt, but never below what the real work inside that window costs on a loaded machine: a fork, an exec, a lock acquisition, a beacon publication, or a first-poll check.
 Where a case's assertion is not about the timeout itself, give that window headroom over the measured loaded cost, and bound the test's own waiting with iteration-counted poll loops, which stretch under load where a wall-clock budget does not.
-Tests that need an explicit opt-in (the live harness regressions) skip themselves and print the environment gate needed to enable them, so the portable suite remains safe on machines without those tools.
+Live harness regressions use `fm_live_gate` in [`tests/lib.sh`](tests/lib.sh), which owns capability skips and opt-in rules.
 
 ## Questions
 

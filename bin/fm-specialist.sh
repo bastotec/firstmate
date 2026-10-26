@@ -76,9 +76,14 @@
 # failed tool call; `off` (the default) restores normal behavior. Configure before
 # launching a job; it does not change a Deck run already in progress and refuses
 # retired specialists with exit 3. Failure means a run_command result with a
-# non-zero or null exit_code or timed_out true, or any tool's output starting with
-# "the tool failed". Every non-zero exit counts, even grep finding no match;
-# exit-code/timeout JSON read by another tool is not command failure metadata.
+# non-zero or null exit_code or timed_out true (JSON or rendered status suffix),
+# any tool's output starting with "the tool failed", or an incomplete Deck
+# stored-output preview/read_file hard cut. Presentation markers must match
+# Deck's envelope and byte geometry, not merely occur in historical text.
+# These rendered hooks cannot distinguish an exact synthetic envelope from
+# genuine metadata; tests/fm-specialist-deck-live-e2e.test.sh pins the producer.
+# Every non-zero exit counts, even grep finding no match; saved status JSON or
+# rendered status read by another tool is content, not command metadata.
 # Guarded jobs serialize tool calls; Deck hooks record the first failure and
 # refuse every further tool call, asking the model to reply briefly and finish.
 # The stopped job may finish without its usual result and memory checks;
