@@ -325,8 +325,7 @@ Decision actions carry the captain's exact answer to the existing send or captai
 Owner success does not prove that a worker acted on its inbox answer, and owner errors remain pending rather than being misreported as proof that nothing changed.
 `note` is only the supervisor-note path through `bin/fm-inbox.sh`, not a decision action, and a crew-owned `no-mistakes axi respond` is never invoked by this route.
 A `deck chat` primary can run inside a stream endpoint through `bin/fm-deck-chat.sh --stream`; primary decision control needs an explicit captain-call binding under the primary owner's `FM_HOME`, and unregistered primaries are not adopted.
-An endpoint's process is the operator's own interactive shell, and launches are typed into it, so the adapter starts every agent with oh-my-zsh's update check off (`DISABLE_AUTO_UPDATE=true`, `DISABLE_UPDATE_PROMPT=true`): its "Would you like to update?" prompt would otherwise read the launch line's first keystroke.
-Other rc-file prompts are not switched off; `bin/fm-deck-chat.sh --stream` verifies that the host started and replaces the endpoint once when it did not, as its header owns.
+[Endpoint creation](../bin/backends/stream.sh) owns the interactive-shell startup safeguards; the [chat host header](../bin/fm-deck-chat.sh) owns bounded launch verification and stale-endpoint recovery.
 Task-key decisions use an exact task binding in their owning home, and notes-only, worker-only or unregistered primary bindings do not constitute primary lifecycle control.
 [Primary sessions](agent-control.md#primary-sessions) own their own lifecycle; discovery alone does not implement primary controls.
 

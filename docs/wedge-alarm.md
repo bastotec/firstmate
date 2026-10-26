@@ -12,7 +12,7 @@ The durable `state/.subsuper-inject-wedged` marker remains as an additional sign
 It lists channel directives, one per non-empty, non-comment line, and every listed non-`off` channel fires best-effort.
 `FM_WEDGE_ALARM_CHANNEL` overrides the file with one directive for focused testing.
 
-- `off` disables every active alert, wherever it appears in the list, while retaining the durable marker.
+- `off` disables every alarm channel, wherever it appears in the list, while retaining the durable marker.
 - `auto` or `default` resolves to `osascript` on macOS.
   Other platforms have no built-in OS channel, so configure `command:` when a durable marker alone is insufficient.
 - `osascript` posts a macOS Notification Center banner outside the terminal.
@@ -36,11 +36,12 @@ The [chat host header](../bin/fm-deck-chat.sh) owns service commands and the [ke
 
 ## Test safety
 
-Every notifier routes through `FM_WEDGE_ALARM_EXEC` in `wedge_alarm_emit`.
+Every wedge-alarm channel routes through `FM_WEDGE_ALARM_EXEC` in `wedge_alarm_emit`.
 When the daemon is sourced as a library, that seam defaults to `discard`, so direct library tests cannot accidentally post a real notification.
 The primary's `service-alert` entrypoint restores the caller's seam after sourcing, so tests invoking it must explicitly set `FM_WEDGE_ALARM_EXEC` to a recorder or `discard`.
 `tests/wake-helpers.sh` replaces it with a recorder when a suite needs to assert channel selection and summary propagation.
 Production leaves the seam unset and uses the configured real channels.
+The separate captain-notice publisher is unaffected by the channel configuration or seam; `service-alert` tests must also use a disposable home that no external notice-feed integration reads.
 
 `tests/fm-daemon.test.sh` covers directive parsing, rate limiting, timeout and process-group cleanup, argv-safe dispatch, channel fallback, and safe `command:` summary delivery.
 `tests/fm-deck-chat.test.sh` covers the primary down alert's notice and channel use, its paced reminders, and its marker.

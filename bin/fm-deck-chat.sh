@@ -59,9 +59,10 @@
 #       running a host, or one it cannot read, is left alone and refused.
 #       The launch line is typed into the endpoint's interactive shell, so the
 #       launcher then waits up to FM_DECK_CHAT_LAUNCH_VERIFY_SECS for the host
-#       to show in the endpoint's foreground; a shell that is readable and has
-#       not started it (a startup prompt ate part of the line) is shown, closed
-#       and replaced by a fresh endpoint once.
+#       to show in the endpoint's foreground; a complete, readable process
+#       state showing no host authorizes showing its screen, closing it and
+#       replacing it with a fresh endpoint once. Stale or incomplete readings
+#       leave the endpoint alone.
 #       It then waits for host registration for the session-start bound
 #       (FM_DECK_SESSION_START_TIMEOUT) plus 150s and fails fast when the
 #       endpoint's agent reports the host exited. A registration timeout leaves
@@ -533,7 +534,8 @@ if [ "$STREAM" = 1 ]; then
   fi
   # host_in_endpoint <target>: present (a process in the endpoint's foreground
   # runs this script: argv[0] fm-deck-chat, or fm-deck-chat.sh as an
-  # argument), absent (a fresh reading shows none), closed (the endpoint's
+  # argument), absent (a fresh, alive reading has a non-empty foreground list,
+  # every entry has argv0 or args, and none is a host), closed (the endpoint's
   # agent reported its shell gone), or unreadable. The shell execs the launch
   # line in place and every later stage of the host keeps one of those on its
   # command line, so the reading is the kernel's, not a rendered screen.
