@@ -14,9 +14,16 @@ Each scan reads one condition per worker, first match wins:
   approval     an intact explicit untimed prohibition validated by
                bin/fm-approval-wait.sh suppresses automatic action demands and
                time escalation for its bound decision, including a ready task
-               or lost endpoint. Independent worker decisions remain timed.
-               A pre-existing escalation is reconciled as false, not as an
-               approval release. Invalid/unreadable/stale guard objects still
+               or lost endpoint. Independent questions are found through
+               bin/fm-classify-lib.sh's open-decision fold, even after later
+               milestones, with a fallback for the last blocked:, failed:,
+               needs-decision: or paused: line on another key. They use blocked
+               or mate-decidable held timing, ahead of PR-clock exemptions;
+               their wakes and escalations demand only an answer, leaving the
+               prohibition binding. With no independent question, a pre-existing
+               escalation is reconciled as false, not as an approval release.
+               bin/fm-worker-keepalive.sh's header owns immediate acknowledgment.
+               Invalid/unreadable/stale guard objects still
                exclude automatic PR actions but wake the mate after
                FM_KEEPALIVE_APPROVAL_SECS (3600) from the object's mtime for
                reconciliation; the usual escalation follows. No wake or
@@ -121,7 +128,8 @@ nanosecond mtime or decision key changes, including release and redeclaration
 between scans. Approval wake and parent-channel keys append -<approval_id>
 to their epoch so replacements have distinct identities.
 The wake's text is a concrete instruction - decide and resume it, relaunch it with
-`bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
+`bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait", except
+for the approval-guard reconciliation and answer-only cases described above.
 A steer, an acknowledgment or a relay upward is not a fix, so the inbox is not
 read. A worker still stuck FM_KEEPALIVE_FOLLOW_SECS (600) after
 the wake escalates one plain line to the mate's parent, telling it to act:
