@@ -1159,9 +1159,8 @@ test_pr_checks_preserve_independent_and_unsettled_failures
 test_unreadable_pr_preserves_open_episodes
 test_legacy_pr_tracks_start_with_fresh_ownership
 
-# An approval-wait record as bin/fm-approval-wait.sh writes it, binding the task
-# to one exact open decision key. The home path must match the fixture home so
-# declare would accept it; the digest fields are opaque to the keep-alive.
+# A deliberately invalid legacy approval record for reconciliation tests.
+# Opaque digests do not qualify for untimed prohibition validation.
 make_approval_wait() {  # <dir> <key>
   cat > "$dir/home/state/w1.approval-wait" <<EOF
 {
@@ -1205,7 +1204,7 @@ test_approval_wait_excludes_action_demands_while_bound() {
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 3600))
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3600))
     assert_equals 1 "$(wake_count "$dir")" "an old approval wait left a $scenario worker silent"
-    assert_contains "$(wakes "$dir")" 'approval wait is never an endpoint' "the wait did not raise an approval decision"
+    assert_contains "$(wakes "$dir")" 'reconcile its approval guard' "the invalid wait did not raise reconciliation"
     assert_not_contains "$(wakes "$dir")" 'merge it now' "an approval wait allowed a merge demand"
     assert_not_contains "$(wakes "$dir")" 'land it or close it now' "an approval wait allowed a CI demand"
     jq -e --argjson first "$T0" '.cond == "approval" and .since == $first and (.track.green // .track.ci) == $first' "$record" >/dev/null \
@@ -1241,8 +1240,8 @@ test_approval_wait_is_bounded_and_wakes_the_mate_to_decide() {
     jq -e '.cond == "approval"' "$record" >/dev/null || fail "the approval wait was not tracked as its own episode"
     scan "$dir" $((T0 + 3600))
     assert_equals 1 "$(wake_count "$dir")" "an approval wait an hour old did not wake the mate to decide it: $line"
-    assert_contains "$(wakes "$dir")" 'an approval wait is never an endpoint' "the wake lets the mate keep waiting"
-    assert_contains "$(wakes "$dir")" 'bin/fm-approval-wait.sh release' "the wake does not say how to release it"
+    assert_contains "$(wakes "$dir")" 'reconcile its approval guard' "the wake did not request reconciliation"
+    assert_contains "$(wakes "$dir")" 'Do not infer a release' "the wake inferred release authority"
   done
   for verb in needs-decision paused; do
     dir=$(make_home "approval-wait-unrelated-$verb" ship)
@@ -1313,7 +1312,7 @@ test_exact_approval_wait_survives_endpoint_loss() {
     assert_equals 0 "$(notice_count "$dir" 'worker w1')" "endpoint loss escalated an exact approval wait"
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5000))
     assert_equals 1 "$(wake_count "$dir")" "an hour-old approval wait did not wake the mate to decide it"
-    assert_contains "$(wakes "$dir")" 'approval wait is never an endpoint' "the wake for a dead worker's wait was not the approval decision"
+    assert_contains "$(wakes "$dir")" 'reconcile its approval guard' "the dead worker's invalid guard was not reconciled"
     assert_not_contains "$(wakes "$dir")" 'merge it now' "an approval wait let a merge demand through"
     status "$dir" $((T0 + 5001)) 'blocked [key=other]: unrelated failure'
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 5001))
@@ -1353,7 +1352,7 @@ test_unreadable_approval_wait_keeps_pr_actions_excluded() {
       FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$mature"
       FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((mature + 3600))
       assert_equals 1 "$(wake_count "$dir")" "an old $kind approval record did not wake its mate"
-      assert_contains "$(wakes "$dir")" 'approval wait is never an endpoint' "a $kind record did not raise an approval decision"
+      assert_contains "$(wakes "$dir")" 'reconcile its approval guard' "a $kind record did not raise reconciliation"
       assert_not_contains "$(wakes "$dir")" 'merge it now' "a $kind approval record allowed a merge demand"
       assert_not_contains "$(wakes "$dir")" 'land it or close it now' "a $kind approval record allowed a CI demand"
       jq -e --argjson first "$T0" '.cond == "approval" and (.track.green // .track.ci) == $first' \
@@ -1392,17 +1391,15 @@ test_approval_wait_retires_escalation_and_restarts_recovery() {
     before=$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")
     scan "$dir" $((T0 + 1801))
     assert_grep "resolved [key=keepalive-helper-w1-$T0]" "$channel" "entering the wait left the old escalation open"
-    jq -e '.cond == "approval" and .woke == 0 and (.escalated | not)' "$record" >/dev/null \
-      || fail "entering the wait did not start its own approval episode"
+    jq -e '.cond == null and (.escalated | not)' "$record" >/dev/null \
+      || fail "entering the untimed prohibition left a timed episode"
     scan "$dir" $((T0 + 5400))
-    assert_equals 1 "$(wake_count "$dir")" "the approval wait woke the mate before its one-hour bound"
-    scan "$dir" $((T0 + 5401))
-    assert_equals 2 "$(wake_count "$dir")" "declaring an approval wait silenced the watchdog for good"
-    assert_contains "$(wakes "$dir")" 'approval wait is never an endpoint' "the approval wake lets the mate keep waiting"
+    scan "$dir" $((T0 + 86400))
+    assert_equals 1 "$(wake_count "$dir")" "the intact prohibition aged into a new wake"
     assert_equals "$before" "$(cksum "$dir/home/state/w1.status" "$dir/home/state/w1.meta" "$dir/home/state/w1.approval-wait")" \
       "keepalive changed preserved worker or approval state"
   done
-  pass "declaring an approval wait closes the old episode and opens a bounded approval episode"
+  pass "an explicit prohibition reconciles old escalation without another timed episode"
 }
 
 test_replaced_approval_wait_starts_its_own_episode() {
@@ -1417,6 +1414,8 @@ test_replaced_approval_wait_starts_its_own_episode() {
     FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
       --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" \
       || fail "could not declare the original wait"
+    # An invalid instruction binding must remain a timed reconciliation case.
+    printf 'Instruction changed after declaration.\n' >> "$dir/instruction"
     at "$T0" "$dir/home/state/w1.approval-wait"
     scan "$dir" "$T0"
     now=$((T0 + 1200))
@@ -1446,6 +1445,7 @@ test_replaced_approval_wait_starts_its_own_episode() {
     FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key "$new_key" \
       --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" \
       || fail "could not declare the replacement wait"
+    printf 'Replacement instruction changed after declaration.\n' >> "$dir/instruction"
     at "$declared" "$dir/home/state/w1.approval-wait"
     scan "$dir" "$now"
     jq -e --arg old "$old_id" --argjson declared "$declared" \
@@ -1946,6 +1946,110 @@ test_repaired_parent_channel_preserves_question_resolution_route() {
   pass "question aggregates retain the captain fallback route for answers and departures"
 }
 
+# A legacy episode already raised by the old watchdog, on synthetic state only.
+seed_approval_episode() {  # <dir>
+  local identity
+  identity=$(python3 - "$1/home/state/w1.approval-wait" <<'PY'
+import hashlib, json, os, sys
+p = sys.argv[1]
+k = json.load(open(p))["decision_key"]
+print(hashlib.sha256(("%d:%s" % (os.lstat(p).st_mtime_ns, k)).encode()).hexdigest()[:16])
+PY
+)
+  mkdir -p "$1/home/state/keepalive"
+  jq -n --arg id "$identity" --argjson t "$T0" \
+    '{cond:"approval",approval_id:$id,since:$t,first:$t,woke:($t+3600),escalated:true,
+      track:{green:$t,pr:"https://github.com/o/r/pull/9"}}' > "$1/home/state/keepalive/w1.json"
+  printf 'blocked [key=keepalive-helper-w1-%s-%s]: approval decision overdue\n' "$T0" "$identity" \
+    >> "$1/parent/state/helper.status"
+  printf '%s-%s\n' "$T0" "$identity"
+}
+
+test_legacy_prohibition_reconciliation() {
+  local dir method episode digest before record rc count
+  for method in scan ack-prohibition; do
+    dir=$(make_home "legacy-prohibition-$method" ship)
+    make_secondmate "$dir" helper
+    status "$dir" "$T0" 'blocked [key=publication]: awaiting approval'
+    printf 'Do not merge, adopt, retry or retire until explicitly released.\n' > "$dir/instruction"
+    FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
+      --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" || fail "declare failed"
+    at "$T0" "$dir/home/state/w1.approval-wait"
+    episode=$(seed_approval_episode "$dir")
+    digest=$(jq -r .instruction_sha256 "$dir/home/state/w1.approval-wait")
+    record="$dir/home/state/keepalive/w1.json"
+    before=$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/home/state/w1.status")
+    if [ "$method" = scan ]; then
+      scan "$dir" $((T0 + 90000))
+    else
+      # Wrong episode, digest and unrelated new work may not be acknowledged.
+      for count in episode digest unrelated metadata instruction; do
+        cp "$record" "$dir/episode.before"
+        case "$count" in
+          unrelated) status "$dir" "$T0" 'blocked [key=other]: real new failure' ;;
+          metadata) printf 'spawn_gen=replacement\n' >> "$dir/home/state/w1.meta" ;;
+          instruction) printf 'changed\n' >> "$dir/instruction" ;;
+        esac
+        rc=0
+        FM_HOME="$dir/home" "$KEEPALIVE" ack-prohibition w1 \
+          --episode "$episode$([ "$count" != episode ] || printf stale)" \
+          --instruction-sha256 "$digest$([ "$count" != digest ] || printf stale)" >/dev/null 2>&1 || rc=$?
+        assert_equals 1 "$rc" "acknowledgment accepted $count mismatch"
+        cmp "$record" "$dir/episode.before" || fail "refusal changed the episode"
+        case "$count" in
+          unrelated) sed -i.bak '$d' "$dir/home/state/w1.status" ;;
+          metadata) sed -i.bak '$d' "$dir/home/state/w1.meta" ;;
+          instruction) sed -i.bak '$d' "$dir/instruction" ;;
+        esac
+      done
+      FM_HOME="$dir/home" "$KEEPALIVE" ack-prohibition w1 --episode "$episode" \
+        --instruction-sha256 "$digest" || fail "bound acknowledgment refused"
+      FM_HOME="$dir/home" "$KEEPALIVE" ack-prohibition w1 --episode "$episode" \
+        --instruction-sha256 "$digest" || fail "repeat acknowledgment was not idempotent"
+    fi
+    assert_grep "resolved [key=keepalive-helper-w1-$episode]" "$dir/parent/state/helper.status" "legacy false escalation remained open"
+    assert_grep 'not an approval release' "$dir/parent/state/helper.status" "correction falsely claimed approval release"
+    jq -e --argjson t "$T0" '.cond == null and .track.green==$t' "$record" >/dev/null || fail "correction lost PR clocks"
+    assert_equals "$before" "$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/home/state/w1.status")" \
+      "correction changed the actual restriction or worker decision"
+    scan "$dir" $((T0 + 100000))
+    assert_equals 0 "$(wake_count "$dir")" "corrected prohibition woke again"
+    assert_equals 0 "$(notice_count "$dir" .)" "correction paged the user"
+    assert_equals 1 "$(grep -c 'resolved ' "$dir/parent/state/helper.status")" "correction repeated"
+  done
+  pass "legacy false escalations reconcile through scan or a narrowly bound acknowledgment without releasing real approval"
+}
+
+test_valid_untimed_prohibition() {
+  local dir before
+  dir=$(make_home valid-untimed ship)
+  status "$dir" "$T0" 'blocked [key=publication]: awaiting approval'
+  printf 'Do not merge, retry or retire until explicitly released.\n' > "$dir/instruction"
+  FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
+    --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" || fail "declare failed"
+  at "$T0" "$dir/home/state/w1.approval-wait"
+  before=$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/home/state/w1.status")
+  scan "$dir" "$T0"
+  scan "$dir" $((T0 + 3600))
+  scan "$dir" $((T0 + 86400))
+  assert_equals 0 "$(wake_count "$dir")" "an intact explicit untimed prohibition aged into a forced decision"
+  assert_equals 0 "$(notice_count "$dir" .)" "an intact prohibition paged the user"
+  assert_equals "$before" "$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/home/state/w1.status")" \
+    "honoring the prohibition modified its bindings"
+  status "$dir" $((T0 + 86400)) 'done: ready, explicit prohibition remains in force'
+  echo dead > "$dir/liveness"
+  scan "$dir" $((T0 + 90000))
+  assert_equals 0 "$(wake_count "$dir")" "ready work or endpoint loss forced retirement under prohibition"
+  echo busy > "$dir/liveness"
+  status "$dir" $((T0 + 90001)) 'needs-decision [key=other]: awaiting your release'
+  scan "$dir" $((T0 + 90001))
+  scan "$dir" $((T0 + 91201))
+  assert_equals 1 "$(wake_count "$dir")" "the prohibition hid an unrelated unanswered parent call"
+  pass "intact prohibitions stay untimed without hiding unrelated parent calls"
+}
+
+test_legacy_prohibition_reconciliation
+test_valid_untimed_prohibition
 test_approval_wait_excludes_action_demands_while_bound
 test_approval_wait_is_bounded_and_wakes_the_mate_to_decide
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand

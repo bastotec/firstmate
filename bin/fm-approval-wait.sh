@@ -6,6 +6,7 @@
 # Usage (FM_HOME must explicitly name the owning home):
 #   fm-approval-wait.sh declare <task> --key <open-decision-key> --expected-record <metadata> --instruction-file <absolute-path>
 #   fm-approval-wait.sh show <task>
+#   fm-approval-wait.sh validate <task> (read-only, 0 only for intact home/task/metadata/instruction bindings)
 #   fm-approval-wait.sh release <task> --instruction-sha256 <digest> --release-file <absolute-path>
 #
 # declare records the parent's explicit approval prohibition, not an inference
@@ -40,13 +41,38 @@ fm_approval_wait_admit() {  # <state-dir> <task>
   [ ! -e "$1/$2.approval-wait" ] && [ ! -L "$1/$2.approval-wait" ]
 }
 
+# Read-only validity check for honoring an untimed prohibition, distinct from
+# admission: invalid objects still refuse automatic actions through admit.
+# The metadata binding ignores trailing newlines, exactly as declare does.
+fm_approval_wait_validate() {  # <state-dir> <task>
+  local record="$1/$2.approval-wait" home instruction expected hash
+  [ -n "${FM_HOME:-}" ] || return 1
+  home=$(cd "$FM_HOME" && pwd -P) || return 1
+  [ -f "$record" ] && [ -r "$record" ] && [ ! -L "$record" ] \
+    && [ -f "$1/$2.meta" ] && [ ! -L "$1/$2.meta" ] || return 1
+  expected=$(cat "$1/$2.meta") || return 1
+  expected=$(printf '%s' "$expected" | shasum -a 256) || return 1
+  jq -e --arg task "$2" --arg home "$home" --arg meta "${expected%% *}" '
+    .schema=="fm-approval-wait.v1" and .task==$task and .home==$home
+    and .metadata_sha256==$meta
+    and (.decision_key | type=="string" and test("^[A-Za-z0-9._-]+$"))
+    and (.instruction_sha256 | type=="string" and test("^[a-f0-9]{64}$"))
+    and (.declared | type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (.instruction_file | type=="string" and startswith("/"))
+  ' "$record" >/dev/null 2>&1 || return 1
+  instruction=$(jq -r .instruction_file "$record") || return 1
+  [ -f "$instruction" ] && [ -r "$instruction" ] && [ -s "$instruction" ] && [ ! -L "$instruction" ] || return 1
+  hash=$(shasum -a 256 "$instruction") || return 1
+  jq -e --arg hash "${hash%% *}" '.instruction_sha256==$hash' "$record" >/dev/null 2>&1
+}
+
 fm_approval_wait_main() {
   local cmd=${1:-} id=${2:-} expected='' instruction='' digest='' release='' key='' open=''
   local state record lock home hash tmp archive stamp
   case "$cmd" in
     -h|--help) sed -n '2,/^set -u/{ /^#/s/^# \{0,1\}//p; }' "${BASH_SOURCE[0]}"; return 0 ;;
-    declare|show|release) ;;
-    *) echo 'error: use declare, show or release (see --help)' >&2; return 2 ;;
+    declare|show|validate|release) ;;
+    *) echo 'error: use declare, show, validate or release (see --help)' >&2; return 2 ;;
   esac
   case "$id" in ''|*[!A-Za-z0-9._-]*) echo 'error: a valid task id is required' >&2; return 2 ;; esac
   [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME/state" ] || {
@@ -68,6 +94,10 @@ fm_approval_wait_main() {
     esac
     shift 2
   done
+  if [ "$cmd" = validate ]; then
+    fm_approval_wait_validate "$state" "$id"
+    return
+  fi
   if [ "$cmd" = show ]; then
     [ -f "$record" ] && [ ! -L "$record" ] || return 1
     cat "$record"
