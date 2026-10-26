@@ -62,14 +62,14 @@ class Pilot:
         self.directory.joinpath("view").write_text("view\n")
         self.start()
 
-    def start(self, port=0):
+    def start(self, port=0, command_ack_secs=0.25):
         ready = self.directory / "ready"
         ready.unlink(missing_ok=True)
         self.log = open(self.directory / "hub.log", "ab")
         begin = time.monotonic()
         self.hub = subprocess.Popen(self.command + ["serve", "--port", str(port),
             "--token-file", str(self.directory / "tokens"), "--ready-file", str(ready),
-            "--command-ack-secs", "0.25", "--state-max-age-secs", "0.5"],
+            "--command-ack-secs", str(command_ack_secs), "--state-max-age-secs", "0.5"],
             stdout=self.log, stderr=self.log)
         for _ in range(300):
             if ready.exists() and ready.stat().st_size:
@@ -446,6 +446,10 @@ def exercise(p):
 
 
 def peers(p):
+    # The synthetic timeout cases need 250 ms; real agent recovery is a
+    # lifecycle check, not a subsecond scheduling/acknowledgement benchmark.
+    p.stop()
+    p.start(command_ack_secs=5)
     ready = p.directory / "agent-ready"
     status = p.directory / "peer-status"
     home = p.directory / "peer-home"
@@ -510,7 +514,7 @@ def peers(p):
     # Restart preserves the worker. Its Python agent must rejoin an empty hub.
     port = int(p.url.rsplit(":", 1)[1])
     p.stop()
-    p.start(port)
+    p.start(port, command_ack_secs=5)
     for _ in range(300):
         tasks = p.api("GET", "/v1/tasks")[1]["tasks"]
         if any(t["endpoint_id"] == eid for t in tasks):
