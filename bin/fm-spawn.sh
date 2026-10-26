@@ -1807,7 +1807,7 @@ spawn_worktree_isolated() {  # <path>
 validate_spawn_worktree() {  # <source> <inspect-target>
   local source=$1 inspect_target=$2
   if ! spawn_worktree_isolated "$WT"; then
-    echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${SPAWN_WT_TOP:-none}'; spawning project '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
+    echo "error: $source did not yield an isolated worktree (resolved '$WT'; ${SPAWN_WT_REASON:-unknown reason}; worktree root '${SPAWN_WT_TOP:-none}'; spawning project '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
     exit 1
   fi
 }
@@ -2542,9 +2542,11 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
 fi
 # Pin placement in the consuming shell after all environment wrappers: the
 # endpoint's initial cwd cannot prevent later drift before queued input runs.
-sq_worktree=$(shell_quote "$(real_path_or_raw "$WT")")
-sq_launch_status=$(shell_quote "$STATE_REAL/$ID.status")
-LAUNCH="if cd -- $sq_worktree && [ \"\$(pwd -P)\" = $sq_worktree ] && [ \"\$(git rev-parse --show-toplevel)\" = $sq_worktree ]; then $LAUNCH; else printf '%s\\n' 'failed: worker launch directory does not match its recorded copy' >> $sq_launch_status; false; fi"
+if [ "$KIND" = ship ] || [ "$KIND" = scout ]; then
+  sq_worktree=$(shell_quote "$(real_path_or_raw "$WT")")
+  sq_launch_status=$(shell_quote "$STATE_REAL/$ID.status")
+  LAUNCH="if cd -- $sq_worktree && [ \"\$(pwd -P)\" = $sq_worktree ] && [ \"\$(git rev-parse --show-toplevel)\" = $sq_worktree ]; then $LAUNCH; else printf '%s\\n' 'failed: worker launch directory does not match its recorded copy' >> $sq_launch_status; false; fi"
+fi
 sleep 0.3
 # A refused literal send is the whole point of the readiness gate: the pane was
 # still busy, so the launch command would have been typed into a kernel line

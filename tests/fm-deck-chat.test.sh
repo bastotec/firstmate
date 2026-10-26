@@ -1541,6 +1541,9 @@ test_service_keeper() {
   [ -n "$third" ] || fail "no host after the switch"
   assert_absent "$home/state/primary-chat/stopped" "a switch never writes the stopped marker"
   assert_absent "$home/state/primary-chat/switch" "the keeper takes the switch request"
+  # Host registration precedes Deck startup; wait for the replacement's argv,
+  # not merely its host PID, before inspecting the fake harness receipt.
+  wait_for 10 "the switched deck starts" grep -q '"--model", "fake/other"' "$FAKE_DECK_LOG"
   assert_contains "$(tail -1 "$FAKE_DECK_LOG")" "\"--session\", \"$session\"" "the switched host resumes the same deck session"
   assert_contains "$(tail -1 "$FAKE_DECK_LOG")" '"--model", "fake/other"' "the switched host runs the new model"
   assert_grep 'switching the primary to fake/other' "$home/state/primary-chat/service.log" "the keeper logs the switch"

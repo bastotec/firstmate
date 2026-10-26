@@ -279,7 +279,7 @@ test_spawn_on_fake_stream_records_the_endpoint() (
     pass "fm-spawn.sh on stream: skipped (jq/curl unavailable)"
     exit 0
   fi
-  local proj wt data id state config out fb window endpoint
+  local proj wt data id state config out fb window endpoint allocations
   proj="$TMP_ROOT/stream-project"; wt="$TMP_ROOT/stream-wt"; data="$TMP_ROOT/stream-data"
   id="streamdispatchz6"
   fm_git_worktree "$proj" "$wt" "fm/$id"
@@ -289,8 +289,9 @@ test_spawn_on_fake_stream_records_the_endpoint() (
   mkdir -p "$state" "$config"
   fm_test_fake_stream "$TMP_ROOT/stream-hub" || fail "fake stream hub did not start"
   fm_test_fake_stream_treehouse "$wt"
+  allocations="$TMP_ROOT/stream-allocations.log"
 
-  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
+  out=$(PATH="$fb:$PATH" FM_FAKE_TREEHOUSE_LOG="$allocations" FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$SPAWN_FM_HOME" HOME="$SPAWN_HOME" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
     FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 FM_BACKEND='' \
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" deck --mode no-mistakes --yolo off 2>&1)
@@ -303,7 +304,9 @@ test_spawn_on_fake_stream_records_the_endpoint() (
   assert_equals "$wt" "$(fm_meta_get "$state/$id.meta" worktree)" "the worktree treehouse handed the endpoint should be recorded"
   assert_equals "fm-$id" "$(fm_test_fake_stream_endpoints | jq -r --arg e "$endpoint" '.endpoints[] | select(.endpoint_id == $e) | .label')" \
     "the endpoint should carry the task's label"
-  fm_test_fake_stream_submitted "$window" | grep -q 'treehouse get' || fail "spawn never asked the endpoint for its worktree"
+  assert_grep 'get --lease --lease-holder ' "$allocations" "spawn never reserved its durable allocation"
+  ! fm_test_fake_stream_submitted "$window" | grep -q 'treehouse get' \
+    || fail "spawn delegated allocation to the interactive endpoint"
   rm -rf "/tmp/fm-$id"
   pass "fm-spawn.sh defaults to stream and records the hub-assigned endpoint, its hub, and the treehouse worktree"
 )

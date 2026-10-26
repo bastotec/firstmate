@@ -316,8 +316,17 @@ test_failed_metadata_append_unsets_carrier_and_still_launches() {
 
   ! grep -q '^traceparent=' "$meta" \
     || fail "failed metadata append must not leave a traceparent= claim in meta"
-  grep -q '^unset TRACEPARENT; .*exec -a fm-deck-worker' "$LAUNCH_LOG" \
-    || fail "failed metadata append must unset TRACEPARENT in the launch command"
+  # Execute the emitted launch interface; the harness probe sees the actual
+  # environment after placement, exports and trace-failure cleanup run.
+  mkdir -p "$HOME_DIR/launch-probe"
+  cat > "$HOME_DIR/launch-probe/bash" <<'SH'
+#!/bin/sh
+printf '%s\n' "${TRACEPARENT-unset}"
+SH
+  chmod +x "$HOME_DIR/launch-probe/bash"
+  out=$(TRACEPARENT=stale PATH="$HOME_DIR/launch-probe:$PATH" \
+    /bin/sh -c "$(cat "$LAUNCH_LOG")") || fail "emitted launch failed"
+  assert_equals unset "$out" "failed metadata append must clear the launched harness carrier"
   pass "failed traceparent metadata append removes the carrier from the launched task"
 }
 
@@ -380,8 +389,10 @@ test_relaunch_reuses_recorded_carrier() {
   # Relaunch the same task: the recorded carrier must be reused verbatim for both
   # the meta and the injected export, so an observer keeps one identity across
   # restarts. The first endpoint has closed (its agent exited), which frees its
-  # label for the new one.
+  # label, but not its retained worktree, for the new one.
   fm_test_close_task_endpoint "$meta"
+  WT_DIR="${WT_DIR}-replacement"
+  git -C "$PROJ_DIR" worktree add -q --detach "$WT_DIR"
   out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$CASE_ID" "$PROJ_DIR")
   status=$?
   expect_code 0 "$status" "relaunch spawn should succeed: $out"
@@ -516,11 +527,13 @@ test_two_routed_tasks_through_one_secondmate_root_distinct_traces() {
 
   # Same environment, same task: a relaunch must reuse task A's recorded
   # carrier verbatim, so the per-task boundary never costs recovery identity.
-  # Task A's first endpoint has closed, freeing its label.
+  # Task A's first endpoint has closed, freeing its label but retaining its copy.
   fm_test_close_task_endpoint "$sm/state/$id_a.meta"
+  wt_a="$base/wt-a-replacement"
+  git -C "$proj_a" worktree add -q --detach "$wt_a"
   out=$(TRACEPARENT="$sm_tp" run_spawn "$sm" "$wt_a" "$fakebin" "$log_a" "$id_a" "$proj_a")
   status=$?
-  expect_code 0 "$status" "routed task A relaunch should succeed"
+  expect_code 0 "$status" "routed task A relaunch should succeed: $out"
   relaunch_tp=$(meta_traceparent "$sm/state/$id_a.meta")
   relaunch_in=$(injected_traceparent "$log_a")
   [ "$relaunch_tp" = "$tp_a" ] \

@@ -609,8 +609,17 @@ test_disabled_relaunch_clears_prior_trace_context() {
   expect_code 0 "$rc" "disabled relaunch should succeed"$'\n'"$out"
   [ -z "$(meta_field "$dir" rl33 traceparent)" ] \
     || fail "disabled relaunch must remove the prior trace carrier from metadata"
-  grep -q '^unset TRACEPARENT; .*exec -a fm-deck-worker' "$dir/fake/literal" \
-    || fail "disabled relaunch must clear the pane carrier before replacement launch"
+  # The generated launch script is the interface: inspect the harness's
+  # environment by executing it, rather than pinning its leading shell tokens.
+  mkdir -p "$dir/launch-probe"
+  cat > "$dir/launch-probe/bash" <<'SH'
+#!/bin/sh
+printf '%s\n' "${TRACEPARENT-unset}"
+SH
+  chmod +x "$dir/launch-probe/bash"
+  out=$(TRACEPARENT=stale PATH="$dir/launch-probe:$PATH" \
+    /bin/sh -c "$(cat "$dir/fake/literal")") || fail "emitted replacement launch failed"
+  assert_equals unset "$out" "disabled relaunch must clear the launched harness carrier"
   ! grep -q '^export TRACEPARENT=' "$dir/fake/literal" \
     || fail "disabled relaunch must not export a replacement trace carrier"
   pass "fm-control relaunch: disabling tracing clears metadata and pane context"

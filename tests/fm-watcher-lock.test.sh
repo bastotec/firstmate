@@ -360,11 +360,12 @@ test_lock_wait_returns_when_its_directory_is_gone() {
 }
 
 test_lock_stale_steal_single_winner_under_concurrency() {
-  local dir state lockdir dead marker i pids pid wins
+  local dir state lockdir dead marker release i pids pid winner wins
   dir=$(make_case lock-stale-concurrency)
   state="$dir/state"
   lockdir="$state/.contend.lock"
   marker="$dir/wins"
+  release="$dir/release"
   dead=$(dead_pid)
   mkdir "$lockdir"
   printf '%s\n' "$dead" > "$lockdir/pid"
@@ -374,17 +375,41 @@ test_lock_stale_steal_single_winner_under_concurrency() {
   while [ "$i" -le 40 ]; do
     FM_STATE_OVERRIDE="$state" bash -c '
       . "$1"
-      if fm_lock_try_acquire "$2"; then
-        printf "%s\n" "${BASHPID:-$$}" >> "$3"
-        sleep 1
-      fi
-    ' _ "$LIB" "$lockdir" "$marker" &
+      attempts=0
+      # try_acquire may lose to a transient steal mutex even when nobody wins
+      # that attempt. Retry until there is an owner, not for a fixed sleep.
+      while [ "$attempts" -lt 100 ]; do
+        if fm_lock_try_acquire "$2"; then
+          printf "%s\n" "${BASHPID:-$$}" >> "$3"
+          polls=0
+          while [ ! -e "$4" ] && [ -d "${4%/*}" ] && [ "$polls" -lt 300 ]; do
+            sleep 0.1
+            polls=$((polls + 1))
+          done
+          fm_lock_release "$2"
+          exit 0
+        fi
+        [ ! -s "$3" ] || exit 0
+        attempts=$((attempts + 1))
+        sleep 0.01
+      done
+    ' _ "$LIB" "$lockdir" "$marker" "$release" &
     pids="$pids $!"
     i=$((i + 1))
   done
-  for pid in $pids; do
-    wait "$pid" 2>/dev/null || true
+  i=0
+  while [ ! -s "$marker" ] && [ "$i" -lt 100 ]; do
+    sleep 0.1
+    i=$((i + 1))
   done
+  winner=$(head -n 1 "$marker")
+  # Keep the winner alive until every losing contender has finished; scheduler
+  # load must not turn a late attempt into a legitimate second stale reclaim.
+  for pid in $pids; do
+    [ "$pid" = "$winner" ] || wait "$pid" 2>/dev/null || true
+  done
+  : > "$release"
+  [ -z "$winner" ] || wait "$winner" 2>/dev/null || true
   wins=$(awk 'NF { c++ } END { print c + 0 }' "$marker")
   [ "$wins" -eq 1 ] || fail "expected exactly one stale-lock stealer, got $wins"
   pass "concurrent stale-lock steal yields exactly one winner"

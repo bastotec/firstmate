@@ -330,6 +330,7 @@ make_harness_fakebin() {
   local dir=$1 fakebin="$1/fakebin"
   mkdir -p "$fakebin"
   fm_test_fake_deck "$fakebin"
+  fm_test_fake_treehouse "$fakebin"
   printf '%s\n' "$fakebin"
 }
 

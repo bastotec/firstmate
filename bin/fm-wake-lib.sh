@@ -897,12 +897,12 @@ fm_lock_try_acquire() {
   fi
   fm_lock_dir_usable "$lockdir" || return 1
   # Creation can fail with a writable parent (ENOSPC, name length, failed
-  # owner publication). Only an existing lock is contention worth stealing.
-  # In particular, never recurse into .steal for a failed absent primitive.
+  # owner publication). Never recurse into .steal for a failed primitive.
+  # A successful publication can disappear during claim validation; that is
+  # retryable through stale-owner arbitration, not a primitive failure.
   if [ "${FM_LOCK_CREATE_FAILED:-0}" = 1 ]; then
     return 1
   fi
-  [ -e "$lockdir" ] || [ -L "$lockdir" ] || return 1
 
   fm_current_pid current || return 1
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
