@@ -162,7 +162,7 @@ After spawning, confirm the worker is processing the brief.
 For a refusal that survives `bin/fm-spawn.sh`'s "Serialized spawns" recovery, relaunch the task once more yourself, sequentially, and never park it for a runtime owner.
 A worker you pause, for a rule slip or anything else you can decide, is decided in that same turn: send it back to the deliverable, replace it, or close it, never leave it waiting for your release.
 A `check: worker keep-alive:` wake names stuck work or an unanswered secondmate question; carry out its instruction in that turn, following the [keep-alive contract](bin/fm_worker_keepalive.py), and for a stuck worker leave reaching the captain to the watchdog's escalation.
-A keep-alive `blocked [key=keepalive-...]` line from a second mate is yours to fix the same way: steer that mate with the concrete fix or fix it yourself; closing its key with an answer while the work stays stuck is not a fix and sends it to the captain at once.
+A keep-alive `blocked [key=keepalive-...]` line from a second mate is yours to fix the same way: steer that mate with the concrete fix or fix it yourself; closing its key with an answer while the work stays stuck is not a fix.
 
 Steer a worker with ordinary text through fail-closed `fm-send`; its header owns delivery and selector-specific routing.
 After an unconfirmed remote secondmate delivery, only the exact `FM_PENDING_REPLY_EXISTING_CORR=<id>` resend command `fm-send` prints is safe.

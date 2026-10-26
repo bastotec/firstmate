@@ -41,16 +41,6 @@ Each scan reads one condition per worker, first match wins:
                eligible for the PR conditions below; otherwise its done: status
                suppresses the remaining conditions regardless of agent liveness,
                except frozen below.
-  frozen       the last status line is done: in a freeze, hold or preserved
-               state (freeze, frozen, preserved, read-only, ready-only,
-               do-not-merge, DNM, custody, hold, held, parked, "no merge",
-               "no edits") while its recorded pr= is still open, read live, for
-               FM_KEEPALIVE_DONE_SECS from the status file's mtime; no approval
-               wait may be in force. A freeze is never an endpoint: the mate
-               lands the PR (removing a hold label it or the worker set) or
-               closes it with a reason, then retires the worker. A hold label
-               alone on a done: worker with plain wording stays ready-only, as
-               below. A merged or closed PR clears it; an unreadable PR retains it;
   unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
                at least one check and every verdict returned by latest_checks
                below SUCCESS, NEUTRAL or SKIPPED (behind or review-required is
@@ -81,6 +71,16 @@ Each scan reads one condition per worker, first match wins:
                PR episode; its clocks are retained, except that the CI clock
                still resets when a scan observes a step other than ci.
                The green clock also resets on observed ineligibility;
+  frozen       the last status line is done: in a freeze, hold or preserved
+               state (freeze, frozen, preserved, read-only, ready-only,
+               do-not-merge, DNM, custody, hold, held, parked, "no merge",
+               "no edits") while its recorded pr= is still open, read live, for
+               FM_KEEPALIVE_DONE_SECS from the status file's mtime; no approval
+               wait may be in force. A freeze is never an endpoint: the mate
+               lands the PR (removing a hold label it or the worker set) or
+               closes it with a reason, then retires the worker. A hold label
+               alone on a done: worker with plain wording stays ready-only, as
+               above. A merged or closed PR clears it; an unreadable PR retains it;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
@@ -145,12 +145,15 @@ after this home first saw it goes one level up: a second mate's home appends its
 own blocked line to its parent channel, and the first mate's home tells the
 captain. The channel key and fold origin identify the episode: note refreshes
 retain its first-seen time and escalation state; closure followed by reopening
-starts fresh. It resolves when the record closes or the mate leaves.
+starts fresh. An already-raised, non-dropped relay resolves when the record
+closes or the mate leaves.
 A record closed before it went up by anything but the owning watchdog's own
 resolution (an "answered" line, the mate resolving its own alarm) is a dropped
 escalation, not a fix: this home sends it one level up at once, noting the
 closing line, and keeps it until the owning watchdog resolves that key, the key
-reopens as a fresh episode, or the mate leaves. A captain-held closure transfers
+reopens as a fresh episode, or the mate leaves. Missing closing evidence after
+channel truncation, replacement or disappearance retains a dropped record
+unchanged, without a resolution notice. A captain-held closure transfers
 ownership to the captain: an unraised relay or a dropped record is cleared
 quietly, without an escalation or a "moving again" notice. Each asks record
 retains the channel's byte offset and inode captured before the fold, and reads
@@ -173,8 +176,9 @@ keep auto-land off.
 Arming the check or removing the configuration clears this condition.
 Regression coverage for these watchdogs: tests/fm-worker-keepalive.test.sh.
 
-Captain lines: the first mate's home publishes one plain notice through
-bin/fm-notify.sh (FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
+Captain lines: the first mate's home, or a home falling back from a refused
+parent-channel line, publishes one plain notice through bin/fm-notify.sh
+(FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
 check: wake telling its supervisor the captain was told and to keep fixing it;
 the resolution is one more notice. Failed publication or wake delivery is
 retried; notice text uses episode timestamps rather than the scan's elapsed
