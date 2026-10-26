@@ -177,7 +177,7 @@ Relaying that pty adds one state a local terminal lacks: a silent agent reads `u
 ## Worktrees, not branches in your checkout
 
 Crewmates never intentionally touch your project clone: [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees, and stream only provides the session.
-The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns worktree isolation and fresh-base refusal, pinned by [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh).
+The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns isolation, retained-copy custody, fresh-base refusal and effective launch placement, pinned by [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh) and [`tests/fm-spawn-worktree-settle.test.sh`](../tests/fm-spawn-worktree-settle.test.sh).
 
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
 Its operating checkout (`FM_ROOT`) and crewmate worktrees are linked worktrees of one repository, so the discriminator is branch state: the primary is healthy on its default branch, linked worktrees and secondmate homes at detached HEAD, and only a named non-default branch in `FM_ROOT` is a tangle.

@@ -115,8 +115,9 @@ test_linked_spawning_home_rejects_primary_before_refresh() {
       spawning) POOL_DIR=$spawning ;;
     esac
     before_reflog=$(git -C "$primary" reflog)
-    # The assertion concerns identity, not how long an unchanged cwd is polled.
-    fm_test_fake_sleep_noop "$FAKEBIN_DIR"
+    # Refused primary paths need no wall-clock settling wait. A successful
+    # scout still needs real sleeps for the asynchronous endpoint ready file.
+    [ "$returned" = scout ] || fm_test_fake_sleep_noop "$FAKEBIN_DIR"
 
     out=$(run_spawn "$id" --scout)
     status=$?
@@ -146,14 +147,9 @@ test_linked_spawning_home_rejects_primary_before_refresh() {
         || fail "spawn did not refresh the genuine scout copy"
     else
       [ "$status" -ne 0 ] || fail "linked spawning home accepted $returned as a disposable copy"
-      # None of these is an isolated copy, so the worktree poll never adopts one
-      # and the wait runs out instead: the spawning directory fails the poll's
-      # own project comparison, and the repository primary (named directly or
-      # through a symlink) fails the isolation screen the poll shares with the
-      # guard. The refusal names the last path the pane reported.
-      assert_contains "$out" "did not enter an isolated worktree" \
+      assert_contains "$out" "did not yield an isolated worktree" \
         "spawn did not explain its isolation refusal"
-      assert_contains "$out" "last seen" "refusal did not name the path the pane reported"
+      assert_contains "$out" "$POOL_DIR" "refusal did not name the returned allocation path"
       [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused spawn published task metadata"
       [ ! -e "$primary/.git/FETCH_HEAD" ] || fail "refused spawn fetched before proving isolation"
     fi
@@ -185,6 +181,16 @@ test_stale_pool_base_refreshes_before_branching() {
       "$branch_head" "$current" "$(cat "$POOL_DIR/advanced-main.txt")"
   fi
 
+  # A second ordinary launch cannot take a copy that still has its first
+  # task record, even with no running process and an already-current base.
+  fm_test_spawn_brief "$HOME_DIR" retained-repeat
+  out=$(run_spawn retained-repeat --scout)
+  status=$?
+  [ "$status" -ne 0 ] || fail "a sequential launch reused a recorded copy"
+  assert_contains "$out" "still recorded by" "missing retained-record refusal"
+  [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$current" ] || fail "refusal changed the first worker's HEAD"
+  # Model a completed return of this fixture-owned copy before legitimate reuse.
+  rm "$HOME_DIR/state/$id.meta"
   id='pool-current-base-repeat-r1'
   fm_test_spawn_brief "$HOME_DIR" "$id"
   out=$(run_spawn "$id" --mode no-mistakes --yolo off)
@@ -870,6 +876,8 @@ strand_submodule_pin_via_spawn() {  # <seed-id>
     || fail "the first spawn did not move the pooled base across the moved submodule pin"
   [ "$(git -C "$POOL_DIR/ui" rev-parse HEAD)" = "$SUBPIN1" ] \
     || fail "the first spawn did not strand the submodule on the pin the old base recorded"
+  # The next case is a returned fixture, not permission to steal a retained task.
+  rm "$HOME_DIR/state/$id.meta"
 }
 
 test_stale_submodule_pin_explains_itself() {
@@ -1141,6 +1149,54 @@ SH
 }
 
 test_skills_are_checked_in_the_final_worker_copy
+# A stopped worker is still the custodian of its copy. Sequential launches
+# must not mistake absence of a live process for permission to take its slot.
+test_preserved_custody_refuses_before_writes() {
+  local rec id out status kind before reflog claim refs
+  for kind in foreign-clean foreign same-id-other-home malformed metadata-clean metadata unpublished; do
+    id="pool-preserved-$kind"
+    rec=$(make_case "preserved-$kind" "$id")
+    read_case_record "$rec"
+    lay_out_as_pool_slot
+    case "$kind" in
+      foreign*) printf 'task=retained-builder\nhome=/preserved/home\n' > "$SLOT_CLAIM" ;;
+      same-id-other-home) printf 'task=%s\nhome=/preserved/home\n' "$id" > "$SLOT_CLAIM" ;;
+      malformed) printf 'not-a-claim\n' > "$SLOT_CLAIM" ;;
+      metadata*) printf 'worktree=%s\nkind=ship\n' "$POOL_DIR" > "$HOME_DIR/state/retained-builder.meta" ;;
+      unpublished) ;;
+    esac
+    case "$kind" in
+      *-clean) ;;
+      *)
+        printf 'unpublished builder work\n' > "$POOL_DIR/builder.txt"
+        git -C "$POOL_DIR" add builder.txt
+        git -C "$POOL_DIR" -c user.name=Tests -c user.email=tests@example.invalid commit -qm unpublished
+        ;;
+    esac
+    refs=$(git -C "$POOL_DIR" for-each-ref --format='%(refname) %(objectname)')
+    if [ "$kind" != unpublished ]; then
+      jq -nc --arg p "$POOL_DIR" '[{path:$p,status:"available"}]' > "$CASE_DIR/inventory.json"
+      export FM_FAKE_TREEHOUSE_INVENTORY="$CASE_DIR/inventory.json"
+    fi
+    before=$(git -C "$POOL_DIR" rev-parse HEAD)
+    reflog=$(git -C "$POOL_DIR" reflog)
+    claim=$(cat "$SLOT_CLAIM" 2>/dev/null || true)
+    out=$(FM_FAKE_TREEHOUSE_LOG="$CASE_DIR/treehouse.log" run_spawn "$id" --scout)
+    status=$?
+    [ "$status" -ne 0 ] || fail "spawn stole $kind custody: $out"
+    [ "$(git -C "$POOL_DIR" rev-parse HEAD)" = "$before" ] || fail "$kind HEAD was reset"
+    [ "$(git -C "$POOL_DIR" reflog)" = "$reflog" ] || fail "$kind reflog was changed"
+    [ "$(cat "$SLOT_CLAIM" 2>/dev/null || true)" = "$claim" ] || fail "$kind claim was overwritten"
+    [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$kind published a new worker record"
+    if [ "$kind" != unpublished ]; then
+      assert_equals "$refs" "$(git -C "$POOL_DIR" for-each-ref --format='%(refname) %(objectname)')" "$kind changed refs before proving custody"
+    fi
+    case "$kind" in *-clean) ;; *) [ -f "$POOL_DIR/builder.txt" ] || fail "$kind lost unpublished work" ;; esac
+  done
+  pass "sequential spawns preserve foreign, ambiguous, recorded and unpublished custody"
+}
+
+test_preserved_custody_refuses_before_writes
 test_remote_seeded_home_spawns_from_treehouse_pool
 test_pool_slot_claim_follows_the_spawn_outcome
 test_linked_spawning_home_rejects_primary_before_refresh

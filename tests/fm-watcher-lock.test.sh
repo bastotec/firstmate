@@ -241,6 +241,42 @@ test_lock_steals_dead_pid_lock() {
   pass "dead-pid stale lock is reclaimed by a single acquirer"
 }
 
+test_lock_create_failure_is_not_stale_contention() {
+  local dir state rc
+  dir=$(make_case lock-create-failure)
+  state="$dir/state"
+  rc=0
+  # shellcheck source=bin/fm-timeout-lib.sh
+  . "$ROOT/bin/fm-timeout-lib.sh"
+  # shellcheck disable=SC2016 # Expanded by the isolated child shell.
+  HOME="$dir" FM_STATE_OVERRIDE="$state" fm_run_timed 10 bash -c '
+    . "$1"
+    lock="$2/.fixture.lock"
+    # Negative control: ordinary acquisition and release still work.
+    fm_lock_try_acquire "$lock" || exit 10
+    fm_lock_release "$lock"
+    for primitive in mktemp ln; do
+      calls=0
+      # Bound the unchanged-code counterfactual without filling the disk.
+      eval "$primitive() { calls=\$((calls+1)); printf x >> \"$2/calls\"; return 1; }"
+      : > "$2/calls"
+      if fm_lock_try_acquire "$lock"; then exit 11; fi
+      [ "$(wc -c < "$2/calls")" -eq 1 ] || exit 12
+      [ "$FM_LOCK_CREATE_FAILED" = 1 ] || exit 13
+      if fm_lock_acquire_wait "$lock"; then exit 14; fi
+      [ ! -e "$lock.steal" ] && [ ! -L "$lock.steal" ] || exit 15
+      unset -f "$primitive"
+    done
+    # Real path-length failure with a writable, existing parent.
+    long=$(printf "%0250d" 0)
+    if fm_lock_acquire_wait "$2/$long"; then exit 16; fi
+    fm_lock_try_acquire "$lock" || exit 17
+    fm_lock_release "$lock"
+  ' _ "$LIB" "$state" || rc=$?
+  [ "$rc" -eq 0 ] || fail "lock creation failure recursed, waited or broke reuse (rc=$rc)"
+  pass "failed lock primitives refuse without stale-steal recursion or waiting"
+}
+
 test_lock_wait_returns_when_its_directory_is_gone() {
   # A missing lock directory makes every create fail and the unreadable pid look
   # like a dead holder, so the stale-steal path once recursed into
@@ -1131,6 +1167,14 @@ test_msys_pid_identity_uses_proc() {
   pass "MSYS process identity uses compatible /proc fields"
 }
 
+# Focused primitive proof avoids unrelated watcher startup observation windows.
+if [ -n "${FM_TEST_CASE:-}" ]; then
+  case "$FM_TEST_CASE" in
+    test_lock_create_failure_is_not_stale_contention) "$FM_TEST_CASE"; exit ;;
+    *) fail "unsupported focused lock case: $FM_TEST_CASE" ;;
+  esac
+fi
+
 test_singleton_start
 test_pid_identity_is_locale_invariant
 test_proc_pid_identity_ignores_wall_clock_and_detects_pid_reuse
@@ -1141,6 +1185,7 @@ test_live_stale_watch_lock_is_actionable
 test_guard_warnings
 test_lock_single_winner_under_concurrency
 test_lock_steals_dead_pid_lock
+test_lock_create_failure_is_not_stale_contention
 test_lock_wait_returns_when_its_directory_is_gone
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_live_steal_mutex_is_not_reclaimed

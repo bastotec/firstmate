@@ -418,13 +418,15 @@ fm_lock_claim() {
 fm_lock_try_create() {
   local lockdir=$1 allowed_steal_owner=${2:-} ownerdir
   FM_LOCK_OWNER_DIR=
-  ownerdir=$(fm_lock_owner_dir "$lockdir") || return 1
+  FM_LOCK_CREATE_FAILED=0
+  ownerdir=$(fm_lock_owner_dir "$lockdir") || { FM_LOCK_CREATE_FAILED=1; return 1; }
   if [ -e "$lockdir" ] || [ -L "$lockdir" ]; then
     fm_lock_discard_owner "$ownerdir"
     return 1
   fi
   if ! fm_lock_prepare_owner "$ownerdir"; then
     fm_lock_discard_owner "$ownerdir"
+    FM_LOCK_CREATE_FAILED=1
     return 1
   fi
   if ln -s "$ownerdir" "$lockdir" 2>/dev/null && fm_lock_points_to_owner "$lockdir" "$ownerdir"; then
@@ -437,6 +439,10 @@ fm_lock_try_create() {
     fi
   else
     fm_lock_remove_stray_owner_link "$lockdir" "$ownerdir"
+    if [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ] \
+       && ! fm_lock_claim_blocked_by_steal "$lockdir" "$allowed_steal_owner"; then
+      FM_LOCK_CREATE_FAILED=1
+    fi
   fi
   fm_lock_discard_owner "$ownerdir"
   return 1
@@ -871,11 +877,19 @@ fm_lock_try_acquire() {
   FM_LOCK_HELD_PID=
   FM_LOCK_OWNER_DIR=
   FM_LOCK_RECOVERED_PID=
+  FM_LOCK_CREATE_FAILED=0
 
   if fm_lock_try_create "$lockdir"; then
     return 0
   fi
   fm_lock_dir_usable "$lockdir" || return 1
+  # Creation can fail with a writable parent (ENOSPC, name length, failed
+  # owner publication). Only an existing lock is contention worth stealing.
+  # In particular, never recurse into .steal for a failed absent primitive.
+  if [ "${FM_LOCK_CREATE_FAILED:-0}" = 1 ]; then
+    return 1
+  fi
+  [ -e "$lockdir" ] || [ -L "$lockdir" ] || return 1
 
   fm_current_pid current || return 1
   pid=$(cat "$lockdir/pid" 2>/dev/null || true)
@@ -967,12 +981,13 @@ fm_lock_try_acquire() {
   return "$rc"
 }
 
-# Waits as long as a live holder keeps the lock, but returns 1 at once when the
-# lock's parent directory is gone or unwritable; retrying there cannot acquire it.
-# tests/fm-watcher-lock.test.sh covers refusal after the parent is removed.
+# Waits while a live holder keeps the lock, but returns 1 when the parent is
+# unusable or an absent lock cannot be created; neither is stale contention.
+# tests/fm-watcher-lock.test.sh covers missing parents and primitive failures.
 fm_lock_acquire_wait() {
   local lockdir=$1
   while ! fm_lock_try_acquire "$lockdir"; do
+    [ "${FM_LOCK_CREATE_FAILED:-0}" != 1 ] || return 1
     fm_lock_dir_usable "$lockdir" || return 1
     sleep 0.1
   done
@@ -1211,21 +1226,12 @@ fm_treehouse_pool_slot() {  # <project-dir> <worktree>
 
 # Slot-owner claim: which task a Treehouse pool slot currently belongs to.
 #
-# Treehouse can record ownership durably: `treehouse get --lease --lease-holder`
-# reserves a slot under a label until `treehouse return --if-lease-holder`
-# releases it, and Firstmate uses exactly that for secondmate homes
-# (bin/fm-home-seed.sh). Crewmate spawns do not take that path: they acquire
-# their slot through the interactive pane-driven `treehouse get`, whose state
-# entry is a live process lease (owner_pid plus owner_started_at, and `treehouse
-# status` reports in-use from the processes actually running under the path).
-# That answers "is anything running here", never "which task owns this", and it
-# is released by the very event that makes a task record stale - the worker
-# exiting - so a slot whose lease has lapsed reads identical whether it is still
-# this task's or has since been handed to another one. Firstmate therefore keeps
-# its own claim on top: one file naming the task that took the slot, written by
-# bin/fm-spawn.sh under the same project lock that allocates the slot and
-# released by bin/fm-teardown.sh when the slot goes back to the pool. Moving
-# crewmate spawns onto the durable lease is separate follow-up work.
+# Durable Treehouse leases exclude stopped workers from future allocation;
+# bin/fm-spawn.sh owns acquisition and legacy unleased-custody refusal.
+# The independent claim identifies the task for guarded teardown, including
+# older copies whose process lease vanished when their worker exited.
+# It is written under the project allocation lock and released by guarded
+# teardown when the slot goes back to the pool, never overwritten at allocation.
 #
 # The claim lives at <pool>/<slot>/.fm-slot-owner - a sibling of the repo
 # checkout rather than a file inside it - so claiming a slot can never dirty the
@@ -1237,16 +1243,15 @@ fm_treehouse_slot_owner_marker() {  # <worktree>
   printf '%s/.fm-slot-owner\n' "$(dirname "$slot")"
 }
 
-# Claim a pool slot for a task, replacing whatever the previous holder left.
-# The rename is atomic, so a reader either sees the old claim or the new one.
+# Claim an unowned pool slot under the project allocation lock.
+# A retained claim is custody even after its worker exits; only return releases it.
 fm_treehouse_slot_owner_claim() {  # <worktree> <task-id> <home>
   local worktree=$1 id=$2 home=$3 marker tmp
   [ -n "$id" ] || return 1
   marker=$(fm_treehouse_slot_owner_marker "$worktree") || return 1
-  # Only a plain claim file may be replaced: renaming onto a directory would
-  # move the new claim inside it and leave the slot reading as unclaimable.
-  if { [ -e "$marker" ] || [ -L "$marker" ]; } \
-     && { [ ! -f "$marker" ] || [ -L "$marker" ]; }; then
+  # Never replace even a same-id claim: it can belong to another home or to
+  # retained work. Relaunch reuses the recorded copy without claiming it again.
+  if [ -e "$marker" ] || [ -L "$marker" ]; then
     return 1
   fi
   tmp="$marker.tmp.${BASHPID:-$$}"

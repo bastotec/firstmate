@@ -1,25 +1,7 @@
 #!/usr/bin/env bash
-# Regression test for the fm-spawn.sh treehouse-get worktree-detection settle
-# loop (bin/fm-spawn.sh, the `for _ in $(seq 1 "$worktree_polls")` loop after
-# `treehouse get`).
-#
-# On some setups (first seen on tmux under WSL) a brand-new endpoint's cwd transiently
-# reports a stale, unrelated-but-real path on the very first poll, before the
-# pane actually settles into the worktree treehouse get moved it to. That stale
-# path still passes the loop's "differs from the project" check and
-# validate_spawn_worktree's "is a real, distinct worktree" check (it IS a real
-# git checkout, just the wrong one), so a naive single-read loop silently
-# records the wrong worktree= in state/<id>.meta. This test simulates that
-# transient-then-settled cwd sequence with a fake stream endpoint and
-# asserts the recorded worktree resolves to the real, settled worktree, never
-# the stale first read.
-#
-# The same loop has a second transient to survive: `treehouse get` reports the
-# REPOSITORY's primary checkout as its own cwd while it is still preparing a
-# slot. From a linked spawning home that path is not the project, so a poll
-# comparing only against the project adopted it and the isolation guard then
-# refused the launch. The cases below cover both the transient and the pane
-# that never leaves the primary at all.
+# Allocation-path regressions: foreground cwd telemetry is never allocation
+# authority. Machine-readable durable allocation chooses the exact initial cwd
+# and emitted Deck launch rechecks it with an inert runtime (no model calls).
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -35,7 +17,8 @@ TMP_ROOT=$(fm_test_tmproot fm-spawn-worktree-settle)
 make_settle_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
-  fm_fake_exit0 "$fakebin" treehouse deck
+  fm_fake_exit0 "$fakebin" deck
+  fm_test_fake_treehouse "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -88,7 +71,7 @@ run_settle_spawn() {
   FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
     FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
     FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
-    FM_SPAWN_NO_GUARD=1 \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" \
     PATH="$FAKEBIN_DIR:$PATH" \
     "$SPAWN" "$id" "$PROJ_DIR" --mode no-mistakes --yolo off 2>&1
   rc=$?
@@ -133,7 +116,7 @@ test_already_settled_pane_costs_one_confirm_read() {
   assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" \
     "meta did not record the already-settled worktree"
   reads=$(cat "$COUNTFILE")
-  [ "$reads" -eq 2 ] || fail "already-settled pane took $reads reads to confirm - expected the first read plus one confirmation"
+  [ "$reads" -eq 0 ] || fail "fresh allocation depended on $reads foreground cwd reads"
   pass "an already-settled pane confirms on the next read, not a whole extra cycle"
 }
 
@@ -189,21 +172,74 @@ test_primary_checkout_that_never_settles_fails_at_the_deadline() {
   id=settle-primary-stuck-z4
   rec=$(make_primary_case settle-primary-stuck "$id" 100000)
   read_settle_record "$rec"
-  fm_test_fake_sleep_noop "$FAKEBIN_DIR"
-
+  WT_DIR=$STALE_DIR
   out=$(run_settle_spawn "$id")
   status=$?
-  [ "$status" -ne 0 ] || fail "spawn accepted a pane that never left the primary checkout"$'\n'"$out"
-  assert_contains "$out" "did not enter an isolated worktree" \
-    "spawn did not explain that the pane never reached an isolated worktree"
-  assert_contains "$out" "$STALE_DIR" \
-    "the refusal did not name the path the pane kept reporting"
-  assert_contains "$out" "repository's primary checkout" \
-    "the refusal did not say why that path was rejected"
-  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused spawn published task metadata"
-  pass "a pane stuck on the primary checkout fails loudly at the deadline"
+  [ "$status" -ne 0 ] || fail "spawn accepted a primary allocation: $out"
+  assert_contains "$out" "did not yield an isolated worktree" "missing isolation refusal"
+  [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "refused allocation published metadata"
+  pass "an allocator returning primary refuses before endpoint creation"
 }
 
+# Repeated inventory readings are not a shell placement proof, even for a
+# sibling copy of the same repository. The actual consumer must agree before
+# any slot claim or base refresh is allowed.
+test_two_stale_reads_refuse_before_mutation() {
+  local rec id out status before
+  id=settle-repeated-foreign
+  rec=$(make_settle_case repeated-foreign "$id" 2)
+  read_settle_record "$rec"
+  STALE_DIR="$PROJ_DIR-sibling"
+  git -C "$PROJ_DIR" worktree add --quiet --detach "$STALE_DIR" HEAD
+  before=$(git -C "$STALE_DIR" reflog)
+  out=$(run_settle_spawn "$id")
+  status=$?
+  expect_code 0 "$status" "stale telemetry should not affect authoritative allocation: $out"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" "stale telemetry became allocation"
+  [ "$(git -C "$STALE_DIR" reflog)" = "$before" ] || fail "foreign reflog changed"
+  assert_equals 0 "$(cat "$COUNTFILE")" "allocation read foreground telemetry"
+  pass "repeated stale inventory cannot authorize writes or choose the launch copy"
+}
+
+# Execute the delivered Deck launch from the wrong directory, replacing only
+# the final bash runtime with an inert cwd recorder. No Deck/model is run.
+test_delivered_launch_pins_recorded_copy() {
+  local rec id out status launch
+  id=settle-effective-launch
+  rec=$(make_settle_case effective-launch "$id" 0)
+  read_settle_record "$rec"
+  fm_test_fake_stream_ensure || fail "fake stream did not start"
+  out=$(run_settle_spawn "$id")
+  status=$?
+  expect_code 0 "$status" "inert Deck launch should succeed: $out"
+  launch=$(fm_test_fake_stream_endpoints | jq -r --arg l "fm-$id" \
+    '[.endpoints[] | select(.label == $l)] | last | .submitted[-1]')
+  cat > "$FAKEBIN_DIR/bash" <<'STUB'
+#!/bin/sh
+case "$1" in
+  -c) pwd -P > "$FM_RUNTIME_CWD_LOG" ;;
+  *) exec /bin/bash "$@" ;;
+esac
+STUB
+  chmod +x "$FAKEBIN_DIR/bash"
+  (cd "$STALE_DIR" && FM_RUNTIME_CWD_LOG="$HOME_DIR/runtime-cwd" \
+    PATH="$FAKEBIN_DIR:$PATH" /bin/bash -c "$launch") || fail "delivered command failed"
+  assert_equals "$(cd "$WT_DIR" && pwd -P)" "$(cat "$HOME_DIR/runtime-cwd")" "runtime used another directory"
+  assert_grep "worktree=$WT_DIR" "$HOME_DIR/state/$id.meta" "metadata differs from runtime"
+  rm "$HOME_DIR/runtime-cwd"
+  git -C "$PROJ_DIR" worktree move "$WT_DIR" "$WT_DIR-moved"
+  if (cd "$STALE_DIR" && FM_RUNTIME_CWD_LOG="$HOME_DIR/runtime-cwd" \
+    PATH="$FAKEBIN_DIR:$PATH" /bin/bash -c "$launch") 2>/dev/null; then
+    fail "launch reported success after its recorded copy disappeared"
+  fi
+  [ ! -e "$HOME_DIR/runtime-cwd" ] || fail "runtime launched after placement verification failed"
+  assert_grep 'failed: worker launch directory does not match its recorded copy' \
+    "$HOME_DIR/state/$id.status" "missing placement failure status"
+  pass "delivered launch executes in exactly its recorded copy despite cwd drift"
+}
+
+test_two_stale_reads_refuse_before_mutation
+test_delivered_launch_pins_recorded_copy
 test_single_stale_first_read_is_not_accepted
 test_already_settled_pane_costs_one_confirm_read
 test_transient_primary_checkout_is_not_accepted

@@ -37,7 +37,10 @@ case "${1:-}" in --handling-delivered) exit 0 ;; esac
 echo $$ >> "$FM_HOME/watch.pids"
 echo "${FM_CHECK_INTERVAL:-300}" >> "$FM_HOME/watch.cadence"
 echo "watcher: started pid=$$ (beacon fresh)"
-while [ ! -e "$FM_HOME/wake.trigger" ]; do sleep 0.05; done
+while [ ! -e "$FM_HOME/wake.trigger" ]; do
+  [ -e "$FM_HOME/freeze.beat" ] || touch "$FM_HOME/state/.last-watcher-beat"
+  sleep 0.05
+done
 cat "$FM_HOME/wake.trigger"; rm -f "$FM_HOME/wake.trigger"
 EOF
 cat > "$LAB/tools/deck" <<'EOF'
@@ -551,6 +554,30 @@ test_task_named_primary_blocks_the_host() {
   assert_absent "$home/state/.lock" "the refused host takes no lock"
   assert_absent "$LAB/deck-task.log" "the refused host never starts deck"
   pass "fm-deck-chat.sh: a task named primary blocks the host"
+}
+
+test_stale_owned_watcher_is_replaced() {
+  local home host watch
+  home=$(new_home stale-owned-watcher)
+  FAKE_DECK_LOG="$LAB/deck-stale.log" FM_GUARD_GRACE=2 \
+    "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/host-stale.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 20 "an owned watcher" watch_count "$home" 1
+  watch=$(last_watch_pid "$home")
+  # Healthy child is not replaced just because the host has been alive.
+  sleep 3
+  assert_equals 1 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "fresh beacon must retain its child"
+  touch "$home/freeze.beat"
+  wait_for 20 "a stale owned child replacement" watch_count "$home" 2
+  wait_for 10 "the stale child exits" dead "$watch"
+  alive "$host" || fail "stale watcher recovery killed the host"
+  assert_grep 'watcher beacon stale; replacing owned watcher child' \
+    "$home/state/primary-chat/host.log" "stale recovery was not recorded"
+  rm "$home/freeze.beat"
+  kill -TERM "$host"
+  wait_for 10 "the host exits" dead "$host"
+  pass "fm-deck-chat.sh: stale owned watcher is replaced without restarting the host"
 }
 
 test_away_mode_pauses_the_watcher() {
@@ -1767,12 +1794,21 @@ if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
   exit 0
 fi
 
+# Focused execution remains inside this suite and the guarded repository runner.
+if [ -n "${FM_TEST_CASE:-}" ]; then
+  case "$FM_TEST_CASE" in
+    test_stale_owned_watcher_is_replaced) "$FM_TEST_CASE"; exit ;;
+    *) fail "unsupported focused host case: $FM_TEST_CASE" ;;
+  esac
+fi
+
 test_steer_contract_without_a_host
 test_split_home_captain_thread_and_supervisor
 test_stop_marker
 test_service_install
 test_service_alert
 test_attach_follows_restarts
+test_stale_owned_watcher_is_replaced
 test_open_attaches_or_starts
 test_service_launcher_shutdown
 test_service_late_registration

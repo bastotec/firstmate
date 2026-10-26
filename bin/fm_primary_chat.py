@@ -103,9 +103,10 @@ Subcommands:
   supervise --home H --host-pid N --gen G --events-offset N [--effort-headers]
       events -> the role's busy-state (source deck-wrapper); only the supervising
       role (see split mode above) runs the watcher child (bin/fm-watch-arm.sh),
-      whose wakes become steer publications. A failed watcher is restarted with
-      backoff, never fatal. Watching pauses while state/.afk exists (the away
-      daemon owns the watcher then).
+      whose wakes become steer publications. Failed or stale owned watcher
+      children are replaced without restarting the host; FM_GUARD_GRACE bounds
+      both initial startup and beacon staleness (default 300 seconds).
+      Watching pauses while state/.afk exists (the away daemon owns it then).
       With --effort-headers, each wake gets the lowered `deck-effort:` header
       bin/fm-effort-policy.sh classify picks, and a lowered turn's tool output
       goes to its observe check as each tool result is processed.
@@ -580,6 +581,7 @@ class Supervisor:
         self.steer_bin = os.environ.get('FM_PRIMARY_STEER_BIN') or str(BIN / 'fm-primary-steer.sh')
         self.backoff = float(os.environ.get('FM_DECK_CHAT_WATCH_BACKOFF', '2'))
         self.backoff_max = float(os.environ.get('FM_DECK_CHAT_WATCH_BACKOFF_MAX', '60'))
+        self.watch_grace = env_seconds('FM_GUARD_GRACE', 300)
         # Per-turn reasoning effort (bin/fm-effort-policy.sh owns the policy):
         # on only when the host's deck takes the `deck-effort:` header.
         self.effort_headers = args.effort_headers
@@ -762,9 +764,22 @@ class Supervisor:
                 predecessor = None
                 continue
             predecessor = None
+            watch_started = time.monotonic()
             while proc.poll() is None and not self.stop.is_set():
                 if (self.state / '.afk').exists():
                     self.log('away mode active; pausing the host watcher')
+                    self.kill_watch()
+                    break
+                try:
+                    age = time.time() - (self.state / '.last-watcher-beat').stat().st_mtime
+                except OSError:
+                    age = self.watch_grace + 1
+                # Give a new arm its full startup grace, even if the preceding
+                # child's beacon was already stale. Kill only our own process
+                # group through the existing lifecycle owner, never a recorded
+                # watcher pid or a home-wide process-name match.
+                if time.monotonic() - watch_started > self.watch_grace and age > self.watch_grace:
+                    self.log('watcher beacon stale; replacing owned watcher child')
                     self.kill_watch()
                     break
                 self.stop.wait(0.2)
