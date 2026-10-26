@@ -39,7 +39,8 @@ Each scan reads one condition per worker, first match wins:
                prove delivery, and does not suppress wakes after result-sent.
                A done: worker with a PR not found in the backlog's done set is
                eligible for the PR conditions below; otherwise its done: status
-               suppresses the remaining conditions regardless of agent liveness.
+               suppresses the remaining conditions regardless of agent liveness,
+               except frozen below.
   unmerged     the worker's recorded pr= is open, not a draft, MERGEABLE, with
                at least one check and every verdict returned by latest_checks
                below SUCCESS, NEUTRAL or SKIPPED (behind or review-required is
@@ -70,6 +71,16 @@ Each scan reads one condition per worker, first match wins:
                PR episode; its clocks are retained, except that the CI clock
                still resets when a scan observes a step other than ci.
                The green clock also resets on observed ineligibility;
+  frozen       the last status line is done: in a freeze, hold or preserved
+               state (freeze, frozen, preserved, read-only, ready-only,
+               do-not-merge, DNM, custody, hold, held, parked, "no merge",
+               "no edits") while its recorded pr= is still open, read live, for
+               FM_KEEPALIVE_DONE_SECS from the status file's mtime; no approval
+               wait may be in force. A freeze is never an endpoint: the mate
+               lands the PR (removing a hold label it or the worker set) or
+               closes it with a reason, then retires the worker. A hold label
+               alone on a done: worker with plain wording stays ready-only, as
+               above. A merged or closed PR clears it; an unreadable PR retains it;
   dead         bin/fm-busy-lib.sh classifies the agent dead (no live agent);
   blocked      the last status line is blocked: or failed: - the mate must act;
   external     an active supervisor declaration from bin/fm-external-wait.sh
@@ -97,14 +108,15 @@ Each scan reads one condition per worker, first match wins:
 A condition reaching its bound queues one `check: worker keep-alive:` wake
 keyed keepalive:<id>:<condition>:<epoch> to this home's own supervisor
 (with an approval identity suffix as described below).
-Dead uses FM_KEEPALIVE_DEAD_SECS (300) from first observation; blocked and held
+Dead uses FM_KEEPALIVE_DEAD_SECS (300) from first observation; frozen uses
+FM_KEEPALIVE_DONE_SECS from the status file's mtime; blocked and held
 use FM_KEEPALIVE_STUCK_SECS (1200), initially measured from the status file's
 mtime when the condition is observed. Undelivered uses FM_KEEPALIVE_DONE_SECS
 from first observation of backlog acceptance, or the status file's mtime for
 an unaccepted done: worker without a PR.
 Later status edits and transitions between blocked, held and no-progress
 retain the episode's clock, wake, escalation state and parent key; a change to
-dead, undelivered, unmerged, ci-stuck or approval resolves the old escalation
+dead, undelivered, frozen, unmerged, ci-stuck or approval resolves the old escalation
 and starts a new episode. Approval episodes also reset when the record's
 nanosecond mtime or decision key changes, including release and redeclaration
 between scans. Approval wake and parent-channel keys append -<approval_id>
@@ -121,7 +133,11 @@ wake and then tells the captain (see Captain lines). A stall clears when the
 worker resumes with real progress, reports done: with a PR, or enters an
 external or non-mate-decidable wait, unless a higher-priority condition applies.
 An escalated episode's resolution is published through the same route when it
-clears or the worker leaves.
+clears or the worker leaves. A line the parent channel cannot take (unusable
+home marker, missing parent binding, unwritable channel) is never dropped: it
+falls through to a captain line from this home (see Captain lines). The episode
+retains that captain route for its resolution even if the parent channel is
+repaired before the work recovers.
 
 Escalations from below: every still-open keepalive- blocked record on a second
 mate's channel is this home's to act on. One still open FM_KEEPALIVE_ESCALATE_SECS
@@ -129,7 +145,27 @@ after this home first saw it goes one level up: a second mate's home appends its
 own blocked line to its parent channel, and the first mate's home tells the
 captain. The channel key and fold origin identify the episode: note refreshes
 retain its first-seen time and escalation state; closure followed by reopening
-starts fresh. It resolves when the record closes or the mate leaves.
+starts fresh. An already-raised, non-dropped relay resolves when the record
+closes or the mate leaves.
+A record closed before it went up by anything but the owning watchdog's own
+resolution (an "answered" line, the mate resolving its own alarm) is a dropped
+escalation, not a fix: this home sends it one level up at once, noting the
+closing line, and keeps it until the owning watchdog resolves that key, the key
+reopens as a fresh episode, or the mate leaves. Missing closing evidence after
+channel truncation, replacement or disappearance retains a dropped record
+unchanged, without a resolution notice. A captain-held closure transfers
+ownership to the captain: an unraised relay or a dropped record is cleared
+quietly, without an escalation or a "moving again" notice. Each asks record
+retains the channel's byte offset and inode captured before the fold, and reads
+its tail only through that endpoint, so appends during a scan remain for the next
+scan. Openings absent from the fold with no tail closure stay pending until the
+whole-file closing lookup finds a closure or the normal relay path owns them.
+Blocked keepalive keys opened and dismissed entirely between scans also
+go up at once; both verb-bracket and note-head keys use the decision fold's
+parsers. The first scan (or a legacy record without an offset) starts at the
+current end, without backfill.
+After truncation or inode replacement, the new file is read from zero, but only
+keys never seen by this watcher can seed missed closed episodes.
 
 Auto-land: a home with config/autoland.json but no state/autoland.check.sh
 has no armed auto-land check. FM_KEEPALIVE_DEAD_SECS after a scan first sees
@@ -140,8 +176,9 @@ keep auto-land off.
 Arming the check or removing the configuration clears this condition.
 Regression coverage for these watchdogs: tests/fm-worker-keepalive.test.sh.
 
-Captain lines: the first mate's home publishes one plain notice through
-bin/fm-notify.sh (FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
+Captain lines: the first mate's home, or a home falling back from a refused
+parent-channel line, publishes one plain notice through bin/fm-notify.sh
+(FM_KEEPALIVE_NOTIFY stands in for it in tests) and queues a
 check: wake telling its supervisor the captain was told and to keep fixing it;
 the resolution is one more notice. Failed publication or wake delivery is
 retried; notice text uses episode timestamps rather than the scan's elapsed
@@ -169,7 +206,8 @@ one line per mate (blocked [key=keepalive-<home>-<mate>-ask-<epoch>] from a
 second mate's home, a captain line from the first mate's). The line describes the entire escalated-and-still-open set (count and
 oldest question); changes to that set or its note text refresh it (under the same
 report key on the parent channel). It resolves only when that set empties or
-the mate leaves.
+the mate leaves, retaining any captain fallback route on the aggregate episode
+through resolution, even after the parent channel is repaired.
 A question closes when the fold drops it (an answer sent with --resolve-key,
 the mate's own resolved line, or a captain-held transfer). Records live in
 state/keepalive/asks/<mate>.json alongside relayed escalation episodes. The record
@@ -231,6 +269,14 @@ MATE_DECIDABLE_RE = re.compile(
     r"retry\w*|relaunch\w*|re-?spawn\w*|re-?run|install\w*|clean-?up|housekeeping|"
     r"custody|evidence|authori\w*|waiv\w*|supported)\b",
     re.I)
+FROZEN_RE = re.compile(
+    r"\b(freez\w*|frozen|preserv\w*|read-only|ready-only|do-not-merge|dnm|custody|hold|held|parked|"
+    r"no (edits|merge))\b", re.I)
+# The owning watchdog's own resolution notes (Scan.resolve, asks, relays, autoland).
+WATCHDOG_RESOLVED_RE = re.compile(
+    r"^(worker \S+ (is moving again|left the fleet|is no longer [a-z-]+|moved to another PR)"
+    r"|second mate \S+('s questions are answered|'s stuck work is moving again| left the fleet)"
+    r"|auto-land is armed again)")
 REPORT_RE = re.compile(
     r"(\.(md|txt|log)$|(^|/)(\.superpowers|\.scratch|\.no-mistakes|reports?|notes?)/)", re.I)
 
@@ -335,9 +381,20 @@ def fingerprint(state: Path, wid: str, m: dict) -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
-def bash(script: str, *args, timeout=60) -> subprocess.CompletedProcess:
+def bash(script: str, *args, timeout=60, input=None) -> subprocess.CompletedProcess:
     return subprocess.run(["bash", "-c", script, "fm-worker-keepalive", *args],
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout, input=input)
+
+
+def keyed_status_lines(text: str):
+    if not text:
+        return []
+    r = bash('. "$1/fm-classify-lib.sh"; while IFS= read -r line; do '
+             '_fm_decision_key_into "$line" || continue; '
+             '_fm_status_line_verb_into "$line"; _fm_status_line_note_into "$line"; '
+             'printf "%s\\t%s\\t%s\\n" "$_FM_KEY" "$_FM_VERB" "$_FM_NOTE"; done',
+             str(SCRIPT_DIR), input=text + "\n")
+    return [line.split("\t", 2) for line in r.stdout.splitlines() if line.count("\t") >= 2]
 
 
 def liveness(h: Path, state: Path, wid: str) -> str:
@@ -494,6 +551,12 @@ def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: st
                 "land it or close it now - rerun failed or cancelled checks, have the worker rebase a conflicting "
                 "branch (no-mistakes rerun), merge it once green, or close it if it is superseded"
                 % (wid, minutes(age), text))
+    if cond == "frozen":
+        return ("worker %s finished %d minutes ago in a freeze (\"%s\") but its PR %s is still open: a freeze, "
+                "hold or preserved state is never an endpoint - land it now (remove the hold label, have the worker "
+                "fix anything failing, then bin/fm-pr-merge.sh %s when bin/fm-merge-policy.sh allows) or close the "
+                "PR with a one-line reason, then retire the worker; raise it to the captain in one line only if the "
+                "merge is truly his" % (wid, minutes(age), quote, waiting, wid))
     if cond == "undelivered":
         return ("worker %s finished %d minutes ago (\"%s\") and is still in the fleet: send its result to the "
                 "conversation that asked for it now with bin/fm-send.sh <conversation> --result '<outcome and report "
@@ -516,6 +579,7 @@ def unstick(cond: str) -> str:
     return {"dead": "a relaunch or replacement of the worker",
             "blocked": "an answer to its blocker or a relaunch",
             "undelivered": "delivering its finished result and cleaning it up",
+            "frozen": "landing or closing its open PR (a freeze is not an endpoint)",
             "approval": "a decision on its approval wait (release, fix, retire, or one captain line)",
             "unmerged": "merging its green PR",
             "ci-stuck": "landing or closing its PR",
@@ -535,6 +599,7 @@ class Scan:
         self._approval_keys = {}
         self._approval_ids = {}
         self.wait_bound = set()
+        self.pr_open = {}
 
     def tell_captain(self, key: str, text: str, after: str) -> bool:
         notify = os.environ.get("FM_KEEPALIVE_NOTIFY") or str(SCRIPT_DIR / "fm-notify.sh")
@@ -553,16 +618,26 @@ class Scan:
 
     def report(self, wid: str, rec: dict, verb: str, text: str) -> bool:
         """Raise (blocked) or resolve one plain line beyond this home."""
-        script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
-                  'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
-        episode = str(rec["first"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
-        rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, episode, text, timeout=120).returncode
-        if rc == 1:  # the first mate's own home: its parent is the captain
+        rc = 1
+        if rec.get("route") != "captain":
+            script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
+                      'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
+            episode = str(rec["first"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
+            rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, episode, text, timeout=120).returncode
+        if rc == 0:
+            return True
+        after = "; the captain was told in one line - keep fixing it" if verb == "blocked" else "; the captain was told"
+        if rc != 1:
+            print("fm-worker-keepalive: %s: parent channel refused the %s line (rc=%d); telling the captain"
+                  % (wid, verb, rc), file=sys.stderr)
+            text += " (this home's parent channel could not take it, rc=%d)" % rc
             if verb == "blocked":
-                return self.tell_captain("keepalive:%s:escalate:%d" % (wid, NOW), text,
-                                         "; the captain was told in one line - keep fixing it")
-            return self.tell_captain("keepalive:%s:resolved:%d" % (wid, NOW), text, "; the captain was told")
-        return rc == 0
+                after = "; the parent channel is broken, so the captain was told - keep fixing it and repair the channel"
+        event = "escalate" if verb == "blocked" else "resolved"
+        sent = self.tell_captain("keepalive:%s:%s:%d" % (wid, event, NOW), text, after)
+        if sent:
+            rec["route"] = "captain"
+        return sent
 
     def resolve(self, wid: str, rec: dict, why: str) -> bool:
         if rec.get("escalated") and not self.report(wid, rec, "resolved", "worker %s %s" % (wid, why)):
@@ -589,10 +664,13 @@ class Scan:
         if wid in self.done_ids:
             return "undelivered", NOW, "accepted", text or "its backlog item is done"
         pr = self.pr_condition(m, rec)
-        if pr and (pr[0] != "unknown" or rec.get("cond") in ("unmerged", "ci-stuck")):
+        if pr and (pr[0] != "unknown" or rec.get("cond") in ("unmerged", "ci-stuck", "frozen")):
             return pr
         if verb == "done":
-            return ("done" if m.get("pr") else "undelivered"), min(NOW, mtime(status) or NOW), verb, text
+            opened = min(NOW, mtime(status) or NOW)
+            if m.get("pr") and self.pr_open.get(wid) and FROZEN_RE.search(text) and self.approval_key(wid) is None:
+                return "frozen", opened, verb, text
+            return ("done" if m.get("pr") else "undelivered"), opened, verb, text
         if liveness(self.h, self.state, wid) == "dead":
             return "dead", NOW, verb or "", text
         opened = min(NOW, mtime(status) or NOW)
@@ -621,6 +699,7 @@ class Scan:
         else:
             track.pop("ci", None)
         view = pr_view(url) if url else None
+        self.pr_open[m.get("_id", "")] = bool(view) and view.get("state") == "OPEN"
         if view is None:
             return ("unknown", NOW, "", "") if url else None
         if view.get("state") != "OPEN":
@@ -649,7 +728,7 @@ class Scan:
         rec_path = self.dir / ("%s.json" % wid)
         rec = load(rec_path, {})
         m = dict(m, _id=wid)
-        if rec.get("cond") in ("unmerged", "ci-stuck") and rec.get("track", {}).get("pr") != (m.get("pr") or ""):
+        if rec.get("cond") in ("unmerged", "ci-stuck", "frozen") and rec.get("track", {}).get("pr") != (m.get("pr") or ""):
             if not self.resolve(wid, rec, "moved to another PR"):
                 return
             rec = {}
@@ -682,7 +761,7 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
             if cond == "approval":
                 rec["approval_id"] = self._approval_ids[wid]
-        bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "unmerged": 0, "ci-stuck": 0,
+        bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "frozen": DONE, "unmerged": 0, "ci-stuck": 0,
                  "approval": APPROVAL}.get(cond, STUCK)
         age = NOW - rec["since"]
         if (rec.get("escalated") and (not self.primary or rec.get("captain_notified"))) or (
@@ -704,7 +783,7 @@ class Scan:
                         rec["captain_notified"] = True
             save(rec_path, rec)
             return
-        waiting = result_trail(self.state) if cond == "undelivered" else ""
+        waiting = result_trail(self.state) if cond == "undelivered" else m.get("pr", "") if cond == "frozen" else ""
         reminder = (". A steer, acknowledgment or relay is not a fix: if it is still stuck, %s is told in %d minutes"
                     % ("the captain" if self.primary else "your parent mate", minutes(self.escalate_after)))
         episode = str(rec["since"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
@@ -743,14 +822,14 @@ class Scan:
             st = (self.state / ("%s.status" % mate)).stat()
             sig = "%d:%d:%d" % (st.st_ino, st.st_size, st.st_mtime_ns)
         except OSError:
-            sig = ""
+            st, sig = None, ""
         # the whole-file fold costs seconds on a long channel; reuse it while the file is unchanged
         if sig and rec.get("sig") == sig and isinstance(rec.get("open"), dict) and "relays" in rec:
             now_open = rec["open"]
         else:
             now_open = self.questions(mate)
             rec["sig"], rec["open"] = sig, now_open
-        self.relays(mate, rec, {i: q for i, q in now_open.items() if q.get("relay")})
+        self.relays(mate, rec, {i: q for i, q in now_open.items() if q.get("relay")}, snapshot=st)
         previous = {a["key"]: a for a in rec.get("asks", {}).values()}
         asks = rec["asks"] = {}
         for ident, q in now_open.items():
@@ -786,23 +865,94 @@ class Scan:
                        else "%d minutes" % minutes(NOW - pending[0]["first"]),
                        len(pending), "" if len(pending) == 1 else "s",
                        pending[0]["note"][:200], " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""))
-            if self.report(mate + "-ask", {"first": first}, "blocked", line):
+            episode = rec.setdefault("esc_report", {"first": first})
+            if self.report(mate + "-ask", episode, "blocked", line):
                 rec["esc_first"], rec["esc_ids"] = first, esc_ids
                 if self.primary:
                     rec["captain_notified"] = True
                 for a in pending:
                     a["escalated"] = True
         elif not escalated and rec.get("esc_first"):
-            if self.report(mate + "-ask", {"first": rec["esc_first"]}, "resolved",
+            episode = rec.setdefault("esc_report", {"first": rec["esc_first"]})
+            if self.report(mate + "-ask", episode, "resolved",
                            "second mate %s's questions are answered" % mate):
                 rec.pop("esc_first")
+                rec.pop("esc_report", None)
                 rec.pop("esc_ids", None)
                 rec.pop("captain_notified", None)
         save(rec_path, rec)
 
-    def relays(self, mate: str, rec: dict, now_open: dict) -> None:
+    def relay_tail(self, mate: str, rec: dict, now_open: dict, snapshot):
+        seen = set(rec.get("tail_seen", []))
+        tracked = {ident[:-17] for ident in rec.get("relays", {})}
+        open_keys = {q["key"] for q in now_open.values()}
+        seen.update(tracked | open_keys)
+        if snapshot is None:
+            rec.update(tail_offset=0, tail_inode=None, tail_seen=sorted(seen))
+            return {}, {}
+        inode = "%d:%d" % (snapshot.st_dev, snapshot.st_ino)
+        try:
+            with (self.state / ("%s.status" % mate)).open("rb") as channel:
+                st = os.fstat(channel.fileno())
+                if (st.st_dev, st.st_ino) != (snapshot.st_dev, snapshot.st_ino):
+                    return {}, {}
+                offset = rec.get("tail_offset", snapshot.st_size)
+                restarted = "tail_offset" in rec and (rec.get("tail_inode") != inode or offset > snapshot.st_size)
+                if restarted:
+                    offset = 0
+                channel.seek(offset)
+                tail = channel.read(snapshot.st_size - offset)
+        except FileNotFoundError:
+            return {}, {}
+        openings, last = {}, {}
+        for index, (key, verb, note) in enumerate(keyed_status_lines(tail.decode(errors="replace"))):
+            if not key.startswith("keepalive-"):
+                continue
+            last[key] = (verb, note)
+            if verb == "blocked":
+                openings.setdefault(key, (index, note))
+        candidates = {}
+        pending = rec.setdefault("tail_pending", {})
+        for key, (index, note) in openings.items():
+            if key in tracked | open_keys or (restarted and key in seen):
+                continue
+            verb, closing = last[key]
+            if verb == "resolved" and not WATCHDOG_RESOLVED_RE.match(closing):
+                identity = "%s:%d:%d" % (inode, offset, index)
+                ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+                candidates[ident] = {"first": pending.pop(key, NOW), "up": False, "note": note}
+            elif verb not in ("resolved", "captain-held"):
+                pending.setdefault(key, NOW)
+        seen.update(openings)
+        rec.update(tail_offset=snapshot.st_size, tail_inode=inode, tail_seen=sorted(seen))
+        return candidates, {key: value if value[0] in ("resolved", "captain-held") else None
+                            for key, value in last.items()}
+
+    def relays(self, mate: str, rec: dict, now_open: dict, gone: bool = False, snapshot=None) -> None:
         """Keep-alive escalations from a second mate: this home acts, else one level up."""
-        previous = rec.get("relays", {})
+        previous = dict(rec.get("relays", {}))
+        closures = {}
+        if gone:
+            rec.pop("tail_pending", None)
+        else:
+            candidates, closures = self.relay_tail(mate, rec, now_open, snapshot)
+            previous.update(candidates)
+            pending = rec.setdefault("tail_pending", {})
+            owned = {q["key"] for q in now_open.values()} | {ident[:-17] for ident in previous}
+            for key, first in list(pending.items()):
+                if key in owned:
+                    del pending[key]
+                    continue
+                closing = self.closing_note(mate, key)
+                if closing is None:
+                    continue
+                del pending[key]
+                if closing[0] == "captain-held" or WATCHDOG_RESOLVED_RE.match(closing[1]):
+                    continue
+                identity = "pending:%d" % first
+                ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+                previous[ident] = {"first": first, "up": False, "note": key}
+                closures[key] = closing
         relays = rec["relays"] = {}
         for ident, q in now_open.items():
             r = previous.get(ident) or {"first": NOW, "up": False}
@@ -813,12 +963,46 @@ class Scan:
                         % (mate, timestamp(r["first"]), q["note"][:600]))
                 if self.report("%s-up-%s" % (mate, ident[-8:]), r, "blocked", line):
                     r["up"] = True
+        open_keys = {q["key"] for q in now_open.values()}
         for ident, r in previous.items():
-            if ident in relays or not r.get("up"):
+            if ident in relays:
+                continue
+            key = ident[:-17]  # ident is <key>-<16 hex>
+            closing = None
+            if not gone and key not in open_keys and (not r.get("up") or r.get("dropped")):
+                closing = closures[key] if key in closures else self.closing_note(mate, key)
+            if closing is None and r.get("dropped") and not gone and key not in open_keys:
+                relays[ident] = r
+                continue
+            if closing is not None and closing[0] == "captain-held":
+                continue
+            if closing is not None and not WATCHDOG_RESOLVED_RE.match(closing[1]):
+                # closed without the stuck work moving: an answer or the mate's own dismissal is not a fix
+                if not r.get("dropped"):
+                    line = ("second mate %s's keep-alive escalation (first seen %s) was closed without the stuck work "
+                            "moving (closed with \"%s\"), so it comes to you: %s"
+                            % (mate, timestamp(r["first"]), closing[1][:300], r.get("note", "")[:600]))
+                    if self.report("%s-up-%s" % (mate, ident[-8:]), r, "blocked", line):
+                        r["up"] = r["dropped"] = True
+                relays[ident] = r
+                continue
+            if not r.get("up"):
                 continue
             if not self.report("%s-up-%s" % (mate, ident[-8:]), r, "resolved",
                                "second mate %s's stuck work is moving again" % mate):
                 relays[ident] = r
+
+    def closing_note(self, mate: str, key: str):
+        """(Verb, note) of the last line on <key> if that line closed it, else None."""
+        try:
+            text = (self.state / ("%s.status" % mate)).read_text(errors="replace")
+        except OSError:
+            return None
+        last = None
+        for line_key, verb, note in keyed_status_lines(text):
+            if line_key == key:
+                last = (verb, note)
+        return last if last and last[0] in ("resolved", "captain-held") else None
 
     def autoland(self) -> None:
         """Watchdog for configured but disarmed auto-land; see the module contract."""
@@ -866,11 +1050,12 @@ class Scan:
             if rec_path.stem in mates:
                 continue
             rec = load(rec_path, {})
-            self.relays(rec_path.stem, rec, {})
+            self.relays(rec_path.stem, rec, {}, gone=True)
             if any(r.get("up") for r in rec["relays"].values()):
                 save(rec_path, rec)
                 continue
-            if not rec.get("esc_first") or self.report(rec_path.stem + "-ask", {"first": rec["esc_first"]}, "resolved",
+            episode = rec.setdefault("esc_report", {"first": rec.get("esc_first")})
+            if not rec.get("esc_first") or self.report(rec_path.stem + "-ask", episode, "resolved",
                                                        "second mate %s left the fleet" % rec_path.stem):
                 rec_path.unlink(missing_ok=True)
         live = set()
