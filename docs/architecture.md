@@ -255,7 +255,7 @@ A confirmed merge leaves a durable role-routed outcome rather than living in the
 The merge path persists the resolved yolo, away-grant, or attended authority bound to the PR identity, and a later merged poll consumes only that value or records the landing as external rather than consulting a live away record that may have been replaced ([`bin/fm-merge-authority-lib.sh`](../bin/fm-merge-authority-lib.sh)).
 
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed first.
-A pool worktree is returned only after the slot-ownership proof passes, and no discard authority relaxes it; the spawn's own slot claim backs that proof because Treehouse's process lease cannot answer ownership once the worker's exit releases it.
+A pool worktree is returned only after the slot-ownership proof passes, and no discard authority relaxes it; [`bin/fm-wake-lib.sh`](../bin/fm-wake-lib.sh) owns the task claim that backs that proof.
 Allocation and return serialize on one project lock per machine-local Firstmate tree, because a lock on one filesystem is not observable from another machine.
 Teardown concludes the task's own parked no-mistakes run first, so cleanup never orphans a run the pipeline advanced past the submitted head.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns these proofs, and [`tests/fm-teardown-endpoint-safety.test.sh`](../tests/fm-teardown-endpoint-safety.test.sh) pins the slot boundary.

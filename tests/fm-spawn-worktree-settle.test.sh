@@ -10,10 +10,8 @@ set -u
 SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-worktree-settle)
 
-# make_settle_fakebin <dir> builds the spawn fakebin. The endpoint is a fake
-# stream endpoint (tests/fixtures.sh): after `treehouse get` its first
-# <stale_reads> cwd reads report the stale path, then the settled worktree -
-# reproducing a pane that transiently reports a stale cwd before settling.
+# make_settle_fakebin <dir> builds the spawn fakebin; run_settle_spawn supplies
+# the authoritative allocation separately from the fake endpoint's cwd telemetry.
 make_settle_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -22,11 +20,8 @@ make_settle_fakebin() {
   printf '%s\n' "$fakebin"
 }
 
-# make_settle_case <name> <id> <stale_reads> builds a home, a primary project
-# with a real worktree (the eventual settled path), and a separate real git
-# repo standing in for the stale path (a real checkout of something else
-# entirely, distinct from both the project and the worktree - mirroring the
-# live incident where the stale read was another real firstmate home).
+# make_settle_case <name> <id> <stale_reads> builds synthetic repositories:
+# an allocated linked worktree and an unrelated checkout as hostile telemetry.
 make_settle_case() {
   local name=$1 id=$2 stale_reads=$3 case_dir home proj wt stale fakebin countfile
   case_dir="$TMP_ROOT/$name"
@@ -59,8 +54,8 @@ $1
 EOF
 }
 
-# Spawn onto the fake hub, then leave the count of cwd reads the settle loop
-# made after `treehouse get` in COUNTFILE.
+# Configure hostile cwd telemetry independently of allocation, then record
+# whether spawn consulted it in COUNTFILE.
 run_settle_spawn() {
   local id=$1 rc
   fm_test_fake_stream_ensure || return 1
@@ -80,9 +75,7 @@ run_settle_spawn() {
   return "$rc"
 }
 
-# A single stale first read (the exact incident) must not be accepted: the
-# loop should keep polling until two consecutive reads agree, landing on the
-# real settled worktree instead.
+# A single stale telemetry read must not select an unrelated checkout.
 test_single_stale_first_read_is_not_accepted() {
   local rec id out status
   id=settle-single-stale-z1
@@ -100,10 +93,8 @@ test_single_stale_first_read_is_not_accepted() {
   pass "a single transient stale pane_current_path read is not accepted as the worktree"
 }
 
-# A pane that reports the real worktree from the very first read costs exactly
-# one confirming read - not a whole extra polling cycle on top of it. Counting
-# the pane reads measures the loop itself; wall-clock time would fold in every
-# other cost of a spawn (fetch, trust registration) and drift with the machine.
+# Even accurate telemetry must be unnecessary for allocation; counting reads
+# distinguishes independence from a lucky match without timing assumptions.
 test_already_settled_pane_costs_one_confirm_read() {
   local rec id out status reads
   id=settle-already-settled-z2
@@ -120,15 +111,9 @@ test_already_settled_pane_costs_one_confirm_read() {
   pass "an already-settled pane confirms on the next read, not a whole extra cycle"
 }
 
-# make_primary_case <name> <id> <stale_reads> builds the linked-home shape: the
-# spawning project is itself a LINKED worktree of the repository, and the path
-# the pane transiently reports is that repository's PRIMARY checkout. `treehouse
-# get` reports the repository it is preparing a slot from as its own cwd while
-# it is still fetching and checking out, so the pane reads the primary for the
-# first seconds. The primary is not the spawning project, so a poll that only
-# compares against the project accepts it as the worktree, and the isolation
-# guard then refuses the launch even though treehouse went on to enter a real
-# slot. The settled path is a second linked worktree of the same repository.
+# make_primary_case <name> <id> <stale_reads> builds the linked-home shape:
+# both the spawning project and allocated slot are linked worktrees, while
+# hostile telemetry names their repository's primary checkout.
 make_primary_case() {
   local name=$1 id=$2 stale_reads=$3 case_dir home primary proj wt fakebin countfile
   case_dir="$TMP_ROOT/$name"
@@ -145,9 +130,7 @@ make_primary_case() {
   printf '%s\n' "$case_dir|$home|$proj|$wt|$primary|$fakebin|$countfile|$stale_reads"
 }
 
-# The exact incident: the pane reports the repository primary for the first
-# reads, then settles into the slot treehouse actually created. The primary must
-# never be adopted as the worktree, so the spawn lands on the settled slot.
+# Primary-checkout telemetry must not override a valid linked allocation.
 test_transient_primary_checkout_is_not_accepted() {
   local rec id out status
   id=settle-primary-transient-z3
@@ -165,8 +148,8 @@ test_transient_primary_checkout_is_not_accepted() {
   pass "a transient primary-checkout pane read is not accepted as the worktree"
 }
 
-# A pane that never leaves the primary checkout must still fail at the deadline
-# rather than waiting forever or recording the primary.
+# An authoritative allocation of the primary must refuse before creating an
+# endpoint; unlike misleading telemetry, an unsafe allocation cannot be ignored.
 test_primary_checkout_that_never_settles_fails_at_the_deadline() {
   local rec id out status
   id=settle-primary-stuck-z4
@@ -181,9 +164,8 @@ test_primary_checkout_that_never_settles_fails_at_the_deadline() {
   pass "an allocator returning primary refuses before endpoint creation"
 }
 
-# Repeated inventory readings are not a shell placement proof, even for a
-# sibling copy of the same repository. The actual consumer must agree before
-# any slot claim or base refresh is allowed.
+# Repeated misleading telemetry from a sibling copy is still not allocation
+# authority and must leave that copy untouched.
 test_two_stale_reads_refuse_before_mutation() {
   local rec id out status before
   id=settle-repeated-foreign

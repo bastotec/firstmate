@@ -843,8 +843,9 @@ FM_HOME_SUMMARY_INTERVAL=300      # seconds before a live watcher refreshes stat
 FM_HOME_SUMMARY_TIMEOUT=60        # bound on one home-summary refresh
 FM_HOME_SUMMARY_ERROR_LOG_MAX_BYTES=65536   # cap for state/.home-summary-refresh.log
 FM_HOME_SUMMARY_FAILURE_REPORT=2  # publication failures before session start prints HOME_SUMMARY
-# guard and arming
-FM_GUARD_GRACE=300          # beacon freshness threshold for guard verdicts and arm health checks
+# guard, arming and chat-host watcher recovery
+# Poll-derived default for chat-host recovery and watcher stale-lock checks: max(300, FM_POLL + 60) seconds
+FM_GUARD_GRACE=             # override beacon grace for guard verdicts, arm health checks and chat-host recovery; guard/arm default to 300 seconds
 FM_GUARD_READ_ONLY=0        # internal: keep alarms, suppress repair commands
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the guarded operation WILL still run.'   # banner continuation line
 FM_LOCK_STALE_AFTER=2       # grace seconds for missing or nonnumeric lock-owner PIDs (minimum 2)
@@ -852,7 +853,7 @@ FM_ARM_CONFIRM_TIMEOUT=10   # seconds fm-watch-arm waits to confirm a fresh watc
 FM_ARM_ATTACH_POLL=0.5      # poll interval while attached to an existing healthy watcher
 FM_WATCH_CYCLE_LOG_MAX_BYTES=262144   # cap for the watcher lifecycle ledger
 FM_WATCH_CYCLE_LOG_KEEP_LINES=1000    # rows kept when that ledger is capped
-FM_WATCHER_STALE_GRACE=     # stale-lock threshold; defaults to FM_GUARD_GRACE if set, else max(300, FM_POLL + 60) seconds
+FM_WATCHER_STALE_GRACE=     # stale-lock override; otherwise FM_GUARD_GRACE if set, else the poll-derived default above
 # fleet snapshot and Bearings
 FM_SNAPSHOT_CREW_STATE_TIMEOUT=10      # bound on each local current-state read in bin/fm-fleet-snapshot.sh
 FM_SNAPSHOT_LOCAL_READ_CONCURRENCY=8   # concurrent local task reads

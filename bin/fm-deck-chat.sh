@@ -20,10 +20,9 @@
 #     it was launched into);
 #   - a supervisor child (bin/fm_primary_chat.py supervise) owns the watcher
 #     (bin/fm-watch-arm.sh) and publishes each wake into the steering inbox
-#     through bin/fm-primary-steer.sh. A failed watcher is logged and restarted
-#     with backoff; the host never exits because the watcher died. While
-#     state/.afk exists the away daemon owns the watcher, so the host pauses its
-#     own;
+#     through bin/fm-primary-steer.sh. bin/fm_primary_chat.py's supervise
+#     contract owns failed/stale-child recovery. While state/.afk exists the
+#     away daemon owns the watcher, so the host pauses its own;
 #   - the same child maps deck's events (run_started/steer_received -> busy,
 #     run_finished/run_stopped/run_failed/idle -> idle) to state/primary.busy-state
 #     through bin/fm-busy-event.sh (source deck-wrapper);

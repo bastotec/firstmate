@@ -484,8 +484,8 @@ fm_test_fake_stream_defaults() {
 }
 
 # fm_test_fake_stream_treehouse <dir>
-# Where a `treehouse get` typed into any fake endpoint moves its cwd - the
-# worktree a stream spawn then discovers through the endpoint's cwd.
+# Set the allocation stub's result (fm_test_fake_treehouse above) and retain
+# the fake endpoint's legacy `treehouse get` cwd behavior for direct callers.
 fm_test_fake_stream_treehouse() {
   export FM_FAKE_TREEHOUSE_PATH=$1
   curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \

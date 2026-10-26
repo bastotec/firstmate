@@ -103,9 +103,11 @@ Subcommands:
   supervise --home H --host-pid N --gen G --events-offset N [--effort-headers]
       events -> the role's busy-state (source deck-wrapper); only the supervising
       role (see split mode above) runs the watcher child (bin/fm-watch-arm.sh),
-      whose wakes become steer publications. Failed or stale owned watcher
-      children are replaced without restarting the host; FM_GUARD_GRACE bounds
-      both initial startup and beacon staleness (default 300 seconds).
+      whose wakes become steer publications. Failed children restart with
+      backoff. Once an owned arm has run for its startup grace, a stale or
+      missing beacon replaces only that arm's process group through kill_watch,
+      never a foreign watcher PID read from a lock. Neither path restarts the
+      host. docs/configuration.md owns the FM_GUARD_GRACE settings.
       Watching pauses while state/.afk exists (the away daemon owns it then).
       With --effort-headers, each wake gets the lowered `deck-effort:` header
       bin/fm-effort-policy.sh classify picks, and a lowered turn's tool output

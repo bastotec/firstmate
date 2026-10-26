@@ -2540,10 +2540,8 @@ if [ "$LAUNCH_ENV_ENABLED" = 1 ]; then
   fi
   LAUNCH="$LAUNCH_ENV_PREFIX /bin/sh -c $(shell_quote "$LAUNCH")"
 fi
-# The sampled foreground cwd is discovery, not a promise about the shell that
-# consumes the queued launch. Pin and verify placement in that shell at exec
-# time, after all environment wrappers, so later cwd drift cannot launch Deck
-# in a different copy than the one published in metadata.
+# Pin placement in the consuming shell after all environment wrappers: the
+# endpoint's initial cwd cannot prevent later drift before queued input runs.
 sq_worktree=$(shell_quote "$(real_path_or_raw "$WT")")
 sq_launch_status=$(shell_quote "$STATE_REAL/$ID.status")
 LAUNCH="if cd -- $sq_worktree && [ \"\$(pwd -P)\" = $sq_worktree ] && [ \"\$(git rev-parse --show-toplevel)\" = $sq_worktree ]; then $LAUNCH; else printf '%s\\n' 'failed: worker launch directory does not match its recorded copy' >> $sq_launch_status; false; fi"
