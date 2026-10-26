@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fm_dream.py - the fleet's nightly pass over its own day ("dreaming").
 
-bin/fm-dream.sh is the entry point (run, status, the launchd agent); this file
+bin/fm-dream.sh is the entry point (run, status, resolve, the launchd agent); this file
 owns the steps, the run log and the summary bin/fm_report.py shows.
 
 Modelled on Ziggy's dream (~/Projects/ziggy/dream), with no dependency in
@@ -173,24 +173,30 @@ is recorded and never stops the next:
            Jev scores proposals when configured; without a usable score, keep
            the agent's order and record why. Keep at most MAX_RAISED items.
   file     files the items triage kept in this invocation as queued backlog
-           tasks and hands each to its configured owning mate; it never replays a
-           previous run's proposals. An unreadable raised.jsonl prevents filing,
-           and an item already in its dedupe window is not filed twice.
+           tasks and hands each to its configured owning mate; triage proposals
+           from previous runs are not replayed. An unreadable raised.jsonl prevents
+           filing, and an item already in its dedupe window is not filed twice.
            Code changes from the improve step are filed first, as priority-0
            tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
            or the main home's inbox); charter lines follow the guards above, and
            captain changes and held charter lines follow the captain-card handling
            above, even without measured tasks.
            A code change an earlier night decided but could not file (its latest
-           improve-actions.jsonl row still reads 'not filed', first decided within
-           REFILE_DAYS) is filed again with tonight's, deduplicated the same way,
-           until it is filed or `fm-dream.sh resolve` records what covers it.
-           An add refused because the backlog was locked is tried once more after
-           a short pause. A decided change (or kept triage item) that still is
-           not filed fails the step: its state names the add's own error, and the
-           first mate gets one check: wake naming each change and its error, or,
-           when the wake cannot be queued, the captain one bin/fm-notify.sh notice;
-           the state also says who was told.
+           improve-actions.jsonl row still starts with 'not filed', first decided
+           within REFILE_DAYS, and its home remains included) is retried with
+           tonight's changes under the same deduplication, until filed, already
+           open, or resolved through `fm-dream.sh resolve`.
+           A similar fresh proposal keeps the pending action's original title and
+           retry origin; pending actions are not merged with each other.
+           Legacy rows without filing details fail with a request to resolve.
+           A LOCKED add is retried once after a short pause if the step budget
+           allows another attempt; LOCKED writes nothing, so retry is safe.
+           A decided code change (or kept triage item) that still is not filed
+           fails the step: its state names the add's own error when available,
+           and the first mate gets one check: wake naming each change and error.
+           Only when the wake cannot be queued does the captain get one
+           bin/fm-notify.sh notice; each unfiled state records the alert outcome.
+           tests/fm-dream.test.sh covers filing, retry, resolution and alert failures.
            Command timeouts preserve successful filings and allow remaining triage
            work while the step budget remains. Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
@@ -225,7 +231,10 @@ Files under <home>/state/dream/:
   runs/<date>.json   the run log (every step's status, seconds, details);
                      dry runs use runs/<date>.dry-run.json. A run ended by
                      SIGTERM/SIGHUP is finalized as partial, keeping completed
-                     steps, with the step in flight marked interrupted
+                     steps. The step in flight is marked interrupted unless file
+                     retained unfiled changes, which make it failed. File's
+                     unfiled list keeps each {what, state} without the why/notice
+                     truncation; the fallback notice points here for full details
   latest.json        published by a run without --only or --dry-run, even when
                      interrupted. The summary bin/fm_report.py reads
                      (schema fm-dream.v1):
@@ -266,9 +275,14 @@ Files under <home>/state/dream/:
   charters-<date>.md private charter-edit proposals, when any are kept
   improve-<date>.json  the night's task timelines (private)
   improve.jsonl      one metrics line per published night, for night-over-night change
-  improve-actions.jsonl  one line per action a published night took, for the next report;
-                     a code action keeps its repo, change, fix and evidence so an
-                     unfiled one can be filed again, and resolve appends its outcome
+  improve-actions.jsonl  action outcomes for the next report, appended by track
+                     or, if track did not write them, run finalization (never for
+                     --only or --dry-run). Finalization also records decided code
+                     changes when file did not run, as unfiled with its status,
+                     and uses the file-step alert policy above.
+                     Code rows keep repo, change, fix and evidence for retry;
+                     retry_of preserves the original decision date across nights.
+                     The resolve command below appends an outcome row
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -326,9 +340,13 @@ bin/fm-notify.sh for unfiled-change alerts; FM_DREAM_LOCK_RETRY_PAUSE (seconds).
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
     fm_dream.py status --home H [--json]
     fm_dream.py resolve --home H --what TEXT --state TEXT [--date D]
-        records what became of an unfiled code change ('covered by <link>' or
-        'filed as <key>') as a new improve-actions.jsonl row naming the night
-        it resolves, so the file step stops retrying it.
+        selects one pending code action by exact title (case-insensitive), falling
+        back to a title substring; no match or multiple matches are refused.
+        --date filters by the latest row's date or its original retry_of date.
+        --state accepts 'covered by <link>' or 'filed as <key>' and appends an
+        improve-actions.jsonl row dated today with resolves naming the original
+        decision date, so the file step stops retrying it. A running dream holds
+        the same lock and prevents resolution until it finishes.
 """
 import argparse
 from contextlib import contextmanager, ExitStack
@@ -2442,10 +2460,8 @@ def unfiled(ctx, entry):
 
 
 def dropped_actions(ctx):
-    """Code changes an earlier night decided but could not file, as changes to
-    file again: each action's latest row in improve-actions.jsonl still reads
-    'not filed', it was first decided within REFILE_DAYS, and its home is still
-    included. None when the log cannot be read."""
+    """Recover candidates under the header's file-step retry policy.
+    Return None when the action log cannot be read."""
     try:
         text = (ctx.dir / 'improve-actions.jsonl').read_text(encoding='utf-8')
     except FileNotFoundError:
@@ -3250,10 +3266,7 @@ def cmd_status(args):
 
 
 def cmd_resolve(args):
-    """Record what became of a decided code change a night could not file:
-    'covered by <link>' or 'filed as <key>'. It appends one outcome row
-    to improve-actions.jsonl, dated today and naming the night it
-    resolves, so the file step stops retrying it and the next report shows it."""
+    """Append a resolution under the command contract in this file's header."""
     state = args.state.strip()
     if not re.fullmatch(r'(?:covered by|filed as)\s+\S.*', state):
         print("fm-dream: --state must be 'covered by <link>' or 'filed as <key>'", file=sys.stderr)
