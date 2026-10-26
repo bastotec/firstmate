@@ -967,6 +967,9 @@ class Scan:
             closing = None
             if not gone and key not in open_keys and (not r.get("up") or r.get("dropped")):
                 closing = closures[key] if key in closures else self.closing_note(mate, key)
+            if closing is None and r.get("dropped") and not gone and key not in open_keys:
+                relays[ident] = r
+                continue
             if closing is not None and closing[0] == "captain-held":
                 continue
             if closing is not None and not WATCHDOG_RESOLVED_RE.match(closing[1]):

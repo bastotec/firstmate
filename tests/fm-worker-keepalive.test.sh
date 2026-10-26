@@ -1585,6 +1585,64 @@ test_relay_closed_without_a_fix_goes_up_at_once() {
   pass "a relay closed without a fix reaches the captain at once and resolves with the watchdog"
 }
 
+test_missing_closing_evidence_retains_only_dropped_relays() {
+  local dir key record channel mode phase before
+  key="keepalive-dave-tools-w1-$T0"
+  for mode in truncate replace missing; do
+    for phase in dropped raised; do
+      dir=$(make_parent "missing-closure-$mode-$phase" dave-tools)
+      record="$dir/home/state/keepalive/asks/dave-tools.json"
+      channel="$dir/home/state/dave-tools.status"
+      ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen"
+      scan "$dir" "$T0"
+      if [ "$phase" = dropped ]; then
+        ask "$dir" dave-tools "resolved [key=$key]: answered: false positive"
+        scan "$dir" $((T0 + 60))
+        jq -e '.relays | length == 1 and all(.[]; .up and .dropped)' "$record" >/dev/null \
+          || fail "setup: the dismissed relay did not escalate"
+      else
+        scan "$dir" $((T0 + 1800))
+        jq -e '.relays | length == 1 and all(.[]; .up and (.dropped | not))' "$record" >/dev/null \
+          || fail "setup: the open relay did not escalate normally"
+      fi
+      before=$(jq -cS '.relays' "$record")
+      case "$mode" in
+        truncate) : > "$channel" ;;
+        replace)
+          mv "$channel" "$dir/old-channel"
+          ask "$dir" dave-tools 'working: supervising workers' ;;
+        missing) rm "$channel" ;;
+      esac
+      scan "$dir" $((T0 + 1900))
+      scan "$dir" $((T0 + 2000))
+      if [ "$phase" = raised ]; then
+        assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "missing evidence changed an ordinary raised relay's recovery"
+        jq -e '.relays == {}' "$record" >/dev/null || fail "an ordinary raised relay stayed open"
+        continue
+      fi
+      assert_equals "$before" "$(jq -cS '.relays' "$record")" "a $mode channel changed the dropped record without recovery evidence"
+      assert_equals 1 "$(notice_count "$dir" .)" "a $mode channel emitted a false recovery or repeated escalation"
+      case "$mode" in
+        truncate) ask "$dir" dave-tools "resolved [key=$key]: worker w1 is moving again" ;;
+        replace) ask "$dir" dave-tools "blocked [key=$key]: worker w1 is still frozen" ;;
+        missing) rm "$dir/home/state/dave-tools.meta" ;;
+      esac
+      scan "$dir" $((T0 + 2100))
+      scan "$dir" $((T0 + 2200))
+      assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "a retained dropped relay did not resolve exactly once on $mode recovery"
+      if [ "$mode" = missing ]; then
+        assert_absent "$record" "a departed mate retained its dropped relay"
+      elif [ "$mode" = replace ]; then
+        jq -e '.relays | length == 1 and all(.[]; (.up | not) and (.dropped | not))' "$record" >/dev/null \
+          || fail "a reopened key retained its dropped episode"
+      else
+        jq -e '.relays == {}' "$record" >/dev/null || fail "a watchdog-resolved dropped relay stayed open"
+      fi
+    done
+  done
+  pass "missing closing evidence retains dropped relays without changing ordinary raised recovery"
+}
+
 test_relays_opened_and_closed_between_scans_are_not_lost() {
   local dir key record form
   for form in verb note-head; do
@@ -1899,6 +1957,7 @@ test_shared_hold_label_inputs
 test_done_in_a_freeze_with_an_open_pr_is_not_healthy
 test_undeliverable_parent_escalation_falls_through_to_the_captain
 test_relay_closed_without_a_fix_goes_up_at_once
+test_missing_closing_evidence_retains_only_dropped_relays
 test_relays_opened_and_closed_between_scans_are_not_lost
 test_relay_opened_during_the_fold_is_read_next_scan
 test_relay_answer_straddling_the_snapshot_is_not_lost
