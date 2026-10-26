@@ -11,18 +11,24 @@ watches its own. Overlapping scans of one home exit zero quietly under a
 non-blocking lock at state/keepalive/.lock.
 
 Each scan reads one condition per worker, first match wins:
-  approval     an approval exclusion record in force for
-               FM_KEEPALIVE_APPROVAL_SECS (3600) from its declaration (the
-               record object's mtime), regardless of the worker's last status
-               or decision key, even if the record is unreadable. While fresh,
-               only an exact nonempty decision key on a blocked:, failed:,
-               needs-decision: or paused: line takes precedence, parsed by
-               bin/fm-classify-lib.sh. This condition retains PR clocks without
-               PR observation. The mate is woken at the bound to release the
-               wait, fix what it waits on, retire the worker, or put a truly
-               captain-owned decision to him in one line; the usual escalation
-               follows. No wake releases the automatic-action exclusion:
-               bin/fm-approval-wait.sh owns its binding and explicit release.
+  approval     an intact explicit untimed prohibition validated by
+               bin/fm-approval-wait.sh suppresses automatic action demands and
+               time escalation for its bound decision, including a ready task
+               or lost endpoint. Independent questions are found through
+               bin/fm-classify-lib.sh's open-decision fold, even after later
+               milestones, with a fallback for the last blocked:, failed:,
+               needs-decision: or paused: line on another key. They use blocked
+               or mate-decidable held timing, ahead of PR-clock exemptions;
+               their wakes and escalations demand only an answer, leaving the
+               prohibition binding. With no independent question, a pre-existing
+               escalation is reconciled as false, not as an approval release.
+               bin/fm-worker-keepalive.sh's header owns immediate acknowledgment.
+               Invalid/unreadable/stale guard objects still
+               exclude automatic PR actions but wake the mate after
+               FM_KEEPALIVE_APPROVAL_SECS (3600) from the object's mtime for
+               reconciliation; the usual escalation follows. No wake or
+               acknowledgment releases the automatic-action exclusion.
+               bin/fm-approval-wait.sh owns validation and explicit release.
   undelivered  the worker's backlog item is done (accepted, read once per
                scan through bin/fm-tasks-axi.sh list --state done), or its last
                status line is done: with no recorded pr=, and the worker is
@@ -122,7 +128,8 @@ nanosecond mtime or decision key changes, including release and redeclaration
 between scans. Approval wake and parent-channel keys append -<approval_id>
 to their epoch so replacements have distinct identities.
 The wake's text is a concrete instruction - decide and resume it, relaunch it with
-`bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait".
+`bin/fm-spawn.sh --relaunch <id>`, replace it, or close it - never "wait", except
+for the approval-guard reconciliation and answer-only cases described above.
 A steer, an acknowledgment or a relay upward is not a fix, so the inbox is not
 read. A worker still stuck FM_KEEPALIVE_FOLLOW_SECS (600) after
 the wake escalates one plain line to the mate's parent, telling it to act:
@@ -274,7 +281,8 @@ FROZEN_RE = re.compile(
     r"no (edits|merge))\b", re.I)
 # The owning watchdog's own resolution notes (Scan.resolve, asks, relays, autoland).
 WATCHDOG_RESOLVED_RE = re.compile(
-    r"^(worker \S+ (is moving again|left the fleet|is no longer [a-z-]+|moved to another PR)"
+    r"^(worker \S+ (is moving again|left the fleet|is no longer [a-z-]+|moved to another PR"
+    r"|remains under an intact explicit prohibition; the earlier escalation was false, not an approval release$)"
     r"|second mate \S+('s questions are answered|'s stuck work is moving again| left the fleet)"
     r"|auto-land is armed again)")
 REPORT_RE = re.compile(
@@ -521,6 +529,18 @@ def decision_key(line: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def unrelated_decision(status: Path, key: str):
+    r = bash('. "$1/fm-classify-lib.sh"; status_open_decisions "$2"', str(SCRIPT_DIR), str(status))
+    for line in r.stdout.splitlines():
+        other, verb, text = line.split("\t", 2)
+        if other != key:
+            return verb, text
+    verb, text = last_status(status)
+    if verb in ("blocked", "failed", "needs-decision", "paused") and decision_key(last_line(status)) != key:
+        return verb, text
+    return None
+
+
 def minutes(secs: int) -> int:
     return max(0, secs) // 60
 
@@ -536,10 +556,9 @@ def instruction(wid: str, cond: str, age: int, verb: str, text: str, waiting: st
         return ("worker %s has had no live agent for %d minutes: %s now; never leave it waiting"
                 % (wid, minutes(age), relaunch))
     if cond == "approval":
-        return ("worker %s has waited %d minutes on your approval wait (\"%s\"): decide it now - release it "
-                "(bin/fm-approval-wait.sh release) and send it back to the deliverable, fix what it is waiting on "
-                "(a refused PR step is yours to fix: sanitize and retry, or open the PR by hand), or retire it; if the "
-                "decision is truly the captain's, raise it in one plain line - an approval wait is never an endpoint"
+        return ("worker %s has had an invalid or stale approval guard for %d minutes (\"%s\"): "
+                "reconcile its approval guard against the parent's preserved instruction and current worker binding; "
+                "automatic actions remain excluded. Do not infer a release, retry or retirement from this wake"
                 % (wid, minutes(age), quote))
     if cond == "unmerged":
         return ("worker %s's PR %s has been green and mergeable for %d minutes and is not merged: merge it now with "
@@ -580,7 +599,7 @@ def unstick(cond: str) -> str:
             "blocked": "an answer to its blocker or a relaunch",
             "undelivered": "delivering its finished result and cleaning it up",
             "frozen": "landing or closing its open PR (a freeze is not an endpoint)",
-            "approval": "a decision on its approval wait (release, fix, retire, or one captain line)",
+            "approval": "reconciliation of its invalid or stale approval guard without inferred release",
             "unmerged": "merging its green PR",
             "ci-stuck": "landing or closing its PR",
             "held": "releasing its hold so it resumes the deliverable",
@@ -651,13 +670,25 @@ class Scan:
         self.wait_bound.discard(wid)
         key = self.approval_key(wid)
         if key is not None:
+            valid = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_validate "$2" "$3"',
+                         str(SCRIPT_DIR), str(self.state), wid).returncode == 0
+            if valid:
+                self.wait_bound.add(wid)
+                unrelated = unrelated_decision(status, key)
+                if not unrelated:
+                    return None, NOW, verb, text
+                self.pr_condition(m, rec)
+                verb, text = unrelated
+                opened = min(NOW, mtime(status) or NOW)
+                cond = ("held" if mate_decidable(verb, text) else None) if verb == "paused" else "blocked"
+                return cond, opened, verb, text
             try:
                 stamp = (self.state / ("%s.approval-wait" % wid)).lstat().st_mtime_ns
             except OSError:
                 stamp = NOW * 1_000_000_000
             declared = min(NOW, stamp // 1_000_000_000)
-            if NOW - declared >= APPROVAL or (verb in ("blocked", "failed", "needs-decision", "paused")
-                                              and key and decision_key(last_line(status)) == key):
+            if not valid and (NOW - declared >= APPROVAL or (verb in ("blocked", "failed", "needs-decision", "paused")
+                                                            and key and decision_key(last_line(status)) == key)):
                 self.wait_bound.add(wid)
                 self._approval_ids[wid] = hashlib.sha256(("%d:%s" % (stamp, key)).encode()).hexdigest()[:16]
                 return "approval", declared, verb, text
@@ -677,7 +708,6 @@ class Scan:
         if verb in ("blocked", "failed"):
             return "blocked", opened, verb, text
         if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
-            # waiting on CI or a merge has its own bounds above; it is not a stall
             return None, opened, verb or "working", text
         if bash('. "$1/fm-external-wait.sh"; keepalive_now=$4; fm_external_wait_now_epoch() { printf "%s\\n" "$keepalive_now"; }; '
                 'fm_external_wait_active "$2" "$3"', str(SCRIPT_DIR), wid, str(self.state), str(NOW)).returncode == 0:
@@ -745,11 +775,14 @@ class Scan:
                 rec.get("cond") not in STALL_CONDITIONS or fp != rec.get("episode_fp")):
             cond = None
         if cond in (None, "done"):
-            if rec.get("cond") and not self.resolve(wid, rec, "is moving again"):
+            why = "remains under an intact explicit prohibition; the earlier escalation was false, not an approval release" if wid in self.wait_bound else "is moving again"
+            if rec.get("cond") and not self.resolve(wid, rec, why):
                 save(rec_path, rec)
                 return
-            rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "track": rec.get("track", {})}
-            save(rec_path, rec)
+            healthy = {"fp": rec["fp"], "fp_since": rec["fp_since"], "track": rec.get("track", {})}
+            if "acknowledged_prohibition" in rec:
+                healthy["acknowledged_prohibition"] = rec["acknowledged_prohibition"]
+            save(rec_path, healthy)
             return
         if rec.get("cond") in STALL_CONDITIONS and cond in STALL_CONDITIONS:
             rec["cond"] = cond
@@ -761,6 +794,7 @@ class Scan:
                    "woke": 0, "nudges": 0, "escalated": False, "track": rec.get("track", {})}
             if cond == "approval":
                 rec["approval_id"] = self._approval_ids[wid]
+        answer_only = wid in self.wait_bound and cond in ("blocked", "held")
         bound = {"dead": DEAD, "no-progress": NO_PROGRESS, "undelivered": DONE, "frozen": DONE, "unmerged": 0, "ci-stuck": 0,
                  "approval": APPROVAL}.get(cond, STUCK)
         age = NOW - rec["since"]
@@ -777,6 +811,10 @@ class Scan:
                            "I could not unstick it" if self.primary
                            else "its mate did not fix it within %d minutes of the keep-alive wake" % minutes(FOLLOW),
                            unstick(cond)))
+                if answer_only:
+                    line = ("worker %s has an unanswered independent question since %s (\"%s\"): "
+                            "answer only that question now; its explicit prohibition remains binding and unchanged"
+                            % (wid, timestamp(rec["first"]), text[:160]))
                 if self.report(wid, rec, "blocked", line):
                     rec["escalated"] = True
                     if self.primary:
@@ -787,7 +825,11 @@ class Scan:
         reminder = (". A steer, acknowledgment or relay is not a fix: if it is still stuck, %s is told in %d minutes"
                     % ("the captain" if self.primary else "your parent mate", minutes(self.escalate_after)))
         episode = str(rec["since"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
-        if self.wake("keepalive:%s:%s:%s" % (wid, cond, episode), instruction(wid, cond, age, verb, text, waiting) + reminder):
+        prompt = (("worker %s has had an unanswered independent question for %d minutes (\"%s\"): "
+                   "answer only that question now; its explicit prohibition remains binding and unchanged"
+                   % (wid, minutes(age), text[:160])) if answer_only
+                  else instruction(wid, cond, age, verb, text, waiting))
+        if self.wake("keepalive:%s:%s:%s" % (wid, cond, episode), prompt + reminder):
             rec.update(woke=NOW, nudges=rec["nudges"] + 1)
             rec.setdefault("first", rec["since"])
         save(rec_path, rec)
@@ -1077,8 +1119,41 @@ class Scan:
                 rec_path.unlink(missing_ok=True)
 
 
+def acknowledge_prohibition(h: Path, state: Path, argv: list[str]) -> int:
+    """Reconcile only a bound legacy approval episode, never the approval itself."""
+    if len(argv) != 5 or argv[1] != "--episode" or argv[3] != "--instruction-sha256":
+        return 2
+    wid, _, episode, _, digest = argv
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", wid):
+        return 2
+    scan = Scan(h, state)
+    key = scan.approval_key(wid)
+    guard = state / (wid + ".approval-wait")
+    if key is None or bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_validate "$2" "$3"',
+                           str(SCRIPT_DIR), str(state), wid).returncode != 0:
+        return 1
+    binding = load(guard, {})
+    if binding.get("instruction_sha256") != digest:
+        return 1
+    if unrelated_decision(state / (wid + ".status"), key):
+        return 1
+    rec_path = scan.dir / (wid + ".json")
+    rec = load(rec_path, {})
+    identity = hashlib.sha256(("%d:%s" % (guard.lstat().st_mtime_ns, key)).encode()).hexdigest()[:16]
+    if rec.get("cond") is None and rec.get("acknowledged_prohibition") == episode and episode.endswith("-" + identity):
+        return 0
+    if (rec.get("cond") != "approval" or rec.get("approval_id") != identity
+            or episode != "%s-%s" % (rec.get("since"), identity)):
+        return 1
+    if not scan.resolve(wid, rec, "remains under an intact explicit prohibition; the earlier escalation was false, not an approval release"):
+        return 1
+    save(rec_path, {"fp": rec.get("fp"), "fp_since": rec.get("fp_since", NOW),
+                    "track": rec.get("track", {}), "acknowledged_prohibition": episode})
+    return 0
+
+
 def main(argv) -> int:
-    if argv[:1] == ["scan"]:
+    if argv[:1] in (["scan"], ["ack-prohibition"]):
         h = home()
         state = Path(os.environ.get("FM_STATE_OVERRIDE") or h / "state")
         if not state.is_dir():
@@ -1090,7 +1165,9 @@ def main(argv) -> int:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                return 0
+                return 1 if argv[0] == "ack-prohibition" else 0
+            if argv[0] == "ack-prohibition":
+                return acknowledge_prohibition(h, state, argv[1:])
             Scan(h, state).scan()
         return 0
     print(__doc__, file=sys.stderr)

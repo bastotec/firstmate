@@ -40,6 +40,31 @@ fm_approval_wait_admit() {  # <state-dir> <task>
   [ ! -e "$1/$2.approval-wait" ] && [ ! -L "$1/$2.approval-wait" ]
 }
 
+# Read-only validity check for honoring an untimed prohibition, distinct from
+# admission: invalid objects still refuse automatic actions through admit.
+# The metadata binding ignores trailing newlines, exactly as declare does.
+fm_approval_wait_validate() {  # <state-dir> <task>
+  local record="$1/$2.approval-wait" home instruction expected hash
+  [ -n "${FM_HOME:-}" ] || return 1
+  home=$(cd "$FM_HOME" && pwd -P) || return 1
+  [ -f "$record" ] && [ -r "$record" ] && [ ! -L "$record" ] \
+    && [ -f "$1/$2.meta" ] && [ ! -L "$1/$2.meta" ] || return 1
+  expected=$(cat "$1/$2.meta") || return 1
+  expected=$(printf '%s' "$expected" | shasum -a 256) || return 1
+  jq -e --arg task "$2" --arg home "$home" --arg meta "${expected%% *}" '
+    .schema=="fm-approval-wait.v1" and .task==$task and .home==$home
+    and .metadata_sha256==$meta
+    and (.decision_key | type=="string" and test("^[A-Za-z0-9._-]+$"))
+    and (.instruction_sha256 | type=="string" and test("^[a-f0-9]{64}$"))
+    and (.declared | type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
+    and (.instruction_file | type=="string" and startswith("/"))
+  ' "$record" >/dev/null 2>&1 || return 1
+  instruction=$(jq -r .instruction_file "$record") || return 1
+  [ -f "$instruction" ] && [ -r "$instruction" ] && [ -s "$instruction" ] && [ ! -L "$instruction" ] || return 1
+  hash=$(shasum -a 256 "$instruction") || return 1
+  jq -e --arg hash "${hash%% *}" '.instruction_sha256==$hash' "$record" >/dev/null 2>&1
+}
+
 fm_approval_wait_main() {
   local cmd=${1:-} id=${2:-} expected='' instruction='' digest='' release='' key='' open=''
   local state record lock home hash tmp archive stamp
