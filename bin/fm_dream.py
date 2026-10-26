@@ -1463,6 +1463,8 @@ def record_actions(ctx):
         return
     life = ctx.facts.get('improve')
     tonight = life['tonight'] if life else ctx.facts.get('charter_card') or []
+    if life and any(c['kind'] == 'code' for c in life['changes']) and not any(a['kind'] == 'code' for a in tonight):
+        return
     with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
         for a in tonight:
             fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
@@ -2272,9 +2274,11 @@ def planned_code(ctx):
     tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     code = [dict(c) for c in (life or {}).get('changes') or [] if c['kind'] == 'code']
+    proposals = list(code)
     for pending in ctx.facts.get('dropped_actions') or []:
-        fresh = next((c for c in code if similar(pending['title'], c['title'])), None)
+        fresh = next((c for c in proposals if similar(pending['title'], c['title'])), None)
         if fresh is not None:
+            proposals.remove(fresh)
             fresh['title'] = pending['title']
             fresh['retry_of'] = min(fresh.get('retry_of') or pending['retry_of'], pending['retry_of'])
         else:
@@ -3131,6 +3135,24 @@ def cmd_run(args):
         """The run record's final state, written the same way for a completed and
         an interrupted run: latest.json included, so a terminated night still
         leaves the report a summary instead of the previous night's."""
+        life = ctx.facts.get('improve')
+        if not ctx.dry_run and not args.only and life and any(c['kind'] == 'code' for c in life['changes']) \
+                and not any(a['kind'] == 'code' for a in life['tonight']):
+            step = run['steps'].setdefault('file', {})
+            state = 'not filed: the file step did not run (%s)' % (step.get('status') or 'missing')
+            lost = []
+            for _, entry in planned_code(ctx):
+                entry['state'] = state
+                unfiled(ctx, entry)
+                lost.append(entry)
+            deadline = ctx.deadline
+            ctx.deadline = time.time() + 12
+            try:
+                told = alert_unfiled(ctx, lost)
+            finally:
+                ctx.deadline = deadline
+            step.update(status='failed', why='%s; %s' % (state, told),
+                        unfiled=[{'what': a['what'], 'state': a['state']} for a in lost])
         record_actions(ctx)
         run['finished'] = iso(time.time())
         run['skills'] = ctx.facts.get('skills', [])

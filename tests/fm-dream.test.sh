@@ -1582,6 +1582,23 @@ assert dream.main(['resolve', '--home', str(ctx.home), '--what', 'cache', '--sta
 assert len(actions(ctx)) == 5 and actions(ctx)[-1]['what'] == titles[1], actions(ctx)
 assert [c['title'] for c in dream.dropped_actions(night('2026-10-22'))] == [titles[2]]
 
+root = base_root / 'pending-identities'
+pending = [dict(code(title), change='change %d' % i, fix='fix %d' % i, evidence='evidence %d' % i)
+           for i, title in enumerate(('Retry lifecycle reads', 'Cache lifecycle reads'))]
+ctx = night('2026-10-21', failing_adds=99, changes=pending)
+dream.step_file(ctx)
+dream.step_track(ctx)
+for fresh in ([], [code('Retry lifecycle reads on gateways')]):
+    ctx = night('2026-10-22', failing_adds=99, changes=fresh)
+    assert dream.step_file(ctx)['status'] == 'failed'
+    entries = ctx.facts['improve']['tonight']
+    assert [a['what'] for a in entries] == [c['title'] for c in pending], entries
+    assert all(a['retry_of'] == '2026-10-21' for a in entries), entries
+    for original, entry in zip(pending, entries):
+        expected = fresh[0] if fresh and original == pending[0] else original
+        assert all(entry[k] == expected[k] for k in ('repo', 'change', 'fix', 'evidence')), entry
+    assert ctx.adds == 4, ctx.calls
+
 root = base_root / 'retry-origin'
 ctx = night('2026-10-21', failing_adds=99, changes=[code('Retry lifecycle reads')])
 dream.step_file(ctx)
@@ -1633,15 +1650,62 @@ for broken in (set(), {'fake-wake'}):
         assert len(text) <= 1000 and str(len(titles)) in text and titles[0] in text, text
         assert 'state/dream/runs/%s.json' % ctx.day in text, text
 
-def run_night(ctx, skip_track=False, only=None):
+def run_night(ctx, skip_track=False, only=None, file_mode=None):
     old_ctx, old_steps, old_room = dream.Ctx, dream.STEPS, dream.room_for
+    def room(name):
+        if name == 'file':
+            if file_mode == 'interrupted':
+                signal.raise_signal(signal.SIGTERM)
+            if file_mode == 'skipped':
+                return 'fixture low memory'
+        return 'fixture low memory' if skip_track and name == 'track' else None
     try:
         dream.Ctx = lambda *args: ctx
-        dream.STEPS = ['file', 'track']
-        dream.room_for = lambda name: 'fixture low memory' if skip_track and name == 'track' else None
+        dream.STEPS = ['track'] if file_mode == 'missing' else ['file', 'track']
+        dream.room_for = room
         return dream.cmd_run(dream.argparse.Namespace(home=str(ctx.home), dry_run=ctx.dry_run, only=only))
     finally:
         dream.Ctx, dream.STEPS, dream.room_for = old_ctx, old_steps, old_room
+
+for file_mode in ('skipped', 'interrupted', 'missing'):
+    for tracking in ('normal', 'skipped', 'instructions'):
+        root = base_root / ('unstarted-file-' + file_mode + '-' + tracking)
+        changes = [code('Preserve a skipped filing decision'), code('Bound gateway retries')]
+        if tracking == 'instructions':
+            changes.append({'kind': 'instructions', 'change': 'Keep task context', 'target': 'held_or_blocked',
+                            'before': 8})
+        ctx = night('2026-10-22', changes=changes)
+        ctx.facts['improve']['measurement_error'] = 'fixture measurements unavailable'
+        assert run_night(ctx, skip_track=tracking == 'skipped', file_mode=file_mode) == int(file_mode == 'interrupted')
+        rows = actions(ctx)
+        code_rows = [a for a in rows if a['kind'] == 'code']
+        assert len(code_rows) == 2 and len(rows) == 2 + int(tracking == 'instructions' and file_mode != 'interrupted'), rows
+        for change, entry in zip(changes, code_rows):
+            assert entry['what'] == change['title'] and entry['key'] is None, entry
+            assert entry['mate'] == 'firstmate-runtime' and entry['date'] == ctx.day, entry
+            assert entry['state'] == 'not filed: the file step did not run (%s); first mate woken' % file_mode, entry
+            assert all(entry[k] == change[k] for k in ('repo', 'change', 'fix', 'evidence')), entry
+        wake = [c for c in ctx.calls if c[0] == 'fake-wake']
+        assert len(wake) == 1 and all(a['what'] in wake[0][2] for a in code_rows), ctx.calls
+        assert ctx.adds == 0 and not any(c[0] == 'fake-notify' for c in ctx.calls), ctx.calls
+        result = json.loads((ctx.dir / 'runs' / (ctx.day + '.json')).read_text())['steps']['file']
+        assert result['status'] == 'failed' and result['unfiled'] == [
+            {'what': a['what'], 'state': a['state']} for a in code_rows], result
+        assert dream.latest(ctx.home)['steps']['file']['status'] == 'failed'
+        ctx = night('2026-10-23')
+        assert [c['title'] for c in dream.dropped_actions(ctx)] == [a['what'] for a in code_rows]
+        assert dream.step_file(ctx)['status'] == 'done'
+        dream.step_track(ctx)
+        assert dream.dropped_actions(night('2026-10-24')) == []
+
+for mode in ('dry-run', 'only-track'):
+    root = base_root / ('unstarted-file-' + mode)
+    ctx = night('2026-10-22', changes=[code('Leave diagnostic runs read-only')])
+    ctx.facts['improve']['measurement_error'] = 'fixture measurements unavailable'
+    ctx.dry_run = mode == 'dry-run'
+    assert run_night(ctx, only=['track'] if mode == 'only-track' else None, file_mode='skipped') == 0
+    assert not (ctx.dir / 'improve-actions.jsonl').exists(), mode
+    assert not ctx.calls and not ctx.facts['improve']['tonight'], (mode, ctx.calls, ctx.facts)
 
 for mode in ('track', 'skip-track', 'terminate-file', 'terminate-track', 'dry-run', 'only-file'):
     root = base_root / ('persist-' + mode)
