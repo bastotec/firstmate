@@ -286,6 +286,7 @@ test_lock_wait_retries_released_publication_contention() {
   state="$dir/state"
   rc=0
   . "$ROOT/bin/fm-timeout-lib.sh"
+  # shellcheck disable=SC2016 # Each nested child shell expands its own variables.
   HOME="$dir" FM_STATE_OVERRIDE="$state" fm_run_timed 10 bash -c '
     . "$1"
     lib=$1
