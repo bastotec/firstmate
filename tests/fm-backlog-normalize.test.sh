@@ -125,6 +125,7 @@ test_held_backlog_lock_skips_without_writing() {
   write_misplaced "$file"
   before=$(cksum < "$file")
   printf '%s\n' "$$:held-by-tasks-axi" > "$file.lock"
+  age_lock "$file.lock"
   out=$("$NORMALIZE" "$file" 2>&1) || fail "a held backlog lock was an error: $out"
   assert_equals "" "$out" "a held backlog lock was not skipped quietly"
   assert_equals "$before" "$(cksum < "$file")" "normalization wrote through a held backlog lock"
@@ -136,34 +137,53 @@ test_held_backlog_lock_skips_without_writing() {
   pass "a held tasks-axi backlog lock skips repair quietly until a later run"
 }
 
+age_lock() {
+  python3 - "$1" <<'AGE' || fail "could not age the lock"
+import os, sys, time
+os.utime(sys.argv[1], (time.time() - 120, time.time() - 120))
+AGE
+}
+
 test_dead_writer_lock_is_reclaimed() {
-  local dir file dead out
+  local dir file dead out before token
   dir="$TMP_ROOT/dead-lock"
   mkdir -p "$dir"
   file="$dir/backlog.md"
   write_misplaced "$file"
-  # a writer killed while holding the lock: its pid no longer exists
+  before=$(cksum < "$file")
   sh -c 'exit 0' &
   dead=$!
   wait "$dead"
-  printf '%s\n' "$dead:1792917802:24048:31608" > "$file.lock"
-  out=$("$NORMALIZE" --quiet "$file" 2>&1) || fail "a dead writer's lock was an error: $out"
-  assert_equals Done "$(section_of "$file" stale-call)" "a dead writer's lock still blocked the repair"
+  token="$dead:1792917802:24048:31608"
+  printf '%s\n' "$token" > "$file.lock"
+  out=$("$NORMALIZE" --quiet "$file" 2>&1) || fail "a young dead writer's lock was an error: $out"
+  assert_equals "" "$out" "a young dead writer's lock was not skipped quietly"
+  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through a young dead writer's lock"
+  assert_equals "$token" "$(cat "$file.lock")" "a dead writer's lock younger than 30 seconds was removed"
+  age_lock "$file.lock"
+  "$NORMALIZE" --quiet "$file" || fail "an old dead writer's lock was an error"
+  assert_equals Done "$(section_of "$file" stale-call)" "an old dead writer's lock still blocked the repair"
   [ ! -e "$file.lock" ] || fail "the reclaimed lock was left behind"
+  write_misplaced "$file"
   printf '%s\n' "$dead:tasks-axi-nonce:1792917802000:1" > "$file.lock"
+  age_lock "$file.lock"
   "$NORMALIZE" --quiet "$file" || fail "a dead tasks-axi lock was an error"
+  assert_equals Done "$(section_of "$file" stale-call)" "an old dead tasks-axi lock still blocked the repair"
   [ ! -e "$file.lock" ] || fail "a dead tasks-axi writer's lock was not reclaimed"
-  [ ! -d "$file.lock.reclaim" ] || fail "the owned reclaim mutex was left behind"
+  write_misplaced "$file"
+  before=$(cksum < "$file")
   printf '%s\n' "not-a-pid-token" > "$file.lock"
+  age_lock "$file.lock"
   "$NORMALIZE" --quiet "$file" || fail "an unparsable lock was an error"
   assert_equals "not-a-pid-token" "$(cat "$file.lock")" "a lock without a writer pid was removed"
+  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through an unparsable lock"
   rm -f "$file.lock"
-  pass "a lock left by a writer that no longer exists is reclaimed; live or unparsable locks are kept"
+  pass "only dead writer locks at least 30 seconds old are reclaimed; unparsable locks stay"
 }
 
-test_abandoned_reclaim_mutex_is_preserved() {
-  local dir file dead before out token
-  dir="$TMP_ROOT/abandoned-reclaim"
+test_nonregular_lock_is_preserved() {
+  local dir file dead token before out
+  dir="$TMP_ROOT/nonregular-lock"
   mkdir -p "$dir"
   file="$dir/backlog.md"
   write_misplaced "$file"
@@ -172,119 +192,20 @@ test_abandoned_reclaim_mutex_is_preserved() {
   dead=$!
   wait "$dead"
   token="$dead:tasks-axi-nonce:1792917802000:1"
-  printf '%s\n' "$token" > "$file.lock"
-  mkdir "$file.lock.reclaim"
-  python3 - "$file.lock.reclaim" <<'PY' || fail "could not age the abandoned reclaim mutex"
-import os, sys, time
-os.utime(sys.argv[1], (time.time() - 120, time.time() - 120))
-PY
-  out=$("$NORMALIZE" "$file" 2>&1) || fail "an abandoned reclaim mutex was an error: $out"
-  assert_equals "" "$out" "an abandoned reclaim mutex was not skipped quietly"
-  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through an abandoned reclaim mutex"
-  assert_equals "$token" "$(cat "$file.lock")" "a stale lock was reclaimed through another owner's mutex"
-  [ -d "$file.lock.reclaim" ] || fail "another owner's reclaim mutex was removed"
-  rmdir "$file.lock.reclaim"
-  "$NORMALIZE" --quiet "$file" || fail "repair after manual mutex recovery failed"
-  assert_equals Done "$(section_of "$file" stale-call)" "manual mutex recovery did not unblock repair"
-  [ ! -e "$file.lock" ] || fail "the reclaimed lock was left behind"
-  [ ! -d "$file.lock.reclaim" ] || fail "the owned reclaim mutex was left behind"
-  pass "an abandoned reclaim mutex is preserved until manual recovery"
-}
-
-test_competing_reclaimers_preserve_the_live_replacement() {
-  local dir
-  dir="$TMP_ROOT/competing-reclaimers"
-  mkdir -p "$dir/bin"
-  write_misplaced "$dir/backlog.md"
-  python3 - "$dir" "$NORMALIZE" <<'PY' || fail "competing reclaimers removed a live replacement lock"
-import os, pathlib, shutil, subprocess, sys, time
-root = pathlib.Path(sys.argv[1])
-lock = root / 'backlog.md.lock'
-dead = subprocess.Popen(['sh', '-c', 'exit 0'])
-dead.wait()
-lock.write_text('%d:stale\n' % dead.pid)
-real = {name: shutil.which(name) for name in ('cat', 'mkdir', 'cksum')}
-shim = '''#!{python}
-import os, pathlib, subprocess, sys, time
-root = pathlib.Path(os.environ['RECLAIM_TEST_ROOT'])
-name = pathlib.Path(sys.argv[0]).name
-who = os.environ['RECLAIM_TEST_WRITER']
-real = {real!r}[name]
-def pause(marker):
-    (root / marker).touch()
-    until = time.monotonic() + 30
-    while not (root / ('release-' + marker)).exists():
-        if time.monotonic() > until:
-            sys.exit('barrier expired: ' + marker)
-        time.sleep(0.01)
-if name == 'cat' and who == 'A' and sys.argv[1:] == [str(root / 'backlog.md.lock')]:
-    count_file = root / 'reads'
-    count = int(count_file.read_text()) + 1 if count_file.exists() else 1
-    count_file.write_text(str(count))
-    if count == 2:
-        result = subprocess.run([real] + sys.argv[1:], capture_output=True)
-        pause('stale-read')
-        sys.stdout.buffer.write(result.stdout)
-        sys.exit(result.returncode)
-if name == 'mkdir' and who == 'B' and sys.argv[-1] == str(root / 'backlog.md.lock.reclaim'):
-    result = subprocess.run([real] + sys.argv[1:])
-    if result.returncode:
-        (root / 'B-blocked').touch()
-    sys.exit(result.returncode)
-if name == 'cksum':
-    pause(who + '-acquired')
-os.execv(real, [real] + sys.argv[1:])
-'''.format(python=sys.executable, real=real)
-for name in real:
-    path = root / 'bin' / name
-    path.write_text(shim)
-    path.chmod(0o755)
-env = dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'], RECLAIM_TEST_ROOT=str(root))
-workers = []
-def start(who):
-    proc = subprocess.Popen([sys.argv[2], '--quiet', str(root / 'backlog.md')],
-                            env=dict(env, RECLAIM_TEST_WRITER=who))
-    workers.append(proc)
-    return proc
-def wait_for(*names):
-    until = time.monotonic() + 6
-    while time.monotonic() < until:
-        for name in names:
-            if (root / name).exists():
-                return name
-        time.sleep(0.01)
-    raise AssertionError('barrier not reached: %s' % (names,))
-try:
-    a = start('A')
-    wait_for('stale-read')
-    b = start('B')
-    state = wait_for('B-blocked', 'B-acquired')
-    (root / 'release-stale-read').touch()
-    if state == 'B-acquired':
-        replacement = lock.read_text()
-        (root / 'release-A-acquired').touch()
-        a.wait(timeout=6)
-        assert lock.read_text() == replacement, 'live B replacement was removed'
-    else:
-        wait_for('A-acquired')
-        replacement = lock.read_text()
-        b.wait(timeout=20)
-        assert lock.read_text() == replacement, 'live A replacement was removed'
-    assert a.poll() is None and b.returncode == 0, (a.poll(), b.poll())
-    (root / 'release-A-acquired').touch()
-    a.wait(timeout=6)
-    assert a.returncode == 0
-    assert not lock.exists() and not (root / 'backlog.md.lock.reclaim').exists()
-finally:
-    for marker in ('stale-read', 'A-acquired', 'B-acquired'):
-        (root / ('release-' + marker)).touch()
-    for proc in workers:
-        if proc.poll() is None:
-            proc.terminate()
-        proc.wait(timeout=10)
-PY
-  assert_equals Done "$(section_of "$dir/backlog.md" stale-call)" "the surviving writer did not repair the backlog"
-  pass "competing stale-lock reclaimers preserve the live replacement writer's lock"
+  printf '%s\n' "$token" > "$dir/target"
+  age_lock "$dir/target"
+  ln -s "$dir/target" "$file.lock"
+  out=$("$NORMALIZE" "$file" 2>&1) || fail "a symlink lock was an error: $out"
+  assert_equals "" "$out" "a symlink lock was not skipped quietly"
+  [ -L "$file.lock" ] || fail "a symlink lock was removed"
+  assert_equals "$token" "$(cat "$dir/target")" "a symlink lock target was changed"
+  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through a symlink lock"
+  rm "$file.lock"
+  mkdir "$file.lock"
+  "$NORMALIZE" --quiet "$file" || fail "a directory lock was an error"
+  [ -d "$file.lock" ] || fail "a directory lock was removed"
+  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through a directory lock"
+  pass "symlink and nonregular lock paths are preserved"
 }
 
 test_check_reports_without_writing() {
@@ -430,8 +351,7 @@ test_moves_done_rows_with_their_bodies
 test_multi_paragraph_body_moves_with_internal_blanks
 test_held_backlog_lock_skips_without_writing
 test_dead_writer_lock_is_reclaimed
-test_abandoned_reclaim_mutex_is_preserved
-test_competing_reclaimers_preserve_the_live_replacement
+test_nonregular_lock_is_preserved
 test_check_reports_without_writing
 test_missing_done_section_is_created
 test_home_default_and_absent_file
