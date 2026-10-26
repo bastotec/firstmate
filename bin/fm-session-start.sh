@@ -551,9 +551,19 @@ if [ "$READ_ONLY" -eq 0 ]; then
   fm_trace_context_session_start "$CONFIG" "$STATE/.trace-context-effective"
   # A full locked start publishes this home's current structured summary.
   # Publication is side-band and best-effort, so it can never change the
-  # session-start result.
+  # session-start result, and it runs detached in its own session so it can
+  # never spend this digest's runtime bound either: in a large home on a loaded
+  # machine one publication, plus the wait for another one already in flight,
+  # can take its whole 60-second deadline. Its own deadline still bounds it.
   startup_diagnostic enter home-summary
-  "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort || true
+  (
+    if command -v setsid >/dev/null 2>&1; then
+      exec setsid "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort
+    else
+      exec perl -MPOSIX -e 'my $r = POSIX::setsid(); (defined $r && $r != -1) or die "setsid: $!\n"; exec @ARGV or die "exec: $!\n"' \
+        "$SCRIPT_DIR/fm-home-summary-refresh.sh" --best-effort
+    fi
+  ) </dev/null >/dev/null 2>&1 &
   # Every network call and the potentially slow inactive-outcome startup scan
   # are launched HERE, detached and bounded, so they run concurrently with the
   # whole digest below instead of in front of it. Step 7 harvests whatever has
