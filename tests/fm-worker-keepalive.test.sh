@@ -1966,16 +1966,24 @@ PY
 }
 
 test_legacy_prohibition_reconciliation() {
-  local dir method episode digest before record rc count
+  local dir method episode digest before record rc count parent
   for method in scan ack-prohibition; do
     dir=$(make_home "legacy-prohibition-$method" ship)
     make_secondmate "$dir" helper
+    parent="$dir/parent"
+    mkdir -p "$parent/bin"
+    make_notify "$parent"
+    printf 'kind=secondmate\n' > "$parent/state/helper.meta"
     status "$dir" "$T0" 'blocked [key=publication]: awaiting approval'
     printf 'Do not merge, adopt, retry or retire until explicitly released.\n' > "$dir/instruction"
     FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
       --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" || fail "declare failed"
     at "$T0" "$dir/home/state/w1.approval-wait"
     episode=$(seed_approval_episode "$dir")
+    FM_HOME="$parent" FM_KEEPALIVE_NOW="$T0" FM_KEEPALIVE_NOTIFY="$parent/bin/notify" \
+      FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+    jq -e '.relays | length == 1 and all(.[]; .up == false)' "$parent/state/keepalive/asks/helper.json" >/dev/null \
+      || fail "setup: parent did not observe the legacy escalation"
     digest=$(jq -r .instruction_sha256 "$dir/home/state/w1.approval-wait")
     record="$dir/home/state/keepalive/w1.json"
     before=$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/home/state/w1.status")
@@ -2007,12 +2015,41 @@ test_legacy_prohibition_reconciliation() {
       FM_HOME="$dir/home" "$KEEPALIVE" ack-prohibition w1 --episode "$episode" \
         --instruction-sha256 "$digest" || fail "repeat acknowledgment was not idempotent"
     fi
-    assert_grep "resolved [key=keepalive-helper-w1-$episode]" "$dir/parent/state/helper.status" "legacy false escalation remained open"
-    assert_grep 'not an approval release' "$dir/parent/state/helper.status" "correction falsely claimed approval release"
+    assert_grep "resolved [key=keepalive-helper-w1-$episode]: worker w1 remains under an intact explicit prohibition; the earlier escalation was false, not an approval release" \
+      "$parent/state/helper.status" "the owning helper did not emit its prohibition resolution"
+    FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 90001)) FM_KEEPALIVE_NOTIFY="$parent/bin/notify" \
+      FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+    jq -e '.relays == {}' "$parent/state/keepalive/asks/helper.json" >/dev/null \
+      || fail "parent retained the owning helper's resolved prohibition as a dropped relay"
+    assert_equals 0 "$(notice_count "$parent" .)" "parent paged the user on the owning helper's resolution"
     jq -e --argjson t "$T0" '.cond == null and .track.green==$t' "$record" >/dev/null || fail "correction lost PR clocks"
     assert_equals "$before" "$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/home/state/w1.status")" \
       "correction changed the actual restriction or worker decision"
     scan "$dir" $((T0 + 100000))
+    if [ "$method" = ack-prohibition ]; then
+      FM_HOME="$dir/home" "$KEEPALIVE" ack-prohibition w1 --episode "$episode" \
+        --instruction-sha256 "$digest" || fail "acknowledgment after a healthy scan was not idempotent"
+      for count in metadata instruction guard; do
+        cp "$record" "$dir/episode.before"
+        case "$count" in
+          metadata) printf 'spawn_gen=replacement\n' >> "$dir/home/state/w1.meta" ;;
+          instruction) printf 'changed\n' >> "$dir/instruction" ;;
+          guard) at $((T0 + 1)) "$dir/home/state/w1.approval-wait" ;;
+        esac
+        rc=0
+        FM_HOME="$dir/home" "$KEEPALIVE" ack-prohibition w1 --episode "$episode" \
+          --instruction-sha256 "$digest" >/dev/null 2>&1 || rc=$?
+        assert_equals 1 "$rc" "repeat acknowledgment accepted changed $count binding after scan"
+        cmp "$record" "$dir/episode.before" || fail "repeat refusal changed the episode"
+        case "$count" in
+          metadata) sed -i.bak '$d' "$dir/home/state/w1.meta" ;;
+          instruction) sed -i.bak '$d' "$dir/instruction" ;;
+        esac
+      done
+    fi
+    FM_HOME="$parent" FM_KEEPALIVE_NOW=$((T0 + 100001)) FM_KEEPALIVE_NOTIFY="$parent/bin/notify" \
+      FM_KEEPALIVE_TASKS=/usr/bin/false "$KEEPALIVE" scan
+    assert_equals 0 "$(notice_count "$parent" .)" "parent paged again after prohibition reconciliation"
     assert_equals 0 "$(wake_count "$dir")" "corrected prohibition woke again"
     assert_equals 0 "$(notice_count "$dir" .)" "correction paged the user"
     assert_equals 1 "$(grep -c 'resolved ' "$dir/parent/state/helper.status")" "correction repeated"
@@ -2048,8 +2085,52 @@ test_valid_untimed_prohibition() {
   pass "intact prohibitions stay untimed without hiding unrelated parent calls"
 }
 
+test_independent_decision_with_prohibited_green_pr() {
+  local dir verb cond before record
+  for verb in needs-decision paused; do
+    dir=$(make_home "prohibited-green-decision-$verb" ship)
+    make_secondmate "$dir" helper
+    printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
+    make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+    status "$dir" "$T0" 'working: PR ready'
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+    status "$dir" "$T0" 'blocked [key=publication]: awaiting approval'
+    printf 'Do not merge, adopt, retry or retire until explicitly released.\n' > "$dir/instruction"
+    FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" declare w1 --key publication \
+      --expected-record "$(cat "$dir/home/state/w1.meta")" --instruction-file "$dir/instruction" || fail "declare failed"
+    at "$T0" "$dir/home/state/w1.approval-wait"
+    before=$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/instruction")
+    status "$dir" "$T0" 'done: ready, publication remains prohibited'
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 86400))
+    assert_equals 0 "$(wake_count "$dir")" "a prohibited green PR demanded action"
+    status "$dir" $((T0 + 86401)) "$verb [key=other]: awaiting your approval"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 86401))
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 87600))
+    assert_equals 0 "$(wake_count "$dir")" "an independent decision woke before its bound"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 87601))
+    assert_equals 1 "$(wake_count "$dir")" "a green PR hid an independent $verb decision"
+    assert_contains "$(wakes "$dir")" 'awaiting your approval' "the wake did not identify the independent decision"
+    cond=blocked
+    [ "$verb" != paused ] || cond=held
+    record="$dir/home/state/keepalive/w1.json"
+    jq -e --arg cond "$cond" --argjson first "$((T0 + 86401))" --argjson green "$T0" \
+      '.cond == $cond and .since == $first and .track.green == $green' "$record" >/dev/null \
+      || fail "the independent decision lost its timer or excluded PR clock"
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 88201))
+    assert_grep "blocked [key=keepalive-helper-w1-$((T0 + 86401))]" "$dir/parent/state/helper.status" \
+      "the independent decision did not escalate to its parent"
+    assert_not_contains "$(wakes "$dir")" 'merge it now' "independent decision lifted the PR prohibition"
+    assert_not_contains "$(wakes "$dir")" 'land it or close it now' "independent decision allowed CI action demands"
+    assert_equals "$before" "$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/instruction")" \
+      "independent decision changed the prohibition binding"
+    FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" validate w1 || fail "independent decision invalidated the prohibition"
+  done
+  pass "independent approval decisions stay timed while a green PR remains prohibited"
+}
+
 test_legacy_prohibition_reconciliation
 test_valid_untimed_prohibition
+test_independent_decision_with_prohibited_green_pr
 test_approval_wait_excludes_action_demands_while_bound
 test_approval_wait_is_bounded_and_wakes_the_mate_to_decide
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand

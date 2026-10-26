@@ -273,7 +273,8 @@ FROZEN_RE = re.compile(
     r"no (edits|merge))\b", re.I)
 # The owning watchdog's own resolution notes (Scan.resolve, asks, relays, autoland).
 WATCHDOG_RESOLVED_RE = re.compile(
-    r"^(worker \S+ (is moving again|left the fleet|is no longer [a-z-]+|moved to another PR)"
+    r"^(worker \S+ (is moving again|left the fleet|is no longer [a-z-]+|moved to another PR"
+    r"|remains under an intact explicit prohibition; the earlier escalation was false, not an approval release$)"
     r"|second mate \S+('s questions are answered|'s stuck work is moving again| left the fleet)"
     r"|auto-land is armed again)")
 REPORT_RE = re.compile(
@@ -679,16 +680,15 @@ class Scan:
         if liveness(self.h, self.state, wid) == "dead":
             return "dead", NOW, verb or "", text
         opened = min(NOW, mtime(status) or NOW)
-        if verb in ("blocked", "failed"):
+        if verb in ("blocked", "failed", "needs-decision"):
             return "blocked", opened, verb, text
-        if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
-            # waiting on CI or a merge has its own bounds above; it is not a stall
-            return None, opened, verb or "working", text
         if bash('. "$1/fm-external-wait.sh"; keepalive_now=$4; fm_external_wait_now_epoch() { printf "%s\\n" "$keepalive_now"; }; '
                 'fm_external_wait_active "$2" "$3"', str(SCRIPT_DIR), wid, str(self.state), str(NOW)).returncode == 0:
             return None, opened, verb or "working", text
         if verb in ("paused", "captain-held"):
             return ("held" if mate_decidable(verb, text) else None), opened, verb, text
+        if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
+            return None, opened, verb or "working", text
         return "no-progress", rec.get("fp_since", NOW), verb or "working", text
 
     def pr_condition(self, m: dict, rec: dict):
@@ -754,8 +754,10 @@ class Scan:
             if rec.get("cond") and not self.resolve(wid, rec, why):
                 save(rec_path, rec)
                 return
-            rec = {"fp": rec["fp"], "fp_since": rec["fp_since"], "track": rec.get("track", {})}
-            save(rec_path, rec)
+            healthy = {"fp": rec["fp"], "fp_since": rec["fp_since"], "track": rec.get("track", {})}
+            if "acknowledged_prohibition" in rec:
+                healthy["acknowledged_prohibition"] = rec["acknowledged_prohibition"]
+            save(rec_path, healthy)
             return
         if rec.get("cond") in STALL_CONDITIONS and cond in STALL_CONDITIONS:
             rec["cond"] = cond
