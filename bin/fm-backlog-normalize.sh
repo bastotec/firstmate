@@ -21,8 +21,10 @@
 # a unique token. Lock contention retries for about 2.5 seconds, then skips
 # quietly; cleanup removes the lock only while its token still matches.
 # At most one dead-writer lock is reclaimed per invocation: this command's and
-# tasks-axi's tokens start with the writer's pid, and the token is re-read before
-# removal to avoid deleting a replacement lock. Live or unparsable pids are kept.
+# tasks-axi's tokens start with the writer's pid, and the token is re-read under
+# an atomic <backlog>.lock.reclaim mkdir mutex before removal. Live or unparsable
+# pids are kept. Only the mutex's creator removes it; an abandoned mutex disables
+# automatic reclaim, leaving tasks-axi's stale-lock message for manual recovery.
 # This lets later writes recover after a writer is killed while holding the lock;
 # tests/fm-backlog-normalize.test.sh covers dead, live and unparsable lock tokens.
 # The rewrite preserves the file mode and uses an atomic temporary-file rename.
@@ -94,17 +96,8 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 reclaim_dead_lock() {
-  local token pid modified rc=1
-  if ! mkdir -- "$LOCK.reclaim" 2>/dev/null; then
-    if ! modified=$(stat -f '%m' "$LOCK.reclaim" 2>/dev/null); then
-      modified=$(stat -c '%Y' "$LOCK.reclaim" 2>/dev/null) || return 1
-    fi
-    case "$modified" in ''|*[!0-9]*) return 1 ;; esac
-    if [ "$(( $(date +%s) - modified ))" -gt 60 ]; then
-      rmdir -- "$LOCK.reclaim" 2>/dev/null || :
-    fi
-    return 1
-  fi
+  local token pid rc=1
+  mkdir -- "$LOCK.reclaim" 2>/dev/null || return 1
   reclaiming=1
   token=$(cat "$LOCK" 2>/dev/null) || token=
   pid=${token%%:*}

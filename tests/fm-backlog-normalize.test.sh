@@ -151,19 +151,44 @@ test_dead_writer_lock_is_reclaimed() {
   assert_equals Done "$(section_of "$file" stale-call)" "a dead writer's lock still blocked the repair"
   [ ! -e "$file.lock" ] || fail "the reclaimed lock was left behind"
   printf '%s\n' "$dead:tasks-axi-nonce:1792917802000:1" > "$file.lock"
-  mkdir "$file.lock.reclaim"
-  python3 - "$file.lock.reclaim" <<'PY' || fail "could not age the abandoned reclaim mutex"
-import os, sys, time
-os.utime(sys.argv[1], (time.time() - 120, time.time() - 120))
-PY
   "$NORMALIZE" --quiet "$file" || fail "a dead tasks-axi lock was an error"
   [ ! -e "$file.lock" ] || fail "a dead tasks-axi writer's lock was not reclaimed"
-  [ ! -d "$file.lock.reclaim" ] || fail "an abandoned reclaim mutex was not removed"
+  [ ! -d "$file.lock.reclaim" ] || fail "the owned reclaim mutex was left behind"
   printf '%s\n' "not-a-pid-token" > "$file.lock"
   "$NORMALIZE" --quiet "$file" || fail "an unparsable lock was an error"
   assert_equals "not-a-pid-token" "$(cat "$file.lock")" "a lock without a writer pid was removed"
   rm -f "$file.lock"
   pass "a lock left by a writer that no longer exists is reclaimed; live or unparsable locks are kept"
+}
+
+test_abandoned_reclaim_mutex_is_preserved() {
+  local dir file dead before out token
+  dir="$TMP_ROOT/abandoned-reclaim"
+  mkdir -p "$dir"
+  file="$dir/backlog.md"
+  write_misplaced "$file"
+  before=$(cksum < "$file")
+  sh -c 'exit 0' &
+  dead=$!
+  wait "$dead"
+  token="$dead:tasks-axi-nonce:1792917802000:1"
+  printf '%s\n' "$token" > "$file.lock"
+  mkdir "$file.lock.reclaim"
+  python3 - "$file.lock.reclaim" <<'PY' || fail "could not age the abandoned reclaim mutex"
+import os, sys, time
+os.utime(sys.argv[1], (time.time() - 120, time.time() - 120))
+PY
+  out=$("$NORMALIZE" "$file" 2>&1) || fail "an abandoned reclaim mutex was an error: $out"
+  assert_equals "" "$out" "an abandoned reclaim mutex was not skipped quietly"
+  assert_equals "$before" "$(cksum < "$file")" "normalization wrote through an abandoned reclaim mutex"
+  assert_equals "$token" "$(cat "$file.lock")" "a stale lock was reclaimed through another owner's mutex"
+  [ -d "$file.lock.reclaim" ] || fail "another owner's reclaim mutex was removed"
+  rmdir "$file.lock.reclaim"
+  "$NORMALIZE" --quiet "$file" || fail "repair after manual mutex recovery failed"
+  assert_equals Done "$(section_of "$file" stale-call)" "manual mutex recovery did not unblock repair"
+  [ ! -e "$file.lock" ] || fail "the reclaimed lock was left behind"
+  [ ! -d "$file.lock.reclaim" ] || fail "the owned reclaim mutex was left behind"
+  pass "an abandoned reclaim mutex is preserved until manual recovery"
 }
 
 test_competing_reclaimers_preserve_the_live_replacement() {
@@ -405,6 +430,7 @@ test_moves_done_rows_with_their_bodies
 test_multi_paragraph_body_moves_with_internal_blanks
 test_held_backlog_lock_skips_without_writing
 test_dead_writer_lock_is_reclaimed
+test_abandoned_reclaim_mutex_is_preserved
 test_competing_reclaimers_preserve_the_live_replacement
 test_check_reports_without_writing
 test_missing_done_section_is_created
