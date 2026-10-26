@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fm_dream.py - the fleet's nightly pass over its own day ("dreaming").
 
-bin/fm-dream.sh is the entry point (run, status, the launchd agent); this file
+bin/fm-dream.sh is the entry point (run, status, resolve, the launchd agent); this file
 owns the steps, the run log and the summary bin/fm_report.py shows.
 
 Modelled on Ziggy's dream (~/Projects/ziggy/dream), with no dependency in
@@ -173,14 +173,30 @@ is recorded and never stops the next:
            Jev scores proposals when configured; without a usable score, keep
            the agent's order and record why. Keep at most MAX_RAISED items.
   file     files the items triage kept in this invocation as queued backlog
-           tasks and hands each to its configured owning mate; it never replays a
-           previous run's proposals. An unreadable raised.jsonl prevents filing,
-           and an item already in its dedupe window is not filed twice.
+           tasks and hands each to its configured owning mate; triage proposals
+           from previous runs are not replayed. An unreadable raised.jsonl prevents
+           filing, and an item already in its dedupe window is not filed twice.
            Code changes from the improve step are filed first, as priority-0
            tasks, and their owning mate is told to dispatch a worker now (fm-send.sh,
            or the main home's inbox); charter lines follow the guards above, and
            captain changes and held charter lines follow the captain-card handling
            above, even without measured tasks.
+           A code change an earlier night decided but could not file (its latest
+           improve-actions.jsonl row still starts with 'not filed', first decided
+           within REFILE_DAYS, and its home remains included) is retried with
+           tonight's changes under the same deduplication, until filed, already
+           open, or resolved through `fm-dream.sh resolve`.
+           A similar fresh proposal keeps the pending action's original title and
+           retry origin; pending actions are not merged with each other.
+           Legacy rows without filing details fail with a request to resolve.
+           A LOCKED add is retried once after a short pause if the step budget
+           allows another attempt; LOCKED writes nothing, so retry is safe.
+           A decided code change (or kept triage item) that still is not filed
+           fails the step: its state names the add's own error when available,
+           and the first mate gets one check: wake naming each change and error.
+           Only when the wake cannot be queued does the captain get one
+           bin/fm-notify.sh notice; each unfiled state records the alert outcome.
+           tests/fm-dream.test.sh covers filing, retry, resolution and alert failures.
            Command timeouts preserve successful filings and allow remaining triage
            work while the step budget remains. Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
@@ -215,7 +231,10 @@ Files under <home>/state/dream/:
   runs/<date>.json   the run log (every step's status, seconds, details);
                      dry runs use runs/<date>.dry-run.json. A run ended by
                      SIGTERM/SIGHUP is finalized as partial, keeping completed
-                     steps, with the step in flight marked interrupted
+                     steps. The step in flight is marked interrupted unless file
+                     retained unfiled changes, which make it failed. File's
+                     unfiled list keeps each {what, state} without the why/notice
+                     truncation; the fallback notice points here for full details
   latest.json        published by a run without --only or --dry-run, even when
                      interrupted. The summary bin/fm_report.py reads
                      (schema fm-dream.v1):
@@ -256,7 +275,14 @@ Files under <home>/state/dream/:
   charters-<date>.md private charter-edit proposals, when any are kept
   improve-<date>.json  the night's task timelines (private)
   improve.jsonl      one metrics line per published night, for night-over-night change
-  improve-actions.jsonl  one line per action a published night took, for the next report
+  improve-actions.jsonl  action outcomes for the next report, appended by track
+                     or, if track did not write them, run finalization (never for
+                     --only or --dry-run). Finalization also records decided code
+                     changes when file did not run, as unfiled with its status,
+                     and uses the file-step alert policy above.
+                     Code rows keep repo, change, fix and evidence for retry;
+                     retry_of preserves the original decision date across nights.
+                     The resolve command below appends an outcome row
 
 Step timing starts after the pre-step checks; waited_for_ziggy, when nonzero,
 is the seconds spent polling for Ziggy's dream before that step.
@@ -307,10 +333,20 @@ FM_DREAM_INBOX and FM_DREAM_HOLD replace bin/fm-send.sh, bin/fm-inbox.sh and
 bin/fm-captain-hold.sh; FM_DREAM_CARD and FM_DREAM_MERGE_POLICY replace bin/fm-card.sh
 and bin/fm-merge-policy.sh; FM_DREAM_TRACK_WAIT and FM_DREAM_TRACK_POLL; FM_DREAM_BRIDGE
 and FM_DREAM_SSH replace bin/fm-bridge.sh and ssh for breakdown reads; FM_DREAM_CI_STALL
-replaces bin/fm-ci-stall.sh for the CI stall counts.
+replaces bin/fm-ci-stall.sh for the CI stall counts; FM_DREAM_WAKE (called as
+<cmd> <key> <payload>) and FM_DREAM_NOTIFY replace the wake append and
+bin/fm-notify.sh for unfiled-change alerts; FM_DREAM_LOCK_RETRY_PAUSE (seconds).
 
     fm_dream.py run --home H [--only STEP ...] [--dry-run]
     fm_dream.py status --home H [--json]
+    fm_dream.py resolve --home H --what TEXT --state TEXT [--date D]
+        selects one pending code action by exact title (case-insensitive), falling
+        back to a title substring; no match or multiple matches are refused.
+        --date filters by the latest row's date or its original retry_of date.
+        --state accepts 'covered by <link>' or 'filed as <key>' and appends an
+        improve-actions.jsonl row dated today with resolves naming the original
+        decision date, so the file step stops retrying it. A running dream holds
+        the same lock and prevents resolution until it finishes.
 """
 import argparse
 from contextlib import contextmanager, ExitStack
@@ -355,6 +391,8 @@ MAX_SKILLS = 5  # asked of the agent; the changed-line cap is the enforced bound
 MAX_RAISED = 3
 LEDGER_UNREADABLE = 'answer history unreadable'  # calls.jsonl exists but cannot be read
 RAISED_DAYS = 14
+REFILE_DAYS = 7  # a decided code change that could not be filed is retried this long
+LOCK_RETRY_PAUSE = float(os.environ.get('FM_DREAM_LOCK_RETRY_PAUSE', '3'))  # tests shorten the pause
 SLOW_MS = 20000
 RETRY_SECS = int(os.environ.get('FM_DREAM_RETRY_SECS', '30'))  # pause before retrying a failed agent
 DIGEST_CHARS = 250000
@@ -1438,6 +1476,19 @@ def step_improve(ctx):
     return result
 
 
+def record_actions(ctx):
+    if ctx.dry_run or getattr(ctx, 'only', None) or ctx.facts.get('actions_written'):
+        return
+    life = ctx.facts.get('improve')
+    tonight = life['tonight'] if life else ctx.facts.get('charter_card') or []
+    if life and any(c['kind'] == 'code' for c in life['changes']) and not any(a['kind'] == 'code' for a in tonight):
+        return
+    with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
+        for a in tonight:
+            fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
+    ctx.facts['actions_written'] = True
+
+
 def step_track(ctx):
     """Track tonight's instructions PR through auto-land and record all actions,
     including nights without measurements; the header owns action criteria."""
@@ -1479,10 +1530,7 @@ def step_track(ctx):
     for c in skipped:
         tonight.append({'kind': 'instructions', 'what': str(c.get('change') or '')[:200], 'pr': None,
                         'state': 'skipped: %s' % str(c.get('why') or '')[:160]})
-    if not ctx.dry_run and not getattr(ctx, 'only', None):
-        with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
-            for a in tonight:
-                fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
+    record_actions(ctx)
     taken = lambda a: (a.get('state') in ('open', 'merged and deployed', 'merged, deploy pending') and a.get('pr')
                        or str(a.get('state')).startswith(('dispatch ordered', 'applied to the charter'))
                        or a.get('state') == 'card raised')
@@ -2141,7 +2189,7 @@ def raised_titles(ctx):
         text = (ctx.dir / 'raised.jsonl').read_text(encoding='utf-8')
     except FileNotFoundError:
         return []
-    except OSError:
+    except (OSError, UnicodeError):
         return None
     for line in text.splitlines():
         try:
@@ -2239,7 +2287,32 @@ def step_triage(ctx):
 
 # --- file -------------------------------------------------------------------
 
-def file_improvements(ctx, already, rows, errors):
+def planned_code(ctx):
+    life = ctx.facts.get('improve')
+    tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
+    owners = ctx.config.get('owners') or {}
+    code = [dict(c) for c in (life or {}).get('changes') or [] if c['kind'] == 'code']
+    proposals = list(code)
+    for pending in ctx.facts.get('dropped_actions') or []:
+        fresh = next((c for c in proposals if similar(pending['title'], c['title'])), None)
+        if fresh is not None:
+            proposals.remove(fresh)
+            fresh['title'] = pending['title']
+            fresh['retry_of'] = min(fresh.get('retry_of') or pending['retry_of'], pending['retry_of'])
+        else:
+            code.append(pending)
+    planned = []
+    for c in code:
+        mate = owners.get(c['repo'], 'primary') if c.get('repo') else c.get('mate') or 'primary'
+        entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
+                 'before': c['before'], 'state': 'not filed: file step stopped before add',
+                 **{k: c[k] for k in ('repo', 'change', 'fix', 'evidence', 'retry_of') if c.get(k)}}
+        tonight.append(entry)
+        planned.append((c, entry))
+    return planned
+
+
+def file_improvements(ctx, already, rows, errors, planned=None):
     """Publish code filings, card captain-only changes and held charter lines,
     then apply the remaining charter additions under the header's guards."""
     life = ctx.facts.get('improve')
@@ -2248,16 +2321,14 @@ def file_improvements(ctx, already, rows, errors):
     tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     env = dict(os.environ, FM_HOME=str(ctx.home))
-    code = [c for c in changes if c['kind'] == 'code']
-    titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not code else
+    planned = planned_code(ctx) if planned is None else planned
+    titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not planned else
                                                       open_items(ctx, ctx.config.get('repos') or DEFAULT_REPOS, owners))
-    for c in code:
-        mate = owners.get(c['repo'], 'primary')
-        entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
-                 'before': c['before'], 'state': 'not filed'}
-        tonight.append(entry)
+    for c, entry in planned:
+        mate = entry['mate']
         if unchecked:
             entry['state'] = 'not filed: open work unreadable for %s' % ', '.join(sorted(unchecked))
+            unfiled(ctx, entry)
             continue
         if any(similar(c['title'], t) for t in list(already) + list(titles or [])):
             entry['state'] = 'already open, not filed again'
@@ -2265,11 +2336,19 @@ def file_improvements(ctx, already, rows, errors):
         if ctx.dry_run:
             entry['state'] = 'dry run: not filed'
             continue
+        if not (c.get('repo') and c.get('change')):
+            entry['state'] = ('not filed: decided on %s without the change details needed to file it again; '
+                              'record what covers it with bin/fm-dream.sh resolve' % c.get('retry_of'))
+            unfiled(ctx, entry)
+            continue
         try:
+            entry['state'] = 'not filed: add did not complete'
             file_one(ctx, c, mate, entry, env, rows, errors, already)
         except (OSError, subprocess.TimeoutExpired) as exc:
             entry['state'] = '%s; stopped: %s' % (entry['state'], type(exc).__name__)
             errors.append('%s: %s' % (c['title'][:60], entry['state']))
+            if not entry.get('key'):
+                unfiled(ctx, entry)
             if isinstance(exc, subprocess.TimeoutExpired):
                 ctx.left()
     calls = unanswered_calls(ctx, [c for c in changes if c['kind'] == 'captain'], tonight, env, errors)
@@ -2321,15 +2400,16 @@ def file_one(ctx, c, mate, entry, env, rows, errors, already):
     bf = ctx.dir / '.body.md'
     write_private(bf, body)
     try:
-        r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', c['title'],
-                     '--kind', 'ship', '--repo', c['repo'], '--priority', '0', '--body-file', str(bf), '--json'],
-                    env=env, timeout=60)
+        r = add_task(ctx, [tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', c['title'],
+                           '--kind', 'ship', '--repo', c['repo'], '--priority', '0', '--body-file', str(bf), '--json'],
+                     env)
     finally:
         bf.unlink()
     key = task_key_of(r)
     if r.returncode or not key:
-        entry['state'] = 'not filed'
-        errors.append('%s: add failed (%s)' % (c['title'][:60], (r.stderr or r.stdout).strip()[:120]))
+        entry['state'] = 'not filed: add failed (%s)' % tool_error(r)
+        errors.append('%s: %s' % (c['title'][:60], entry['state']))
+        unfiled(ctx, entry)
         return
     entry['key'] = key
     entry['state'] = 'filed as %s; dispatch order to %s not sent' % (key, mate)
@@ -2353,6 +2433,99 @@ def file_one(ctx, c, mate, entry, env, rows, errors, already):
         'filed as %s; dispatch order to %s unconfirmed' % (key, mate)
     if s.returncode:
         errors.append('%s: dispatch order to %s unconfirmed (%s)' % (key, mate, (s.stderr or s.stdout).strip()[:120]))
+
+
+def tool_error(r):
+    """What a failed command said: stderr and stdout both, folded to one line.
+    A shell's own "Terminated: 15" on stderr once hid tasks-axi's real refusal
+    (a stale backlog lock) on stdout, night after night."""
+    said = [' '.join(x.split()) for x in (r.stderr, r.stdout) if x and x.strip()]
+    return ('; '.join(said) or 'exit %s' % r.returncode)[:240]
+
+
+def add_task(ctx, argv, env):
+    """One tasks-axi add, tried once more after a short pause when the backlog
+    was locked (a LOCKED refusal writes nothing, so the retry cannot duplicate)."""
+    r = ctx.run(argv, env=env, timeout=60)
+    if (r.returncode or not task_key_of(r)) and 'LOCKED' in (r.stdout or '') + (r.stderr or '') \
+            and ctx.left() > 60 + LOCK_RETRY_PAUSE:
+        time.sleep(LOCK_RETRY_PAUSE)
+        r = ctx.run(argv, env=env, timeout=60)
+    return r
+
+
+def unfiled(ctx, entry):
+    """Record a decided change that was not filed, for the file step's alert."""
+    ctx.facts.setdefault('unfiled', []).append(entry)
+
+
+def dropped_actions(ctx):
+    """Recover candidates under the header's file-step retry policy.
+    Return None when the action log cannot be read."""
+    try:
+        text = (ctx.dir / 'improve-actions.jsonl').read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return []
+    except OSError:
+        return None
+    latest = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            return None
+        if isinstance(row, dict) and row.get('kind') == 'code' and row.get('what'):
+            latest[row['what']] = row
+    cutoff = time.strftime('%Y-%m-%d', time.localtime(ctx.now - REFILE_DAYS * 86400))
+    out = []
+    for what, row in latest.items():
+        first = str(row.get('retry_of') or row.get('date') or '')
+        if not (str(row.get('state') or '').startswith('not filed') and cutoff <= first
+                and str(row.get('date') or '') < ctx.day) or row.get('mate') in ctx.excluded \
+                or mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
+            continue
+        out.append({'kind': 'code', 'title': what, 'repo': row.get('repo'), 'change': row.get('change'),
+                    'fix': row.get('fix') or '', 'evidence': row.get('evidence') or '', 'target': row.get('target'),
+                    'before': row.get('before'), 'mate': row.get('mate'), 'retry_of': first})
+    return out
+
+
+def alert_unfiled(ctx, lost):
+    """Tell the first mate, through one check: wake in this home, which decided
+    changes were not filed and why; when the wake cannot be queued, one captain
+    notice through bin/fm-notify.sh instead. Each action's state says who was told."""
+    env = dict(os.environ, FM_HOME=str(ctx.home))
+    names = '; '.join('"%s" (%s)' % (a['what'], a['state'][:200]) for a in lost)
+    text = ('fleet dreaming could not file %d decided change%s: %s. File each with bin/fm-tasks-axi.sh add and '
+            'hand it to its mate, or record what already covers it with bin/fm-dream.sh resolve.'
+            % (len(lost), '' if len(lost) == 1 else 's', names))
+    notice = ('fleet dreaming could not file %d decided changes: %s. Full list and errors: '
+              'state/dream/runs/%s.json.'
+              % (len(lost), names[:700], ctx.day))
+    key = 'dream-file:%s' % ctx.day
+    wake = os.environ.get('FM_DREAM_WAKE')
+    argv = [wake, key, 'check: ' + text] if wake else [
+        'bash', '-c', '. "$1"; fm_wake_append check "$2" "$3"', 'fm-dream', str(SCRIPT_DIR / 'fm-wake-lib.sh'),
+        key, 'check: ' + text]
+    def attempt(what, cmd):
+        try:
+            r = ctx.run(cmd, env=env, timeout=5)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return '%s failed: %s' % (what, type(exc).__name__)
+        return None if r.returncode == 0 else '%s failed: %s' % (what, tool_error(r)[:120])
+
+    wake_error = attempt('wake', argv)
+    if not wake_error:
+        outcome = 'first mate woken'
+    else:
+        notice_error = attempt('notice', [tool('fm-notify.sh', 'FM_DREAM_NOTIFY'), '--title', 'Fleet dreaming', notice])
+        outcome = ('captain told (%s)' % wake_error if not notice_error
+                   else 'nobody told: %s; %s' % (wake_error, notice_error))
+    for a in lost:
+        a['state'] = '%s; %s' % (a['state'], outcome)
+    return outcome
 
 
 def decided_text(ctx):
@@ -2777,65 +2950,104 @@ def task_key_of(r):
 def step_file(ctx):
     items = ctx.facts.get('triage') or []
     life = ctx.facts.get('improve')
+    dropped = dropped_actions(ctx)
+    ctx.facts['dropped_actions'] = dropped or []
     acting = life and any(c['kind'] != 'instructions' for c in life['changes']) or ctx.facts.get('charter_proposals')
-    if not items and not acting:
+    if not items and not acting and not dropped:
+        if dropped is None:
+            return {'status': 'partial', 'why': 'improve-actions.jsonl is unreadable; earlier unfiled changes not retried'}
         return {'status': 'nothing to file'}
     owners = ctx.config.get('owners') or {}
-    already = raised_titles(ctx)
-    if already is None:
-        return {'status': 'partial', 'why': 'raised.jsonl is unreadable; nothing filed'}
+    planned = planned_code(ctx)
     raised, errors = [], []
+    if dropped is None:
+        errors.append('improve-actions.jsonl is unreadable; earlier unfiled changes not retried')
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
+    result = {'status': 'dry-run' if ctx.dry_run else 'done', 'raised': raised}
+    ctx.facts['file_result'] = result
     try:
-        file_improvements(ctx, already, raised, errors)
-    except subprocess.TimeoutExpired:
-        raise
-    except Exception as exc:  # noqa: BLE001 - the triage items still get filed
-        errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
-    for it in items:
-        if any(similar(it['title'], t) for t in already):
-            continue
-        if ctx.deadline and time.time() > ctx.deadline - 30:
-            errors.append('out of time before %s' % it['title'][:60])
-            break
-        mate = owners.get(it['repo'], 'primary')
-        body = '\n'.join(['Raised by fleet dreaming (bin/fm-dream.sh) on %s.' % ctx.day, '',
-                          'Why: ' + it.get('why', ''), '', 'Suggested fix: ' + it.get('fix', ''), '',
-                          'Evidence from the day:'] + ['- ' + e[:300] for e in it.get('evidence', [])[:4]])
-        if ctx.dry_run:
-            raised.append({'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': None, 'why': it.get('why')})
-            continue
-        bf = ctx.dir / '.body.md'
-        write_private(bf, body)
-        env = dict(os.environ, FM_HOME=str(ctx.home))
+        already = raised_titles(ctx)
+        if already is None:
+            errors.append('raised.jsonl is unreadable; nothing filed')
+            for _, entry in planned:
+                entry['state'] = 'not filed: raised.jsonl unreadable'
+            for it in items:
+                unfiled(ctx, {'kind': 'triage', 'what': it['title'], 'state': 'not filed: raised.jsonl unreadable'})
+            return result
         try:
-            r = ctx.run([tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream', it['title'],
-                         '--kind', 'ship', '--repo', it['repo'], '--body-file', str(bf), '--json'],
-                        env=env, timeout=60)
-        finally:
-            bf.unlink()
-        key = task_key_of(r)
-        if r.returncode or not key:
-            errors.append('%s: add failed (%s)' % (it['title'][:60], (r.stderr or r.stdout).strip()[:120]))
-            continue
-        row = {'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': key, 'why': it.get('why')}
-        if mate != 'primary':
+            file_improvements(ctx, already, raised, errors, planned)
+        except subprocess.TimeoutExpired:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the triage items still get filed
+            errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
+        for it in items:
+            if any(similar(it['title'], t) for t in already):
+                continue
+            if ctx.deadline and time.time() > ctx.deadline - 30:
+                errors.append('out of time before %s' % it['title'][:60])
+                unfiled(ctx, {'kind': 'triage', 'what': it['title'], 'state': 'not filed: file step out of time'})
+                continue
+            mate = owners.get(it['repo'], 'primary')
+            body = '\n'.join(['Raised by fleet dreaming (bin/fm-dream.sh) on %s.' % ctx.day, '',
+                              'Why: ' + it.get('why', ''), '', 'Suggested fix: ' + it.get('fix', ''), '',
+                              'Evidence from the day:'] + ['- ' + e[:300] for e in it.get('evidence', [])[:4]])
+            if ctx.dry_run:
+                raised.append({'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': None, 'why': it.get('why')})
+                continue
+            bf = ctx.dir / '.body.md'
+            write_private(bf, body)
+            env = dict(os.environ, FM_HOME=str(ctx.home))
             try:
-                h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
-            except subprocess.TimeoutExpired:
-                h = subprocess.CompletedProcess([], 124, '', 'timed out')
-            if h.returncode:
-                # The move may have happened with only the receiver's wake failing,
-                # so the owner is not assumed back; the morning report flags it.
-                row['handoff'] = 'unconfirmed'
-                errors.append('%s: handoff to %s unconfirmed (%s)' % (key, mate, (h.stderr or h.stdout).strip()[:120]))
-        raised.append(row)
-        already.append(row['title'])
-        with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
-            fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
-    result = {'status': 'dry-run' if ctx.dry_run else ('partial' if errors else 'done'), 'raised': raised}
-    if errors:
-        result['why'] = '; '.join(errors)[:400]
+                r = add_task(ctx, [tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream',
+                                   it['title'], '--kind', 'ship', '--repo', it['repo'], '--body-file', str(bf), '--json'],
+                             env)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                unfiled(ctx, {'kind': 'triage', 'what': it['title'],
+                              'state': 'not filed: add failed (%s)' % type(exc).__name__})
+                raise
+            finally:
+                bf.unlink()
+            key = task_key_of(r)
+            if r.returncode or not key:
+                lost = {'kind': 'triage', 'what': it['title'], 'state': 'not filed: add failed (%s)' % tool_error(r)}
+                errors.append('%s: %s' % (it['title'][:60], lost['state']))
+                unfiled(ctx, lost)
+                continue
+            row = {'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': key, 'why': it.get('why')}
+            if mate != 'primary':
+                try:
+                    h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
+                except subprocess.TimeoutExpired:
+                    h = subprocess.CompletedProcess([], 124, '', 'timed out')
+                if h.returncode:
+                    # The move may have happened with only the receiver's wake failing,
+                    # so the owner is not assumed back; the morning report flags it.
+                    row['handoff'] = 'unconfirmed'
+                    errors.append('%s: handoff to %s unconfirmed (%s)' % (key, mate, (h.stderr or h.stdout).strip()[:120]))
+            raised.append(row)
+            already.append(row['title'])
+            with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
+                fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
+    finally:
+        for _, entry in planned:
+            if entry['state'].startswith('not filed') and entry not in (ctx.facts.get('unfiled') or []):
+                unfiled(ctx, entry)
+        lost = ctx.facts.get('unfiled') or []
+        if lost and not ctx.dry_run:
+            result['status'] = 'failed'
+            deadline = ctx.deadline
+            ctx.deadline = time.time() + 12
+            try:
+                told = alert_unfiled(ctx, lost)
+            finally:
+                ctx.deadline = deadline
+                result['unfiled'] = [{'what': a['what'], 'state': a['state']} for a in lost]
+            errors.insert(0, '%d decided change%s not filed, %s' % (len(lost), '' if len(lost) == 1 else 's', told))
+            errors.extend('%s: %s' % (a['what'], a['state']) for a in lost)
+        elif errors and not ctx.dry_run:
+            result['status'] = 'partial'
+        if errors:
+            result['why'] = '; '.join(errors)[:600]
     return result
 
 
@@ -2939,6 +3151,27 @@ def cmd_run(args):
         """The run record's final state, written the same way for a completed and
         an interrupted run: latest.json included, so a terminated night still
         leaves the report a summary instead of the previous night's."""
+        life = ctx.facts.get('improve')
+        if not ctx.dry_run and not args.only and life and any(c['kind'] == 'code' for c in life['changes']) \
+                and not any(a['kind'] == 'code' for a in life['tonight']):
+            step = run['steps'].setdefault('file', {})
+            state = 'not filed: the file step did not run (%s)' % (step.get('status') or 'missing')
+            if 'dropped_actions' not in ctx.facts:
+                ctx.facts['dropped_actions'] = dropped_actions(ctx) or []
+            lost = []
+            for _, entry in planned_code(ctx):
+                entry['state'] = state
+                unfiled(ctx, entry)
+                lost.append(entry)
+            deadline = ctx.deadline
+            ctx.deadline = time.time() + 12
+            try:
+                told = alert_unfiled(ctx, lost)
+            finally:
+                ctx.deadline = deadline
+            step.update(status='failed', why='%s; %s' % (state, told),
+                        unfiled=[{'what': a['what'], 'state': a['state']} for a in lost])
+        record_actions(ctx)
         run['finished'] = iso(time.time())
         run['skills'] = ctx.facts.get('skills', [])
         run['skills_commit'] = ctx.facts.get('skills_commit')
@@ -2979,9 +3212,11 @@ def cmd_run(args):
                 try:
                     run['steps'][name] = globals()['step_' + name](ctx)
                 except subprocess.TimeoutExpired:
-                    run['steps'][name] = {'status': 'timed out', 'why': 'over its %d s budget' % BUDGET[name]}
+                    failed_file = ctx.facts.get('file_result') if name == 'file' and ctx.facts.get('unfiled') else None
+                    run['steps'][name] = failed_file or {'status': 'timed out', 'why': 'over its %d s budget' % BUDGET[name]}
                 except Exception as exc:  # noqa: BLE001 - one step never stops the next
-                    run['steps'][name] = {'status': 'failed', 'why': '%s: %s' % (type(exc).__name__, str(exc)[:300])}
+                    failed_file = ctx.facts.get('file_result') if name == 'file' and ctx.facts.get('unfiled') else None
+                    run['steps'][name] = failed_file or {'status': 'failed', 'why': '%s: %s' % (type(exc).__name__, str(exc)[:300])}
             ctx.deadline = None
             run['steps'][name]['seconds'] = round(time.time() - began)
             if WAITED.get(name):
@@ -3000,9 +3235,10 @@ def cmd_run(args):
         # previous night. The step in flight is interrupted; the ones that
         # completed keep what they earned, and the run is partial.
         if interrupted['name'] and interrupted['name'] not in run['steps']:
-            run['steps'][interrupted['name']] = {
-                'status': 'interrupted', 'seconds': round(time.time() - interrupted['began']),
-                'why': str(sys.exc_info()[1])[:120] or 'interrupted'}
+            run['steps'][interrupted['name']] = (
+                ctx.facts['file_result'] if interrupted['name'] == 'file' and ctx.facts.get('unfiled') else {
+                    'status': 'interrupted', 'seconds': round(time.time() - interrupted['began']),
+                    'why': str(sys.exc_info()[1])[:120] or 'interrupted'})
         finalize(force_partial=True)
         return 1
     finally:
@@ -3029,6 +3265,55 @@ def cmd_status(args):
     return 0
 
 
+def cmd_resolve(args):
+    """Append a resolution under the command contract in this file's header."""
+    state = args.state.strip()
+    if not re.fullmatch(r'(?:covered by|filed as)\s+\S.*', state):
+        print("fm-dream: --state must be 'covered by <link>' or 'filed as <key>'", file=sys.stderr)
+        return 2
+    d = Path(args.home) / 'state' / 'dream'
+    lock_fd = os.open(d / '.lock', os.O_CREAT | os.O_WRONLY, 0o600)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(lock_fd)
+        print('fm-dream: a run is in progress; resolve after it', file=sys.stderr)
+        return 1
+    try:
+        day = time.strftime('%Y-%m-%d', time.localtime(now()))
+        latest = {}
+        try:
+            for line in (d / 'improve-actions.jsonl').read_text(encoding='utf-8').splitlines():
+                row = json.loads(line) if line.strip() else None
+                if isinstance(row, dict) and row.get('kind') == 'code' and row.get('what'):
+                    latest[row['what']] = row
+        except (OSError, ValueError) as exc:
+            print('fm-dream: improve-actions.jsonl unreadable: %s' % exc, file=sys.stderr)
+            return 1
+        want = args.what.strip().lower()
+        pending = [r for r in latest.values() if str(r.get('state') or '').startswith('not filed')
+                   and (not args.date or args.date in (r.get('date'), r.get('retry_of')))]
+        found = [r for r in pending if want == r['what'].lower()]
+        if not found and want:
+            found = [r for r in pending if want in r['what'].lower()]
+        if not found:
+            print('fm-dream: no unfiled code change matches %r' % args.what, file=sys.stderr)
+            return 1
+        if len(found) != 1:
+            print('fm-dream: ambiguous action %r; candidates: %s' %
+                  (args.what, '; '.join(r['what'] for r in found)), file=sys.stderr)
+            return 1
+        r = found[0]
+        row = dict(r, state=state, resolves=r.get('retry_of') or r.get('date'), date=day)
+        row.pop('retry_of', None)
+        with open(d / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
+            fh.write(json.dumps(row) + '\n')
+        print(json.dumps(row, ensure_ascii=False))
+        return 0
+    finally:
+        os.close(lock_fd)
+
+
 def main(argv):
     p = argparse.ArgumentParser(prog='fm_dream.py')
     sub = p.add_subparsers(dest='cmd', required=True)
@@ -3039,8 +3324,13 @@ def main(argv):
     s = sub.add_parser('status')
     s.add_argument('--home', required=True)
     s.add_argument('--json', action='store_true')
+    v = sub.add_parser('resolve')
+    v.add_argument('--home', required=True)
+    v.add_argument('--what', required=True, help='text in the unfiled action\'s title')
+    v.add_argument('--state', required=True, help="what became of it: 'covered by <link>' or 'filed as <key>'")
+    v.add_argument('--date', help='only the action decided (or first decided) on this night')
     a = p.parse_args(argv)
-    return cmd_run(a) if a.cmd == 'run' else cmd_status(a)
+    return {'run': cmd_run, 'status': cmd_status, 'resolve': cmd_resolve}[a.cmd](a)
 
 
 if __name__ == '__main__':

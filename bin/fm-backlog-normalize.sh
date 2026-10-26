@@ -20,6 +20,11 @@
 # Reads and rewrites hold tasks-axi's <backlog>.lock, created exclusively with
 # a unique token. Lock contention retries for about 2.5 seconds, then skips
 # quietly; cleanup removes the lock only while its token still matches.
+# At most one dead-writer lock is reclaimed per invocation: this command's and
+# tasks-axi's tokens start with the writer's pid, and the token is re-read before
+# removal to avoid deleting a replacement lock. Live or unparsable pids are kept.
+# This lets later writes recover after a writer is killed while holding the lock;
+# tests/fm-backlog-normalize.test.sh covers dead, live and unparsable lock tokens.
 # The rewrite preserves the file mode and uses an atomic temporary-file rename.
 # A checksum guard also skips publication if the file changed during the read.
 # A skipped run leaves repair to a later invocation, not a clean-file guarantee.
@@ -84,8 +89,26 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+# Removes the lock when its writer's pid is gone; the token is re-read right
+# before removal so a lock taken over meanwhile is left alone.
+reclaim_dead_lock() {
+  local token pid
+  token=$(cat "$LOCK" 2>/dev/null) || return 1
+  pid=${token%%:*}
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$pid" != "$$" ] || return 1
+  kill -0 "$pid" 2>/dev/null && return 1
+  ps -p "$pid" >/dev/null 2>&1 && return 1
+  [ "$(cat "$LOCK" 2>/dev/null)" = "$token" ] || return 1
+  rm -f -- "$LOCK"
+}
 attempt=0
+reclaimed=0
 until (set -C; printf '%s\n' "$LOCK_TOKEN" > "$LOCK") 2>/dev/null; do
+  if [ "$reclaimed" = 0 ] && reclaim_dead_lock; then
+    reclaimed=1
+    continue
+  fi
   attempt=$((attempt + 1))
   [ "$attempt" -lt 26 ] || exit 0
   sleep 0.1

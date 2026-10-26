@@ -4,6 +4,7 @@
 # Usage:
 #   fm-dream.sh run [--only STEP ...] [--dry-run]
 #   fm-dream.sh status [--json]
+#   fm-dream.sh resolve --what TEXT --state TEXT [--date YYYY-MM-DD]
 #   fm-dream.sh install-service     macOS launchd agent, nightly at 04:15
 #   fm-dream.sh uninstall-service
 #
@@ -25,7 +26,7 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_HOME=${FM_HOME:-$(cd "$SCRIPT_DIR/.." && pwd)}
-usage() { sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 die() { printf 'fm-dream: %s\n' "$1" >&2; exit "${2:-1}"; }
 
 MODE=${1:-}
@@ -50,7 +51,7 @@ service_prereqs() {
 }
 
 case "$MODE" in
-  run|status)
+  run|status|resolve)
     exec python3 "$SCRIPT_DIR/fm_dream.py" "$MODE" --home "$FM_HOME" "$@"
     ;;
   install-service)
