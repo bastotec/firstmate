@@ -11,6 +11,10 @@ printf 'Parent explicitly releases the approval exclusion.\n' > "$dir/release"
 meta=$(cat "$dir/home/state/subject.meta")
 run_wait() { (cd "$dir" && FM_HOME="$dir/home" "$dir/bin/fm-approval-wait.sh" "$@"); }
 normal_wait() { (unset NO_MISTAKES_GATE; FM_GATE_REFUSE_BYPASS=0 run_wait "$@"); }
+validate_wait() {
+  FM_HOME="$dir/home" bash -c '. "$1"; fm_approval_wait_validate "$2" subject' \
+    _ "$dir/bin/fm-approval-wait.sh" "$dir/home/state"
+}
 rc=0
 run_wait declare subject --key approval --expected-record "$meta" --instruction-file "$dir/instruction" >/dev/null 2>&1 || rc=$?
 assert_equals 1 "$rc" 'declaration must bind a currently open exact key'
@@ -37,25 +41,28 @@ digest=$(printf '%s' "$record" | jq -r .instruction_sha256)
 assert_equals "$(shasum -a 256 "$dir/instruction" | cut -d' ' -f1)" "$digest" 'wrong instruction digest'
 run_wait declare subject --key approval --expected-record "$meta" --instruction-file "$dir/instruction" || fail 'idempotent declaration failed'
 assert_equals "$record" "$(run_wait show subject)" 'idempotent declaration replaced custody evidence'
-run_wait validate subject || fail 'intact prohibition did not validate'
+validate_wait || fail 'intact prohibition did not validate'
+rc=0
+run_wait validate subject >/dev/null 2>&1 || rc=$?
+assert_equals 2 "$rc" 'validation must not expose an extra public subcommand'
 for field in schema task home metadata_sha256 instruction_sha256 instruction_file decision_key declared; do
   printf '%s\n' "$record" | jq --arg field "$field" '.[$field]="!invalid"' > "$dir/home/state/subject.approval-wait"
   rc=0
-  run_wait validate subject >/dev/null 2>&1 || rc=$?
+  validate_wait >/dev/null 2>&1 || rc=$?
   assert_equals 1 "$rc" "invalid $field was trusted as an untimed prohibition"
 done
 printf '%s\n' "$record" > "$dir/home/state/subject.approval-wait"
 printf 'spawn_gen=new\n' >> "$dir/home/state/subject.meta"
 rc=0
-run_wait validate subject >/dev/null 2>&1 || rc=$?
+validate_wait >/dev/null 2>&1 || rc=$?
 assert_equals 1 "$rc" 'new worker incarnation inherited untimed suppression'
 printf '%s\n' "$meta" > "$dir/home/state/subject.meta"
 printf 'changed instruction\n' >> "$dir/instruction"
 rc=0
-run_wait validate subject >/dev/null 2>&1 || rc=$?
+validate_wait >/dev/null 2>&1 || rc=$?
 assert_equals 1 "$rc" 'changed instruction was still trusted'
 printf 'Parent prohibits recovery until explicit approval release.\n' > "$dir/instruction"
-run_wait validate subject || fail 'restored binding did not validate'
+validate_wait || fail 'restored binding did not validate'
 assert_equals "$record" "$(FM_GATE_REFUSE_BYPASS=0 NO_MISTAKES_GATE=review run_wait show subject)" 'gate read-only show must remain available'
 for marker in review ''; do
   rc=0

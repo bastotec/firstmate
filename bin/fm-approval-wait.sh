@@ -6,7 +6,6 @@
 # Usage (FM_HOME must explicitly name the owning home):
 #   fm-approval-wait.sh declare <task> --key <open-decision-key> --expected-record <metadata> --instruction-file <absolute-path>
 #   fm-approval-wait.sh show <task>
-#   fm-approval-wait.sh validate <task> (read-only, 0 only for intact home/task/metadata/instruction bindings)
 #   fm-approval-wait.sh release <task> --instruction-sha256 <digest> --release-file <absolute-path>
 #
 # declare records the parent's explicit approval prohibition, not an inference
@@ -71,8 +70,8 @@ fm_approval_wait_main() {
   local state record lock home hash tmp archive stamp
   case "$cmd" in
     -h|--help) sed -n '2,/^set -u/{ /^#/s/^# \{0,1\}//p; }' "${BASH_SOURCE[0]}"; return 0 ;;
-    declare|show|validate|release) ;;
-    *) echo 'error: use declare, show, validate or release (see --help)' >&2; return 2 ;;
+    declare|show|release) ;;
+    *) echo 'error: use declare, show or release (see --help)' >&2; return 2 ;;
   esac
   case "$id" in ''|*[!A-Za-z0-9._-]*) echo 'error: a valid task id is required' >&2; return 2 ;; esac
   [ -n "${FM_HOME:-}" ] && [ -d "$FM_HOME/state" ] || {
@@ -94,10 +93,6 @@ fm_approval_wait_main() {
     esac
     shift 2
   done
-  if [ "$cmd" = validate ]; then
-    fm_approval_wait_validate "$state" "$id"
-    return
-  fi
   if [ "$cmd" = show ]; then
     [ -f "$record" ] && [ ! -L "$record" ] || return 1
     cat "$record"

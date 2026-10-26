@@ -521,6 +521,18 @@ def decision_key(line: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def unrelated_decision(status: Path, key: str):
+    r = bash('. "$1/fm-classify-lib.sh"; status_open_decisions "$2"', str(SCRIPT_DIR), str(status))
+    for line in r.stdout.splitlines():
+        other, verb, text = line.split("\t", 2)
+        if other != key:
+            return verb, text
+    verb, text = last_status(status)
+    if verb in ("blocked", "failed", "needs-decision", "paused") and decision_key(last_line(status)) != key:
+        return verb, text
+    return None
+
+
 def minutes(secs: int) -> int:
     return max(0, secs) // 60
 
@@ -652,11 +664,16 @@ class Scan:
         if key is not None:
             valid = bash('. "$1/fm-approval-wait.sh"; fm_approval_wait_validate "$2" "$3"',
                          str(SCRIPT_DIR), str(self.state), wid).returncode == 0
-            unrelated = verb in ("blocked", "failed", "needs-decision", "paused") and (
-                not key or decision_key(last_line(status)) != key)
-            if valid and not unrelated:
-                self.wait_bound.add(wid)
-                return None, NOW, verb, text
+            if valid:
+                unrelated = unrelated_decision(status, key)
+                if not unrelated:
+                    self.wait_bound.add(wid)
+                    return None, NOW, verb, text
+                self.pr_condition(m, rec)
+                verb, text = unrelated
+                opened = min(NOW, mtime(status) or NOW)
+                cond = ("held" if mate_decidable(verb, text) else None) if verb == "paused" else "blocked"
+                return cond, opened, verb, text
             try:
                 stamp = (self.state / ("%s.approval-wait" % wid)).lstat().st_mtime_ns
             except OSError:
@@ -680,15 +697,15 @@ class Scan:
         if liveness(self.h, self.state, wid) == "dead":
             return "dead", NOW, verb or "", text
         opened = min(NOW, mtime(status) or NOW)
-        if verb in ("blocked", "failed", "needs-decision"):
+        if verb in ("blocked", "failed"):
             return "blocked", opened, verb, text
+        if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
+            return None, opened, verb or "working", text
         if bash('. "$1/fm-external-wait.sh"; keepalive_now=$4; fm_external_wait_now_epoch() { printf "%s\\n" "$keepalive_now"; }; '
                 'fm_external_wait_active "$2" "$3"', str(SCRIPT_DIR), wid, str(self.state), str(NOW)).returncode == 0:
             return None, opened, verb or "working", text
         if verb in ("paused", "captain-held"):
             return ("held" if mate_decidable(verb, text) else None), opened, verb, text
-        if rec.get("track", {}).get("ci") or rec.get("track", {}).get("green"):
-            return None, opened, verb or "working", text
         return "no-progress", rec.get("fp_since", NOW), verb or "working", text
 
     def pr_condition(self, m: dict, rec: dict):
@@ -1101,9 +1118,7 @@ def acknowledge_prohibition(h: Path, state: Path, argv: list[str]) -> int:
     binding = load(guard, {})
     if binding.get("instruction_sha256") != digest:
         return 1
-    status = state / (wid + ".status")
-    verb, _ = last_status(status)
-    if verb in ("blocked", "failed", "needs-decision", "paused") and decision_key(last_line(status)) != key:
+    if unrelated_decision(state / (wid + ".status"), key):
         return 1
     rec_path = scan.dir / (wid + ".json")
     rec = load(rec_path, {})

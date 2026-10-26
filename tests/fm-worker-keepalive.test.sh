@@ -1991,10 +1991,14 @@ test_legacy_prohibition_reconciliation() {
       scan "$dir" $((T0 + 90000))
     else
       # Wrong episode, digest and unrelated new work may not be acknowledged.
-      for count in episode digest unrelated metadata instruction; do
+      for count in episode digest unrelated hidden metadata instruction; do
         cp "$record" "$dir/episode.before"
         case "$count" in
           unrelated) status "$dir" "$T0" 'blocked [key=other]: real new failure' ;;
+          hidden)
+            status "$dir" "$T0" 'needs-decision [key=other]: awaiting your approval'
+            status "$dir" "$T0" 'done: ready, publication remains prohibited'
+            ;;
           metadata) printf 'spawn_gen=replacement\n' >> "$dir/home/state/w1.meta" ;;
           instruction) printf 'changed\n' >> "$dir/instruction" ;;
         esac
@@ -2006,6 +2010,7 @@ test_legacy_prohibition_reconciliation() {
         cmp "$record" "$dir/episode.before" || fail "refusal changed the episode"
         case "$count" in
           unrelated) sed -i.bak '$d' "$dir/home/state/w1.status" ;;
+          hidden) sed -i.bak '$d' "$dir/home/state/w1.status"; sed -i.bak '$d' "$dir/home/state/w1.status" ;;
           metadata) sed -i.bak '$d' "$dir/home/state/w1.meta" ;;
           instruction) sed -i.bak '$d' "$dir/instruction" ;;
         esac
@@ -2086,9 +2091,11 @@ test_valid_untimed_prohibition() {
 }
 
 test_independent_decision_with_prohibited_green_pr() {
-  local dir verb cond before record
-  for verb in needs-decision paused; do
-    dir=$(make_home "prohibited-green-decision-$verb" ship)
+  local dir verb scenario cond before record
+  for scenario in needs-decision paused hidden-done hidden-bound; do
+    verb=$scenario
+    case "$scenario" in hidden-*) verb=needs-decision ;; esac
+    dir=$(make_home "prohibited-green-decision-$scenario" ship)
     make_secondmate "$dir" helper
     printf 'pr=https://github.com/o/r/pull/9\n' >> "$dir/home/state/w1.meta"
     make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
@@ -2104,6 +2111,10 @@ test_independent_decision_with_prohibited_green_pr() {
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 86400))
     assert_equals 0 "$(wake_count "$dir")" "a prohibited green PR demanded action"
     status "$dir" $((T0 + 86401)) "$verb [key=other]: awaiting your approval"
+    case "$scenario" in
+      hidden-done) status "$dir" $((T0 + 86401)) 'done: ready, publication remains prohibited' ;;
+      hidden-bound) status "$dir" $((T0 + 86401)) 'blocked [key=publication]: publication remains prohibited' ;;
+    esac
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 86401))
     FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 87600))
     assert_equals 0 "$(wake_count "$dir")" "an independent decision woke before its bound"
@@ -2123,11 +2134,46 @@ test_independent_decision_with_prohibited_green_pr() {
     assert_not_contains "$(wakes "$dir")" 'land it or close it now' "independent decision allowed CI action demands"
     assert_equals "$before" "$(cksum "$dir/home/state/w1.approval-wait" "$dir/home/state/w1.meta" "$dir/instruction")" \
       "independent decision changed the prohibition binding"
-    FM_HOME="$dir/home" "$ROOT/bin/fm-approval-wait.sh" validate w1 || fail "independent decision invalidated the prohibition"
+    FM_HOME="$dir/home" bash -c '. "$1/bin/fm-approval-wait.sh"; fm_approval_wait_validate "$2" w1' \
+      _ "$ROOT" "$dir/home/state" || fail "independent decision invalidated the prohibition"
+    status "$dir" $((T0 + 88202)) 'resolved [key=other]: approval answered'
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 88202))
+    FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 180000))
+    jq -e '.cond == null' "$record" >/dev/null || fail "answered independent decision stayed blocked"
+    assert_equals 1 "$(wake_count "$dir")" "answering an independent decision released the prohibited PR"
+    assert_equals 0 "$(notice_count "$dir" .)" "an answered decision paged the user"
   done
   pass "independent approval decisions stay timed while a green PR remains prohibited"
 }
 
+test_resumed_validation_with_stale_decision() {
+  local dir progress
+  for progress in code step; do
+    dir=$(make_home "resumed-validation-$progress" ship)
+    make_secondmate "$dir" helper
+    status "$dir" "$T0" 'needs-decision: review gate awaiting approval'
+    printf 'run=fixture\nstep=review\n' > "$dir/home/state/w1.crew-state"
+    scan "$dir" "$T0"
+    if [ "$progress" = code ]; then
+      printf 'fn validate() {}\n' > "$dir/wt/validate.rs"
+    else
+      printf 'run=fixture\nstep=test\n' > "$dir/home/state/w1.crew-state"
+    fi
+    scan "$dir" $((T0 + 1199))
+    scan "$dir" $((T0 + 1200))
+    scan "$dir" $((T0 + 1800))
+    assert_equals 0 "$(wake_count "$dir")" "a stale decision ignored resumed $progress progress"
+    assert_absent "$dir/parent/state/helper.status" "resumed validation escalated a stale decision"
+    jq -e --argjson since "$((T0 + 1199))" '.cond == null and .fp_since == $since' \
+      "$dir/home/state/keepalive/w1.json" >/dev/null || fail "progress did not reset the stale decision timer"
+    scan "$dir" $((T0 + 2399))
+    assert_equals 1 "$(wake_count "$dir")" "ordinary no-progress remediation disappeared"
+    assert_contains "$(wakes "$dir")" 'has made no real progress for 20 minutes' "a stale decision became a blocked timer"
+  done
+  pass "resumed validation respects real progress despite a stale needs-decision status"
+}
+
+test_resumed_validation_with_stale_decision
 test_legacy_prohibition_reconciliation
 test_valid_untimed_prohibition
 test_independent_decision_with_prohibited_green_pr
