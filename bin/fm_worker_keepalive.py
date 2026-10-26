@@ -155,7 +155,9 @@ ownership to the captain: an unraised relay or a dropped record is cleared
 quietly, without an escalation or a "moving again" notice. Each asks record
 retains the channel's byte offset and inode captured before the fold, and reads
 its tail only through that endpoint, so appends during a scan remain for the next
-scan. Blocked keepalive keys opened and dismissed entirely between scans also
+scan. Openings absent from the fold with no tail closure stay pending until the
+whole-file closing lookup finds a closure or the normal relay path owns them.
+Blocked keepalive keys opened and dismissed entirely between scans also
 go up at once; both verb-bracket and note-head keys use the decision fold's
 parsers. The first scan (or a legacy record without an offset) starts at the
 current end, without backfill.
@@ -906,13 +908,17 @@ class Scan:
             if verb == "blocked":
                 openings.setdefault(key, (index, note))
         candidates = {}
+        pending = rec.setdefault("tail_pending", {})
         for key, (index, note) in openings.items():
+            if key in tracked | open_keys or (restarted and key in seen):
+                continue
             verb, closing = last[key]
-            if (key not in tracked | open_keys and not (restarted and key in seen)
-                    and verb == "resolved" and not WATCHDOG_RESOLVED_RE.match(closing)):
+            if verb == "resolved" and not WATCHDOG_RESOLVED_RE.match(closing):
                 identity = "%s:%d:%d" % (inode, offset, index)
                 ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
-                candidates[ident] = {"first": NOW, "up": False, "note": note}
+                candidates[ident] = {"first": pending.pop(key, NOW), "up": False, "note": note}
+            elif verb not in ("resolved", "captain-held"):
+                pending.setdefault(key, NOW)
         seen.update(openings)
         rec.update(tail_offset=snapshot.st_size, tail_inode=inode, tail_seen=sorted(seen))
         return candidates, {key: value if value[0] in ("resolved", "captain-held") else None
@@ -922,9 +928,27 @@ class Scan:
         """Keep-alive escalations from a second mate: this home acts, else one level up."""
         previous = dict(rec.get("relays", {}))
         closures = {}
-        if not gone:
+        if gone:
+            rec.pop("tail_pending", None)
+        else:
             candidates, closures = self.relay_tail(mate, rec, now_open, snapshot)
             previous.update(candidates)
+            pending = rec.setdefault("tail_pending", {})
+            owned = {q["key"] for q in now_open.values()} | {ident[:-17] for ident in previous}
+            for key, first in list(pending.items()):
+                if key in owned:
+                    del pending[key]
+                    continue
+                closing = self.closing_note(mate, key)
+                if closing is None:
+                    continue
+                del pending[key]
+                if closing[0] == "captain-held" or WATCHDOG_RESOLVED_RE.match(closing[1]):
+                    continue
+                identity = "pending:%d" % first
+                ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+                previous[ident] = {"first": first, "up": False, "note": key}
+                closures[key] = closing
         relays = rec["relays"] = {}
         for ident, q in now_open.items():
             r = previous.get(ident) or {"first": NOW, "up": False}

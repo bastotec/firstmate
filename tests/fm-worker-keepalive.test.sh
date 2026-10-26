@@ -1651,6 +1651,107 @@ PY
   pass "an opening appended after the fold is retained for the next scan"
 }
 
+test_relay_answer_straddling_the_snapshot_is_not_lost() {
+  local dir key record ending expected
+  key="keepalive-dave-tools-w1-$T0"
+  for ending in verb note-head watchdog captain-held; do
+    dir=$(make_parent "straddling-snapshot-$ending" dave-tools)
+    record="$dir/home/state/keepalive/asks/dave-tools.json"
+    ask "$dir" dave-tools 'working: supervising workers'
+    scan "$dir" "$T0"
+    ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen"
+    FM_HOME="$dir/home" FM_KEEPALIVE_NOW="$((T0 + 60))" FM_KEEPALIVE_NOTIFY="$dir/bin/notify" \
+      python3 -B - "$ROOT/bin/fm_worker_keepalive.py" "$key" "$ending" <<'PY' || fail "the snapshot-straddling scan failed"
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+Scan = module["Scan"]
+questions = Scan.questions
+key, ending = sys.argv[2:]
+closure = {
+    "verb": "resolved [key=%s]: answered: false positive",
+    "note-head": "resolved: [key=%s] False unmerged alarm",
+    "watchdog": "resolved: [key=%s] worker w1 is moving again",
+    "captain-held": "captain-held [key=%s]: tracked by captain task 42",
+}[ending] % key
+
+def answer_before_fold(self, mate):
+    with (self.state / (mate + ".status")).open("a") as channel:
+        channel.write(closure + "\n")
+    return questions(self, mate)
+
+Scan.questions = answer_before_fold
+module["main"](["scan"])
+PY
+    expected=0
+    if [ "$ending" = verb ] || [ "$ending" = note-head ]; then
+      expected=1
+    fi
+    assert_equals "$expected" "$(notice_count "$dir" 'was closed without the stuck work moving')" "a $ending closure across the snapshot was mishandled"
+    jq -e --argjson expected "$expected" '.tail_pending == {} and (.relays | length) == $expected' "$record" >/dev/null \
+      || fail "the snapshot-straddling relay was not transferred or cleared"
+    scan "$dir" $((T0 + 300))
+    scan "$dir" $((T0 + 600))
+    assert_equals "$expected" "$(notice_count "$dir" .)" "the snapshot-straddling closure repeated or emitted a false recovery"
+  done
+  pass "answers straddling the snapshot escalate once, while watchdog and captain-held closures stay quiet"
+}
+
+test_pending_relay_openings_survive_until_owned_or_closed() {
+  local dir key ending record expected
+  key="keepalive-dave-tools-w1-$T0"
+  for ending in answered watchdog captain-held reopened gone; do
+    dir=$(make_parent "pending-relay-$ending" dave-tools)
+    record="$dir/home/state/keepalive/asks/dave-tools.json"
+    ask "$dir" dave-tools 'working: supervising workers'
+    scan "$dir" "$T0"
+    ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen"
+    FM_HOME="$dir/home" FM_KEEPALIVE_NOW="$((T0 + 60))" FM_KEEPALIVE_NOTIFY="$dir/bin/notify" \
+      python3 -B - "$ROOT/bin/fm_worker_keepalive.py" <<'PY' || fail "the pending-opening scan failed"
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+module["Scan"].questions = lambda self, mate: {}
+module["main"](["scan"])
+PY
+    jq -e --arg key "$key" --argjson first "$((T0 + 60))" '.tail_pending == {($key): $first} and .relays == {}' "$record" >/dev/null \
+      || fail "an opening absent from the fold was not persisted"
+    assert_equals 0 "$(notice_count "$dir" .)" "an unclosed pending opening was escalated"
+    scan "$dir" $((T0 + 90))
+    jq -e --arg key "$key" --argjson first "$((T0 + 60))" '.tail_pending == {($key): $first}' "$record" >/dev/null \
+      || fail "an opening without a closure was forgotten on the next scan"
+    expected=0
+    case "$ending" in
+      answered)
+        ask "$dir" dave-tools "resolved: [key=$key] answered: false positive"
+        expected=1 ;;
+      watchdog) ask "$dir" dave-tools "resolved [key=$key]: worker w1 is moving again" ;;
+      captain-held) ask "$dir" dave-tools "captain-held [key=$key]: tracked by captain task 42" ;;
+      reopened) ask "$dir" dave-tools "blocked [key=$key]: worker w1 is still frozen" ;;
+      gone) rm "$dir/home/state/dave-tools.meta" ;;
+    esac
+    scan "$dir" $((T0 + 120))
+    assert_equals "$expected" "$(notice_count "$dir" .)" "pending $ending was mishandled"
+    if [ "$ending" = gone ]; then
+      assert_absent "$record" "a departed mate kept its pending opening"
+    else
+      jq -e '.tail_pending == {}' "$record" >/dev/null || fail "an owned or closed opening remained pending"
+      if [ "$ending" = answered ]; then
+        jq -e --argjson first "$((T0 + 60))" '.relays | length == 1 and all(.[]; .up and .dropped and .first == $first)' "$record" >/dev/null \
+          || fail "the pending dismissal lost its first-seen time or dropped escalation"
+      elif [ "$ending" = reopened ]; then
+        jq -e '.relays | length == 1 and all(.[]; .up == false)' "$record" >/dev/null \
+          || fail "the normal relay path did not take ownership"
+      fi
+    fi
+    scan "$dir" $((T0 + 180))
+    assert_equals "$expected" "$(notice_count "$dir" .)" "pending $ending was reported twice"
+  done
+  pass "pending openings persist across scans and clear on normal ownership, authorized closure, or departure"
+}
+
 test_relay_tail_baselines_and_channel_replacement() {
   local dir key record mode
   for mode in first legacy truncate replace; do
@@ -1800,6 +1901,8 @@ test_undeliverable_parent_escalation_falls_through_to_the_captain
 test_relay_closed_without_a_fix_goes_up_at_once
 test_relays_opened_and_closed_between_scans_are_not_lost
 test_relay_opened_during_the_fold_is_read_next_scan
+test_relay_answer_straddling_the_snapshot_is_not_lost
+test_pending_relay_openings_survive_until_owned_or_closed
 test_relay_tail_baselines_and_channel_replacement
 test_captain_held_relays_clear_quietly
 test_repaired_parent_channel_preserves_captain_resolution_route
