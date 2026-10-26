@@ -1668,6 +1668,31 @@ def run_night(ctx, skip_track=False, only=None, file_mode=None):
         dream.Ctx, dream.STEPS, dream.room_for = old_ctx, old_steps, old_room
 
 for file_mode in ('skipped', 'interrupted', 'missing'):
+    root = base_root / ('unstarted-file-pending-' + file_mode)
+    original = code('Retry lifecycle reads')
+    ctx = night('2026-10-21', failing_adds=99, changes=[original])
+    dream.step_file(ctx)
+    dream.step_track(ctx)
+    fresh = dict(code('Retry lifecycle reads on gateways'), change='Retry gateway reads',
+                 fix='Bound gateway retries', evidence='Gateway reads failed')
+    ctx = night('2026-10-22', changes=[fresh])
+    ctx.facts['improve']['measurement_error'] = 'fixture measurements unavailable'
+    assert run_night(ctx, file_mode=file_mode) == int(file_mode == 'interrupted')
+    rows = actions(ctx)
+    assert len(rows) == 2 and {a['what'] for a in rows} == {original['title']}, rows
+    entry = rows[-1]
+    assert entry['retry_of'] == '2026-10-21' and entry['date'] == ctx.day, entry
+    assert entry['state'] == 'not filed: the file step did not run (%s); first mate woken' % file_mode, entry
+    assert all(entry[k] == fresh[k] for k in ('repo', 'change', 'fix', 'evidence')), entry
+    wake = [c for c in ctx.calls if c[0] == 'fake-wake']
+    assert ctx.adds == 0 and len(wake) == 1 and original['title'] in wake[0][2], ctx.calls
+    assert [c['title'] for c in dream.dropped_actions(night('2026-10-23'))] == [original['title']]
+    assert dream.dropped_actions(night('2026-10-29')) == []
+    assert dream.main(['resolve', '--home', str(ctx.home), '--what', original['title'],
+                       '--state', 'covered by https://example.test/pr/3']) == 0
+    assert dream.dropped_actions(night('2026-10-23')) == []
+
+for file_mode in ('skipped', 'interrupted', 'missing'):
     for tracking in ('normal', 'skipped', 'instructions'):
         root = base_root / ('unstarted-file-' + file_mode + '-' + tracking)
         changes = [code('Preserve a skipped filing decision'), code('Bound gateway retries')]

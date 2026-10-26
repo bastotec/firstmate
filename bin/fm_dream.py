@@ -3140,6 +3140,8 @@ def cmd_run(args):
                 and not any(a['kind'] == 'code' for a in life['tonight']):
             step = run['steps'].setdefault('file', {})
             state = 'not filed: the file step did not run (%s)' % (step.get('status') or 'missing')
+            if 'dropped_actions' not in ctx.facts:
+                ctx.facts['dropped_actions'] = dropped_actions(ctx) or []
             lost = []
             for _, entry in planned_code(ctx):
                 entry['state'] = state
