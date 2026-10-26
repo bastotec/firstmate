@@ -86,7 +86,7 @@ The file is size-capped through `FM_WATCH_CYCLE_LOG_MAX_BYTES` and `FM_WATCH_CYC
 A running watcher re-execs itself in place when any `bin/*.sh` is newer than its filesystem-clock start reference and the change has settled for `FM_WATCH_CODE_SETTLE` seconds (default 2), because bash keeps the loop it parsed at start and a merge would otherwise leave the old loop supervising until the next wake.
 The pid, the singleton lock, and the arm's wait carry over, the reloaded image skips the recovery bookkeeping of a fresh arm, and a changed `fm-watch.sh` that does not parse keeps the running code.
 
-[`configuration.md`](configuration.md#environment-variables) owns the guard, arm, and watcher stale-lock grace settings; `bin/fm-wake-lib.sh`'s `fm_poll_derived_grace` owns the poll-derived default's rationale.
+[`configuration.md`](configuration.md#environment-variables) owns the guard, arm, chat-host recovery and watcher stale-lock grace settings; `bin/fm-wake-lib.sh`'s `fm_poll_derived_grace` owns the poll-derived default's rationale.
 Only the watcher process touches `state/.last-watcher-beat`; no helper process can make a wedged watcher appear healthy.
 
 ## Regression coverage
@@ -96,6 +96,7 @@ Its `test_handling_successor_starts_while_queue_is_owned` case checks readiness 
 `tests/fm-wake-queue.test.sh` covers the relaunch publication contract: first launch records only an acknowledged baseline even over a queued prelaunch wake, its startup drain reopens that wake as ordinary downtime, relaunch after either the baseline or a marker-loss completed startup mints a fresh generation, pending, announced, and acknowledged episodes are replaced, watcher-close publication resolves against the live episode without resurrecting the stale generation, and the origin check rejects a live-watcher reopen while accepting a driver relaunch.
 `tests/fm-deck-harness.test.sh` covers the secondmate driver side: a relaunch claims the session lock and mints its fresh generation before session start, a recovery drain names that generation, and a duplicate launch over a live lock holder mints nothing.
 `tests/fm-deck-chat.test.sh` covers the primary driver side: first launch records the closed baseline, a live-lock duplicate leaves it unchanged, and relaunch publishes a new pending generation before session start.
+Its `test_watcher_grace_tracks_poll` and `test_stale_owned_watcher_is_replaced` cases pin the chat supervisor's recovery contract in [`fm_primary_chat.py`](../bin/fm_primary_chat.py).
 `tests/fm-watch-recovery-loop.test.sh` covers the once-per-generation announcement bound, a handling successor that must surface a real crew event instead of going blind, and a multi-poll foreign-queue continuity window with an observation clock unrelated to filesystem mtimes.
 The continuity-window case preserves singleton ownership and the acknowledged recovery generation through healthy queue progress, then requires exactly one durable stall notification without modifying the foreign row.
 `tests/fm-watch-triage-events.test.sh` covers the in-place code reload (same pid and lock, one watcher, startup-overlap detection, full-tree settling, post-reload recovery, and an unparseable change refused) and the main captain-inbox path: an unread note's row survives acknowledgement, is surfaced again at once, and has bounded interval repeats.

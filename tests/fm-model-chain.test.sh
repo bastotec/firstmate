@@ -317,8 +317,11 @@ test_chained_model_falls_through_after_recorded_refusal() {
   FM_STATE_OVERRIDE="$HOME_DIR/state" "$ROOT/bin/fm-record-model-refusal.sh" \
     "$id" codex/gpt-6-luna > /dev/null 2>&1
   [ -f "$HOME_DIR/state/model-chain/crew-$id.state" ] || fail "the recorder created no lane state"
-  # The refused head's worker exited, closing its endpoint.
+  # The refused head's worker exited, closing its endpoint. Its copy remains
+  # retained by metadata; a fresh spawn must allocate a different free copy.
   fm_test_close_task_endpoint "$HOME_DIR/state/$id.meta"
+  WT_DIR="$CASE_DIR/retry-wt"
+  git -C "$PROJ_DIR" worktree add -q --detach "$WT_DIR"
   out=$(run_chain_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$PROJ_DIR" \
     --model 'codex/gpt-6-luna,zai/glm-5.3,vercel/xiaomi/mimo-v2.6-flash')
   expect_code 0 "$?" "a spawn past a cooled-down head succeeds: $out"

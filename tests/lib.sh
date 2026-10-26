@@ -75,7 +75,11 @@ unset FM_TASK_ID
 # fallback. Nested shells must establish that identity after sourcing too.
 # tests/fm-inactive-reconcile.test.sh covers explicitly pinned launches under a
 # hostile ambient home and from a synthetic marked code root.
-unset FM_HOME FM_ROOT_OVERRIDE
+unset FM_HOME FM_ROOT_OVERRIDE FM_STATE_OVERRIDE FM_DATA_OVERRIDE \
+  FM_PROJECTS_OVERRIDE FM_CONFIG_OVERRIDE
+# A fixture arm is not a continuation of the invoking worker's watcher.
+# Inherited predecessor records can redirect its child and wait on live state.
+unset FM_WATCH_HANDLING_SUCCESSOR FM_WATCH_PREDECESSOR_ARM_PID
 
 # Clear the tasks-axi env overrides. An operator shell exports TASKS_AXI_FILE
 # (and may export TASKS_AXI_BACKEND) at its real home's backlog, and tasks-axi
@@ -658,6 +662,10 @@ fm_fake_exit0() {
   local fakebin=$1 tool
   shift
   for tool in "$@"; do
+    if [ "$tool" = treehouse ] && declare -F fm_test_fake_treehouse >/dev/null; then
+      fm_test_fake_treehouse "$fakebin"
+      continue
+    fi
     cat > "$fakebin/$tool" <<'SH'
 #!/usr/bin/env bash
 exit 0

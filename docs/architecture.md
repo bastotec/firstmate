@@ -177,7 +177,7 @@ Relaying that pty adds one state a local terminal lacks: a silent agent reads `u
 ## Worktrees, not branches in your checkout
 
 Crewmates never intentionally touch your project clone: [treehouse](https://github.com/kunchenguid/treehouse) pools clean worktrees, and stream only provides the session.
-The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns worktree isolation and fresh-base refusal, pinned by [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh).
+The [`fm-spawn.sh` header](../bin/fm-spawn.sh) owns isolation, retained-copy custody, fresh-base refusal and effective launch placement, pinned by [`tests/fm-spawn-pool-base-freshen.test.sh`](../tests/fm-spawn-pool-base-freshen.test.sh) and [`tests/fm-spawn-worktree-settle.test.sh`](../tests/fm-spawn-worktree-settle.test.sh).
 
 The firstmate repo has one extra exposure because it can dispatch crewmates to work on itself.
 Its operating checkout (`FM_ROOT`) and crewmate worktrees are linked worktrees of one repository, so the discriminator is branch state: the primary is healthy on its default branch, linked worktrees and secondmate homes at detached HEAD, and only a named non-default branch in `FM_ROOT` is a tangle.
@@ -255,7 +255,7 @@ A confirmed merge leaves a durable role-routed outcome rather than living in the
 The merge path persists the resolved yolo, away-grant, or attended authority bound to the PR identity, and a later merged poll consumes only that value or records the landing as external rather than consulting a live away record that may have been replaced ([`bin/fm-merge-authority-lib.sh`](../bin/fm-merge-authority-lib.sh)).
 
 Teardown is fail-closed for ship worktrees: dirty worktrees refuse, and committed work must be landed first.
-A pool worktree is returned only after the slot-ownership proof passes, and no discard authority relaxes it; the spawn's own slot claim backs that proof because Treehouse's process lease cannot answer ownership once the worker's exit releases it.
+A pool worktree is returned only after the slot-ownership proof passes, and no discard authority relaxes it; [`bin/fm-wake-lib.sh`](../bin/fm-wake-lib.sh) owns the task claim that backs that proof.
 Allocation and return serialize on one project lock per machine-local Firstmate tree, because a lock on one filesystem is not observable from another machine.
 Teardown concludes the task's own parked no-mistakes run first, so cleanup never orphans a run the pipeline advanced past the submitted head.
 [`bin/fm-teardown.sh`](../bin/fm-teardown.sh)'s header owns these proofs, and [`tests/fm-teardown-endpoint-safety.test.sh`](../tests/fm-teardown-endpoint-safety.test.sh) pins the slot boundary.

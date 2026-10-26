@@ -168,6 +168,9 @@ test_home_defaults_preserve_absolute_or_resolve_relative_paths() {
 
   linked_home="$CASE_DIR/home-link"
   ln -s "$HOME_DIR" "$linked_home"
+  # The first launch retains its allocation; this is a different task.
+  WT_DIR="$CASE_DIR/absolute-wt"
+  git -C "$PROJ_DIR" worktree add -q --detach "$WT_DIR"
   : > "$LAUNCH_LOG"
   out=$(
     FM_ROOT_OVERRIDE='' FM_HOME="$linked_home" \
@@ -332,7 +335,17 @@ test_active_dispatch_profile_allows_raw_launch_command() {
   assert_contains "$out" "spawned $id harness=custom-agent" "spawn did not report raw command harness"
   assert_meta_profile "$HOME_DIR/state/$id.meta" custom-agent default default
   launch=$(tail -n 1 "$LAUNCH_LOG")
-  [ "$launch" = "custom-agent --flag" ] || fail "raw launch command changed"$'\n'"actual: $launch"
+  # Execute the delivered command: placement may wrap a raw command, but must
+  # preserve its arguments and run it in the recorded allocation.
+  cat > "$FAKEBIN_DIR/custom-agent" <<'SH'
+#!/bin/sh
+pwd -P
+printf '%s\n' "$@"
+SH
+  chmod +x "$FAKEBIN_DIR/custom-agent"
+  out=$(PATH="$FAKEBIN_DIR:$PATH" /bin/sh -c "$launch") || fail "raw launch command failed"
+  assert_equals "$(printf '%s\n' "$(cd "$WT_DIR" && pwd -P)" --flag)" "$out" \
+    "raw launch must preserve argv and use the recorded copy"
   pass "active crew-dispatch profile allows the raw launch-command escape hatch"
 }
 
@@ -428,12 +441,26 @@ test_deck_secondmate_uses_home_driver_and_configured_pin() {
 }
 
 test_batch_forwards_shared_profile_flags() {
-  local rec id1 id2 out status
+  local rec id1 id2 out status wt2
   id1=profile-batch-a-z9
   id2=profile-batch-b-z10
   rec=$(make_spawn_case profile-batch deck "$id1" "$id2")
   read_case_record "$rec"
   enable_dispatch_profile "$HOME_DIR"
+  # A batch needs two free allocations, not one retained copy for both tasks.
+  wt2="$CASE_DIR/second-wt"
+  git -C "$PROJ_DIR" worktree add -q --detach "$wt2"
+  cat > "$FAKEBIN_DIR/treehouse" <<SH
+#!/usr/bin/env bash
+case "\$1" in
+  status) printf '[]\\n' ;;
+  get)
+    case "\$*" in
+      *"$id2"*) printf '%s\\n' '$wt2' ;;
+      *) printf '%s\\n' '$WT_DIR' ;;
+    esac ;;
+esac
+SH
 
   out=$(run_ship_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" \
     "$id1=$PROJ_DIR" "$id2=$PROJ_DIR" --harness deck --model openai-codex/gpt-5)

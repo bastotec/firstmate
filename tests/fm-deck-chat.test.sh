@@ -37,7 +37,14 @@ case "${1:-}" in --handling-delivered) exit 0 ;; esac
 echo $$ >> "$FM_HOME/watch.pids"
 echo "${FM_CHECK_INTERVAL:-300}" >> "$FM_HOME/watch.cadence"
 echo "watcher: started pid=$$ (beacon fresh)"
-while [ ! -e "$FM_HOME/wake.trigger" ]; do sleep 0.05; done
+if [ -e "$FM_HOME/track.descendants" ]; then
+  sleep 120 &
+  echo $! >> "$FM_HOME/watch.descendants"
+fi
+while [ ! -e "$FM_HOME/wake.trigger" ]; do
+  [ -e "$FM_HOME/freeze.beat" ] || touch "$FM_HOME/state/.last-watcher-beat"
+  sleep 0.05
+done
 cat "$FM_HOME/wake.trigger"; rm -f "$FM_HOME/wake.trigger"
 EOF
 cat > "$LAB/tools/deck" <<'EOF'
@@ -551,6 +558,115 @@ test_task_named_primary_blocks_the_host() {
   assert_absent "$home/state/.lock" "the refused host takes no lock"
   assert_absent "$LAB/deck-task.log" "the refused host never starts deck"
   pass "fm-deck-chat.sh: a task named primary blocks the host"
+}
+
+test_watcher_grace_tracks_poll() {
+  local home
+  home=$(new_home poll-grace)
+  python3 - "$BIN" "$home" <<'PY' || fail "watcher grace did not preserve a healthy long poll"
+import argparse, importlib.util, json, os, pathlib, subprocess, sys
+from unittest.mock import patch
+bin_dir, home = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('primary_chat', bin_dir / 'fm_primary_chat.py')
+primary = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(primary)
+(home / 'state/primary-chat').mkdir()
+(home / 'state/primary-chat.json').write_text(json.dumps({'events_file': str(home / 'events')}))
+args = argparse.Namespace(home=str(home), host_pid=os.getpid(), gen='fixture',
+                          events_offset=0, effort_headers=False)
+for poll, override, expected in [('15', None, 300), ('600', None, 660),
+                                  ('600', '720', 720), ('invalid', None, 300)]:
+    env = dict(os.environ, FM_POLL=poll)
+    env.pop('FM_GUARD_GRACE', None)
+    if override is not None:
+        env['FM_GUARD_GRACE'] = override
+    with patch.dict(os.environ, env, clear=True):
+        derived = subprocess.check_output(
+            ['bash', '-c', '. "$1"; fm_poll_derived_grace', '_', str(bin_dir / 'fm-wake-lib.sh')],
+            env=dict(env, FM_STATE_OVERRIDE=str(home / 'state')), text=True)
+        assert expected == (float(override) if override else float(derived))
+        supervisor = primary.Supervisor(args)
+        assert supervisor.watch_grace == expected, supervisor.watch_grace
+        clock = [1000.0]
+        beat = home / 'state/.last-watcher-beat'
+        beat.touch()
+        os.utime(beat, (clock[0], clock[0]))
+        kills = []
+        class Stop:
+            stopped = False
+            def is_set(self):
+                return self.stopped
+            def wait(self, _):
+                assert not kills
+                assert clock[0] <= 1000 + expected + 5, 'stale watcher was never replaced'
+                if clock[0] == 1000:
+                    clock[0] += expected - 1
+                else:
+                    clock[0] += 2
+        supervisor.stop = Stop()
+        proc = argparse.Namespace(poll=lambda: None)
+        def start_watch(_):
+            supervisor.watch = proc
+            return proc, None
+        def kill_watch():
+            kills.append(clock[0] - 1000)
+            supervisor.watch = None
+            supervisor.stop.stopped = True
+        supervisor.start_watch = start_watch
+        supervisor.kill_watch = kill_watch
+        with patch.object(primary.time, 'monotonic', lambda: clock[0]), \
+             patch.object(primary.time, 'time', lambda: clock[0]):
+            supervisor.run_watch()
+        assert kills == [expected + 1], kills
+PY
+  pass "watcher grace matches poll-aware defaults and explicit overrides"
+}
+
+test_stale_owned_watcher_is_replaced() {
+  local home host watch descendant foreign
+  home=$(new_home stale-owned-watcher)
+  touch "$home/freeze.beat" "$home/track.descendants"
+  sleep 120 &
+  foreign=$!
+  fm_test_track_helper_pid "$foreign"
+  mkdir "$home/state/.watch.lock"
+  printf '%s\n' "$foreign" > "$home/state/.watch.lock/pid"
+  FAKE_DECK_LOG="$LAB/deck-stale.log" FM_GUARD_GRACE=3 \
+    "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/host-stale.out" 2>&1 &
+  host=$!
+  fm_test_track_helper_pid "$host"
+  wait_for 20 "an owned watcher" watch_count "$home" 1
+  watch=$(last_watch_pid "$home")
+  wait_for 10 "an owned watcher descendant" test -s "$home/watch.descendants"
+  descendant=$(head -n 1 "$home/watch.descendants")
+  sleep 1
+  assert_equals 1 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "missing initial beacon must receive startup grace"
+  alive "$watch" || fail "watcher exited before its startup grace"
+  wait_for 20 "a missing-beacon child replacement" watch_count "$home" 2
+  wait_for 10 "the initial child exits" dead "$watch"
+  wait_for 10 "the initial process group exits" dead "$descendant"
+  rm "$home/freeze.beat"
+  wait_for 10 "a fresh replacement beacon" test -e "$home/state/.last-watcher-beat"
+  watch=$(last_watch_pid "$home")
+  sleep 4
+  assert_equals 2 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "fresh beacon must retain its child"
+  touch "$home/freeze.beat"
+  wait_for 20 "a stale owned child replacement" watch_count "$home" 3
+  wait_for 10 "the stale child exits" dead "$watch"
+  alive "$host" || fail "stale watcher recovery killed the host"
+  alive "$foreign" || fail "stale recovery signaled a recorded foreign watcher"
+  assert_equals "$foreign" "$(cat "$home/state/.watch.lock/pid")" "foreign watcher record must remain untouched"
+  assert_grep 'watcher beacon stale; replacing owned watcher child' \
+    "$home/state/primary-chat/host.log" "stale recovery was not recorded"
+  rm "$home/freeze.beat"
+  kill -TERM "$host"
+  wait_for 10 "the host exits" dead "$host"
+  while IFS= read -r descendant; do
+    wait_for 10 "owned watcher descendants stop with the host" dead "$descendant"
+  done < "$home/watch.descendants"
+  kill "$foreign"
+  wait "$foreign" 2>/dev/null || true
+  pass "fm-deck-chat.sh: stale owned watcher is replaced without restarting the host"
 }
 
 test_away_mode_pauses_the_watcher() {
@@ -1425,6 +1541,9 @@ test_service_keeper() {
   [ -n "$third" ] || fail "no host after the switch"
   assert_absent "$home/state/primary-chat/stopped" "a switch never writes the stopped marker"
   assert_absent "$home/state/primary-chat/switch" "the keeper takes the switch request"
+  # Host registration precedes Deck startup; wait for the replacement's argv,
+  # not merely its host PID, before inspecting the fake harness receipt.
+  wait_for 10 "the switched deck starts" grep -q '"--model", "fake/other"' "$FAKE_DECK_LOG"
   assert_contains "$(tail -1 "$FAKE_DECK_LOG")" "\"--session\", \"$session\"" "the switched host resumes the same deck session"
   assert_contains "$(tail -1 "$FAKE_DECK_LOG")" '"--model", "fake/other"' "the switched host runs the new model"
   assert_grep 'switching the primary to fake/other' "$home/state/primary-chat/service.log" "the keeper logs the switch"
@@ -1773,6 +1892,8 @@ test_stop_marker
 test_service_install
 test_service_alert
 test_attach_follows_restarts
+test_watcher_grace_tracks_poll
+test_stale_owned_watcher_is_replaced
 test_open_attaches_or_starts
 test_service_launcher_shutdown
 test_service_late_registration

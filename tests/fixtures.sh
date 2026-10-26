@@ -156,8 +156,26 @@ Exercise the spawn behavior under test.
 EOF
 }
 
+# Machine-readable Treehouse allocation stub shared by spawn fixtures.
+# FM_FAKE_PANE_PATH (or FM_FAKE_TREEHOUSE_PATH) is the acquired copy; inventory
+# and call logs are explicit fixture files, never the developer's real pool.
+fm_test_fake_treehouse() {  # <fakebin>
+  cat > "$1/treehouse" <<'SH'
+#!/usr/bin/env bash
+[ -z "${FM_FAKE_TREEHOUSE_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_TREEHOUSE_LOG"
+case "$1" in
+  status)
+    if [ -n "${FM_FAKE_TREEHOUSE_INVENTORY:-}" ]; then cat "$FM_FAKE_TREEHOUSE_INVENTORY"; else printf '[]\n'; fi
+    ;;
+  get) printf '%s\n' "${FM_FAKE_PANE_PATH:-${FM_FAKE_TREEHOUSE_PATH:-}}" ;;
+  return) ;;
+esac
+SH
+  chmod +x "$1/treehouse"
+}
+
 # fm_test_make_spawn_fakebin <dir> [extra-exit0-tool...]
-# Creates <dir>/fakebin with a no-op treehouse and any extra exit-0 tools.
+# Creates <dir>/fakebin with an allocation stub and any extra exit-0 tools.
 # Echoes the fakebin path. It checks the suite's already-started shared fake
 # stream hub (fm_test_fake_stream_ensure), which the spawn's endpoint comes
 # from: a spawn reaches it through the FM_STREAM_* variables this file exports.
@@ -165,7 +183,8 @@ fm_test_make_spawn_fakebin() {
   local dir=$1 fakebin
   shift
   fakebin=$(fm_fakebin "$dir")
-  fm_fake_exit0 "$fakebin" treehouse "$@"
+  fm_fake_exit0 "$fakebin" "$@"
+  fm_test_fake_treehouse "$fakebin"
   fm_test_fake_stream_ensure >/dev/null || return 1
   printf '%s\n' "$fakebin"
 }
@@ -465,9 +484,10 @@ fm_test_fake_stream_defaults() {
 }
 
 # fm_test_fake_stream_treehouse <dir>
-# Where a `treehouse get` typed into any fake endpoint moves its cwd - the
-# worktree a stream spawn then discovers through the endpoint's cwd.
+# Set the allocation stub's result (fm_test_fake_treehouse above) and retain
+# the fake endpoint's legacy `treehouse get` cwd behavior for direct callers.
 fm_test_fake_stream_treehouse() {
+  export FM_FAKE_TREEHOUSE_PATH=$1
   curl -fsS -m 10 --config <(printf 'header = "Authorization: Bearer %s"\n' "$FM_STREAM_TOKEN") -X POST -H 'Content-Type: application/json' \
     --data-binary "$(jq -nc --arg d "$1" '{treehouse_cwd: $d}')" \
     "$FM_TEST_STREAM_URL/v1/test/config" >/dev/null
