@@ -63,9 +63,13 @@
 #     state, source, detail, and raw line separately. detail is the unparsed tail
 #     after source, including the reader's trailing observation fields, not just
 #     its generic outcome detail; raw retains the entire line. The reader's
-#     format is owned by bin/fm-task-state-lib.sh. Remote secondmate rows use
-#     an explicit unknown value because their endpoint liveness belongs to
-#     supervision rather than this snapshot path.
+#     format is owned by bin/fm-task-state-lib.sh. Local current_state.stall is
+#     the read-only timing projection owned by bin/fm_stall_record.py ({} if
+#     unavailable); snapshot reads never acknowledge delivery or replace current
+#     state, holds or recovery authority. bin/fm-fleet-view.sh annotates stalled
+#     rows without changing their current-state verdict.
+#     Remote secondmate rows use an explicit unknown value because their
+#     endpoint liveness belongs to supervision rather than this snapshot path.
 #     paths.status_log.last_event is historical wake-event data only, never
 #     current state.
 #     hints.open_decisions is the keyed open-decision set returned by
@@ -381,8 +385,8 @@ last_nonempty_line() {  # <file>
 # A local crew-state read is bounded so one slow child cannot extend this
 # snapshot without limit. Remote secondmate endpoint liveness is never read here.
 # A local read that hits the bound folds to state unknown.
-crew_state_json() {  # <id> [<captured-meta>] [<captured-status>]
-  local id=$1 captured_meta=${2:-} captured_status=${3:-} raw rest state source detail sep
+crew_state_json() {  # <id> [<captured-meta>] [<captured-status>] [<open-decisions>]
+  local id=$1 captured_meta=${2:-} captured_status=${3:-} decisions=${4:-} raw rest state source detail sep
   raw=$(
     fm_run_timed "$FM_SNAPSHOT_CREW_STATE_TIMEOUT" \
       env FM_ROOT_OVERRIDE="$FM_ROOT" \
@@ -411,8 +415,11 @@ crew_state_json() {  # <id> [<captured-meta>] [<captured-status>]
       esac
       ;;
   esac
+  local stall
+  stall=$(python3 "$SCRIPT_DIR/fm_stall_record.py" "$STATE/idle-sweep/$id.stall.json" \
+    "${captured_meta:-$STATE/$id.meta}" "$raw" "$decisions" --state-dir "$STATE" --task-id "$id" 2>/dev/null) || stall='{}'
   jq -n --arg raw "$raw" --arg state "$state" --arg source "$source" --arg detail "$detail" \
-    '{state:$state,source:$source,detail:$detail,raw:$raw}'
+    --argjson stall "$stall" '{state:$state,source:$source,detail:$detail,raw:$raw,stall:$stall}'
 }
 
 status_event_json() {  # <observed-status-log> [<contract-path>]
@@ -698,7 +705,7 @@ snapshot_task_generation_is_current() {  # <captured-meta> <id>
 
 prefetch_task_observations() {  # <meta> <id>
   local meta=$1 id=$2 remote_host current_file endpoint_file current_pid='' current_rc=0
-  local status_log status_capture report_path report_capture
+  local status_log status_capture report_path report_capture decisions
   local backend target endpoint_exists=null agent_alive=not_checked agent_state=not_checked generation_current=1
   remote_host=$(meta_value "$meta" remote_host)
   current_file="$SNAPSHOT_TASK_DIR/$id.json"
@@ -714,12 +721,14 @@ prefetch_task_observations() {  # <meta> <id>
     snapshot_mark_optional_present "$report_path" "$report_capture" || current_rc=1
   fi
 
+  decisions=$(status_open_decisions "$status_capture")
+  printf '%s' "$decisions" > "$SNAPSHOT_TASK_DIR/$id.decisions" || current_rc=1
   if [ -n "$remote_host" ]; then
     jq -n '{state:"unknown",source:"none",detail:"remote endpoint liveness not collected by fleet snapshot",raw:""}' \
       > "$current_file" || current_rc=1
     agent_alive=unknown
   elif [ "$generation_current" = 1 ]; then
-    crew_state_json "$id" "$meta" "$status_capture" > "$current_file" &
+    crew_state_json "$id" "$meta" "$status_capture" "$decisions" > "$current_file" &
     current_pid=$!
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
@@ -771,6 +780,7 @@ prefetch_task_observations() {  # <meta> <id>
   # the manifest. If teardown/relaunch raced any read, discard the whole sample.
   if ! snapshot_task_generation_is_current "$meta" "$id"; then
     rm -f -- "$status_capture" "$report_capture"
+    : > "$SNAPSHOT_TASK_DIR/$id.decisions" || current_rc=1
     jq -n '{state:"unknown",source:"none",detail:"task generation changed during snapshot",raw:""}' \
       > "$current_file" || current_rc=1
     endpoint_exists=null
@@ -909,7 +919,7 @@ task_json_lines() {
     # never clear another concern's keyed decision. A parked/blocked state, or a
     # non-authoritative status-log/none read on a still-live task, keeps the fold's
     # open decision surfacing.
-    open_decisions_tsv=$(status_open_decisions "$status_log")
+    open_decisions_tsv=$(<"$SNAPSHOT_TASK_DIR/$id.decisions")
     if [ "$kind" != secondmate ] && \
        { { { [ "$current_source" = run-step ] || [ "$current_source" = pane ]; } \
            && [ "$current_state" = working ]; } \

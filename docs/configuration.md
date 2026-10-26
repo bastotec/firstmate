@@ -101,6 +101,8 @@ state/
   <id>.revive secondmate-revive.log  mid-session second-mate revival record and log (bin/fm-secondmate-revive.sh)
   <id>.held-stopped       deliberate secondmate stop marker (bin/fm-control.sh)
   idle-sweep.json idle-sweep.log idle-sweep/<id>.raised idle-sweep/<id>.retried <mate>.idle-audit <mate>.idle-audit-missing  idle-worker sweep summary, log, handoff and retry markers, second-mate audit episodes and missing-summary grace marks (bin/fm-idle-sweep.sh)
+  idle-sweep/<id>.stall.json  stalled-task timing and delivery episode (bin/fm_stall_record.py owns eligibility, recovery timing and deduplication)
+  idle-sweep/<id>.stall-delivered  main-home digest delivery receipts (bin/fm-parked-run-watch.sh header owns publication and receipt reconciliation)
   idle-sweep/.unhandled   main-home unhandled-set wake suppression marker; bin/fm-idle-sweep.sh owns its contents and reset contract
   <id>.check.sh <id>.check-trust  authenticated slow poll and custom-check binding (bin/fm-check-register.sh)
   <id>.pr-poll <id>.pr-poll-registration <id>.pr-poll-retirement <id>.pr-poll-merge-notified  PR merge poll records (bin/fm-pr-lib.sh)
@@ -779,7 +781,7 @@ Variables documented in a section above are not repeated: mail plane, auto-land 
 Script headers own the exact parsing and fallback of each value.
 [`bin/fm-idle-sweep.sh`](../bin/fm-idle-sweep.sh) owns `FM_IDLE_SWEEP_SECS` and the watcher-run cleanup, decision, and second-mate audit contract.
 For lane-failure thresholds, overdue hand-offs, and recovery tuning, see the health comments in [`fm-deck-worker.sh`](../bin/fm-deck-worker.sh), [`fm-captain-lane.sh`](../bin/fm-captain-lane.sh), and [`fm-secondmate-revive.sh`](../bin/fm-secondmate-revive.sh).
-[`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns parked-run and quiet-worker check-in timing; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
+[`fm_stall_record.py`'s header](../bin/fm_stall_record.py) owns stalled-task eligibility, thresholds and recovery timing; [`fm-parked-run-watch.sh`'s header](../bin/fm-parked-run-watch.sh) owns digest publication, fallback parked-run escalation and quiet-worker check-ins; [`fm-watch.sh`](../bin/fm-watch.sh) owns detached scan cadences.
 [`fm_ci_stall.py`'s docstring](../bin/fm_ci_stall.py) owns stalled-CI bounds and recovery tuning.
 [`fm_worker_keepalive.py`'s docstring](../bin/fm_worker_keepalive.py) owns the worker and parent-question bounds (`FM_KEEPALIVE_*`); [`fm-spawn.sh`'s header](../bin/fm-spawn.sh) owns `FM_SPAWN_TRANSIENT_RETRIES`, `FM_SPAWN_TRANSIENT_RETRY_SECS` and `FM_SPAWN_SERIAL_WAIT_SECS`.
 

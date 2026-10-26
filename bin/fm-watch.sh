@@ -173,6 +173,10 @@
 #                          records a ship, scout or second mate, has configured
 #                          but disarmed auto-land, or retains keep-alive episode
 #                          records that may need resolution
+#   check: stalled tasks digest: inspect pending questions and repair stalled implementation
+#                          surfaced once from episode-bearing stall-digest:
+#                          queue rows; bin/fm-parked-run-watch.sh's header owns
+#                          publication and receipt reconciliation
 #   check: idle workers need a decision / second mate not cleaning up idle workers: <id>...
 #                          surfaced once from durable queue rows keyed
 #                          idle-sweep:<epoch> and idle-sweep-audit:<mate>:<epoch>
@@ -1713,6 +1717,7 @@ procevent_surfaced_marker() {  # <queue-key>
   # for it, so it sat on the queue until an unrelated event closed a cycle.
   case "$1" in
     inbox:*) fm_inbox_surfaced_marker "$STATE" "$1" ;;
+    stall-digest:*) printf '%s/.seen-procevent-stall-%s' "$STATE" "$(printf '%s' "$1" | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')" ;;
     *) printf '%s/.seen-procevent-%s' "$STATE" "$(printf '%s' "$1" | LC_ALL=C od -An -tx1 | tr -d ' \n')" ;;
   esac
 }
@@ -1765,7 +1770,7 @@ procevent_surface_after_output() {
 }
 
 procevent_surface_queued() {
-  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" quiet="" keepalive="" crew_done=""
+  local key reason captured="" stranded="" unstarted="" notes="" revive="" idle="" idle_audit="" idle_left="" mates="" lanes="" parked="" quiet="" keepalive="" crew_done="" stalled=""
   PROCEVENT_SURFACED=
   [ -s "$FM_WAKE_QUEUE" ] || return 0
   fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
@@ -1777,7 +1782,7 @@ procevent_surface_queued() {
         notes="$notes ${key#inbox:}"
         continue
         ;;
-      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|keepalive:*|ci-stall:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|mate-mail:*|specialist:*|group:*|group-cleanup:*) ;;
+      procevent:*|secondmate-revive:*|lane-heal:*|parked-run:*|worker-quiet:*|keepalive:*|ci-stall:*|idle-sweep:*|idle-sweep-audit:*|idle-sweep-unhandled:*|stall-digest:*|mate-mail:*|specialist:*|group:*|group-cleanup:*) ;;
       *) continue ;;
     esac
     [ -e "$(procevent_surfaced_marker "$key")" ] && continue
@@ -1808,6 +1813,7 @@ procevent_surface_queued() {
         parked="$parked ${key%%:*}"
         ;;
       idle-sweep:*) idle=1 ;;
+      stall-digest:*) stalled=1 ;;
       mate-mail:*) mates="$mates ${key#mate-mail:}" ;;
       idle-sweep-unhandled:*) idle_left=1 ;;
       idle-sweep-audit:*)
@@ -1849,6 +1855,10 @@ procevent_surface_queued() {
   if [ -n "$idle" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"
     reason="$reason idle workers need a decision"
+  fi
+  if [ -n "$stalled" ]; then
+    [ "$reason" = "check:" ] || reason="$reason;"
+    reason="$reason stalled tasks digest: inspect pending questions and repair stalled implementation"
   fi
   if [ -n "$mates" ]; then
     [ "$reason" = "check:" ] || reason="$reason;"

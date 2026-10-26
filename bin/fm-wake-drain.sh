@@ -593,6 +593,10 @@ if [ -n "$ACK_THROUGH" ]; then
     echo "wake drain: secondmate stall receipt could not be recorded safely" >&2
     exit 1
   }
+  fm_wake_commit_stall_digests_through "$ACK_THROUGH" "$MAIN_ROWS_FILE" || {
+    echo "wake drain: stalled task delivery could not be recorded safely" >&2
+    exit 1
+  }
   ACK_REMOVED=$(( $(awk 'END { print NR }' "$FM_WAKE_QUEUE") - $(awk 'END { print NR }' "$DRAIN_TMP") ))
   if [ ! -s "$DRAIN_TMP" ]; then
     fm_recovery_marker_ack "$RECOVERY_MARKER" "$ACK_GENERATION"

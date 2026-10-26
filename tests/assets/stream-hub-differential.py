@@ -55,6 +55,7 @@ class Pilot:
         self.directory = directory
         self.directory.mkdir()
         self.processes = []
+        self.command_ack_secs = 0.25
         self.capabilities = {}
         self.directory.joinpath("tokens").write_text(
             "publish:pub\nsubscribe,control:ctl\nview\nsubscribe:union\ncontrol:union\n")
@@ -69,7 +70,7 @@ class Pilot:
         begin = time.monotonic()
         self.hub = subprocess.Popen(self.command + ["serve", "--port", str(port),
             "--token-file", str(self.directory / "tokens"), "--ready-file", str(ready),
-            "--command-ack-secs", "0.25", "--state-max-age-secs", "0.5"],
+            "--command-ack-secs", str(self.command_ack_secs), "--state-max-age-secs", "0.5"],
             stdout=self.log, stderr=self.log)
         for _ in range(300):
             if ready.exists() and ready.stat().st_size:
@@ -446,6 +447,11 @@ def exercise(p):
 
 
 def peers(p):
+    # Real agent scheduling and re-registration must not race the deliberately
+    # short timeout used by exercise() to test missing acknowledgments.
+    p.stop()
+    p.command_ack_secs = 5
+    p.start()
     ready = p.directory / "agent-ready"
     status = p.directory / "peer-status"
     home = p.directory / "peer-home"

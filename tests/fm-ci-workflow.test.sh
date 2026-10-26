@@ -257,6 +257,47 @@ end
   pass "PR and main push steps execute all affected and full owner shards with history"
 }
 
+test_stock_snapshot_count_executes_the_workflow_consumer() {
+  local tmp count rc
+  if ! /bin/bash -c '[[ $BASH_VERSION == 3.2.57* ]]'; then
+    echo 'skip: stock macOS Bash 3.2.57 unavailable for snapshot count consumer'
+    return 0
+  fi
+  tmp=$(fm_test_tmproot fm-ci-stock-snapshot-count)
+  mkdir -p "$tmp/bin" "$tmp/tests"
+  ruby -ryaml -e '
+step = YAML.load_file(ARGV[0]).fetch("jobs").fetch("macos-stock-bash").fetch("steps").find do |s|
+  s["name"] == "Run snapshot consumers with stock Bash"
+end
+File.write(ARGV[1], step.fetch("run"))
+' "$CI_WORKFLOW" "$tmp/step.sh" || fail 'could not extract the stock snapshot consumer'
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/fm-lint.sh"
+  # shellcheck disable=SC2016 # Expand variables in the generated child script, not here.
+  printf '#!/usr/bin/env bash\n[ "$1" != prefix ] || printf "%%s\\n" "$RUNNER_TEMP"\nexit 0\n' > "$tmp/bin/npm"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$tmp/bin/tasks-axi"
+  cat > "$tmp/tests/fm-fleet-snapshot-view.test.sh" <<'SH'
+for ((i=0; i<SNAPSHOT_CASES; i++)); do printf 'ok - snapshot case %s\n' "$i"; done
+SH
+  cat > "$tmp/tests/fm-bearings-snapshot.test.sh" <<'SH'
+for ((i=0; i<61; i++)); do printf 'ok - bearings case %s\n' "$i"; done
+SH
+  printf 'printf "ok - register regression\\n"\n' > "$tmp/tests/fm-public-followup.test.sh"
+  chmod +x "$tmp/bin/"*
+  for count in 24 23 25; do
+    rc=0
+    (cd "$tmp" && PATH="$tmp/bin:$PATH" RUNNER_TEMP="$tmp" SNAPSHOT_CASES="$count" \
+      /bin/bash step.sh) > "$tmp/output" 2>&1 || rc=$?
+    if [ "$count" = 24 ]; then
+      [ "$rc" -eq 0 ] || fail "stock consumer rejected 24 snapshot cases: $(cat "$tmp/output")"
+    else
+      [ "$rc" -ne 0 ] || fail "stock consumer accepted $count snapshot cases"
+      assert_contains "$(cat "$tmp/output")" "expected 24 snapshot/fleet-view tests, got $count" 'snapshot count diagnostic'
+    fi
+  done
+  pass 'the stock workflow consumer accepts exactly 24 snapshot cases'
+}
+
+test_stock_snapshot_count_executes_the_workflow_consumer
 test_lint_event_modes_execute_the_owner
 test_ci_stays_within_its_runner_budget
 test_coverage_guard_and_proven_set_have_owner_jobs

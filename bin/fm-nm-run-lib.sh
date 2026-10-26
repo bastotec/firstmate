@@ -195,9 +195,14 @@ fm_nm_run_is_pipeline_owned_active() {  # <toon-output>
 # scan, a newest row whose class is live or unclassifiable is still answered
 # as-is, the anchored pipeline-continuation path is untouched, and with no live
 # sibling the newest terminal word is still what is printed.
+# Optional projection $5=history returns timing, not a current-state verdict:
+# the newest same-branch row must be terminal with a resolvable head retained
+# in the worktree's ancestry. It prints "<creation-epoch> ledger-<full-head>"
+# from the ledger's minute-precision timestamp, or nothing if unproven.
 # Read-only: git reads resolve objects in place; custody never changes.
-fm_nm_runs_status_for_worktree() {  # <worktree> <branch> <runs-list-output> [expected-head]
-  local wt=$1 branch=$2 list=$3 expected_head=${4:-}
+fm_nm_runs_status_for_worktree() {  # <worktree> <branch> <runs-list-output> [expected-head] [status|history]
+  local wt=$1 branch=$2 list=$3 expected_head=${4:-} projection=${5:-status}
+  local history_epoch
   local local_full row_full row st br sha day clock pr extra year_num month_num day_num max_day pending_st=''
   # Set only by the newest binding row when its status classifies terminal, and
   # printed when the scan ends without finding a live row for this worktree. It
@@ -237,6 +242,17 @@ fm_nm_runs_status_for_worktree() {  # <worktree> <branch> <runs-list-output> [ex
     esac
     [ "$day_num" -ge 1 ] && [ "$day_num" -le "$max_day" ] || break
     [ "$br" = "$branch" ] || continue
+    if [ "$projection" = history ]; then
+      [ "$(fm_nm_run_status_class "$st")" = terminal ] || break
+      row_full=$(fm_nm_resolve_commit "$wt" "$sha")
+      [ -n "$row_full" ] || break
+      git -C "$wt" merge-base --is-ancestor "$row_full" HEAD 2>/dev/null || break
+      history_epoch=$(date -j -f '%Y-%m-%d %H:%M:%S' "$day $clock:00" +%s 2>/dev/null \
+        || date -d "$day $clock:00" +%s 2>/dev/null) || break
+      [ "$history_epoch" -gt 0 ] && [ "$history_epoch" -le "$(date +%s)" ] || break
+      printf '%s %s' "$history_epoch" "ledger-$row_full"
+      return 0
+    fi
     if [ -n "$decided" ]; then
       # Live-over-terminal: the newest row bound to this worktree but is a
       # terminal record, so the older rows are searched for a live run that
