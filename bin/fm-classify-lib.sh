@@ -421,8 +421,8 @@ _fm_classify_is_corr_token() {  # <word>
 # _fm_status_line_note_into <line>       sets _FM_NOTE
 # _fm_decision_key_into <line>           sets _FM_KEY, fails like the wrapper
 # _fm_decision_drop_into <set> <key>     sets _FM_SET; newline contract below
-# _fm_decision_fold_line_into <open> <line> <resolve> <held>
-#                                        sets _FM_OPEN to what the wrapper prints
+# _fm_decision_fold_line_into             sets _FM_OPEN; see its signature and
+#                                        note-reference safety constraint below
 _fm_strip_trailing_newlines_into() {  # <text> -> _FM_STRIPPED, as $(...) would
   _FM_STRIPPED=$1
   while :; do
