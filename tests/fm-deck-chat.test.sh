@@ -37,6 +37,10 @@ case "${1:-}" in --handling-delivered) exit 0 ;; esac
 echo $$ >> "$FM_HOME/watch.pids"
 echo "${FM_CHECK_INTERVAL:-300}" >> "$FM_HOME/watch.cadence"
 echo "watcher: started pid=$$ (beacon fresh)"
+if [ -e "$FM_HOME/track.descendants" ]; then
+  sleep 120 &
+  echo $! >> "$FM_HOME/watch.descendants"
+fi
 while [ ! -e "$FM_HOME/wake.trigger" ]; do
   [ -e "$FM_HOME/freeze.beat" ] || touch "$FM_HOME/state/.last-watcher-beat"
   sleep 0.05
@@ -557,26 +561,49 @@ test_task_named_primary_blocks_the_host() {
 }
 
 test_stale_owned_watcher_is_replaced() {
-  local home host watch
+  local home host watch descendant foreign
   home=$(new_home stale-owned-watcher)
-  FAKE_DECK_LOG="$LAB/deck-stale.log" FM_GUARD_GRACE=2 \
+  touch "$home/freeze.beat" "$home/track.descendants"
+  sleep 120 &
+  foreign=$!
+  fm_test_track_helper_pid "$foreign"
+  mkdir "$home/state/.watch.lock"
+  printf '%s\n' "$foreign" > "$home/state/.watch.lock/pid"
+  FAKE_DECK_LOG="$LAB/deck-stale.log" FM_GUARD_GRACE=3 \
     "$BIN/fm-deck-chat.sh" --home "$home" < /dev/null > "$LAB/host-stale.out" 2>&1 &
   host=$!
   fm_test_track_helper_pid "$host"
   wait_for 20 "an owned watcher" watch_count "$home" 1
   watch=$(last_watch_pid "$home")
-  # Healthy child is not replaced just because the host has been alive.
-  sleep 3
-  assert_equals 1 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "fresh beacon must retain its child"
+  wait_for 10 "an owned watcher descendant" test -s "$home/watch.descendants"
+  descendant=$(head -n 1 "$home/watch.descendants")
+  sleep 1
+  assert_equals 1 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "missing initial beacon must receive startup grace"
+  alive "$watch" || fail "watcher exited before its startup grace"
+  wait_for 20 "a missing-beacon child replacement" watch_count "$home" 2
+  wait_for 10 "the initial child exits" dead "$watch"
+  wait_for 10 "the initial process group exits" dead "$descendant"
+  rm "$home/freeze.beat"
+  wait_for 10 "a fresh replacement beacon" test -e "$home/state/.last-watcher-beat"
+  watch=$(last_watch_pid "$home")
+  sleep 4
+  assert_equals 2 "$(wc -l < "$home/watch.pids" | tr -d ' ')" "fresh beacon must retain its child"
   touch "$home/freeze.beat"
-  wait_for 20 "a stale owned child replacement" watch_count "$home" 2
+  wait_for 20 "a stale owned child replacement" watch_count "$home" 3
   wait_for 10 "the stale child exits" dead "$watch"
   alive "$host" || fail "stale watcher recovery killed the host"
+  alive "$foreign" || fail "stale recovery signaled a recorded foreign watcher"
+  assert_equals "$foreign" "$(cat "$home/state/.watch.lock/pid")" "foreign watcher record must remain untouched"
   assert_grep 'watcher beacon stale; replacing owned watcher child' \
     "$home/state/primary-chat/host.log" "stale recovery was not recorded"
   rm "$home/freeze.beat"
   kill -TERM "$host"
   wait_for 10 "the host exits" dead "$host"
+  while IFS= read -r descendant; do
+    wait_for 10 "owned watcher descendants stop with the host" dead "$descendant"
+  done < "$home/watch.descendants"
+  kill "$foreign"
+  wait "$foreign" 2>/dev/null || true
   pass "fm-deck-chat.sh: stale owned watcher is replaced without restarting the host"
 }
 

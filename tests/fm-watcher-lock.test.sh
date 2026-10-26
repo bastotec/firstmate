@@ -255,7 +255,8 @@ test_lock_create_failure_is_not_stale_contention() {
     # Negative control: ordinary acquisition and release still work.
     fm_lock_try_acquire "$lock" || exit 10
     fm_lock_release "$lock"
-    for primitive in mktemp ln; do
+    prepare_owner=$(declare -f fm_lock_prepare_owner)
+    for primitive in mktemp ln fm_lock_prepare_owner; do
       calls=0
       # Bound the unchanged-code counterfactual without filling the disk.
       eval "$primitive() { calls=\$((calls+1)); printf x >> \"$2/calls\"; return 1; }"
@@ -264,9 +265,11 @@ test_lock_create_failure_is_not_stale_contention() {
       [ "$(wc -c < "$2/calls")" -eq 1 ] || exit 12
       [ "$FM_LOCK_CREATE_FAILED" = 1 ] || exit 13
       if fm_lock_acquire_wait "$lock"; then exit 14; fi
+      [ "$(wc -c < "$2/calls")" -eq 2 ] || exit 18
       [ ! -e "$lock.steal" ] && [ ! -L "$lock.steal" ] || exit 15
       unset -f "$primitive"
     done
+    eval "$prepare_owner"
     # Real path-length failure with a writable, existing parent.
     long=$(printf "%0250d" 0)
     if fm_lock_acquire_wait "$2/$long"; then exit 16; fi
@@ -275,6 +278,52 @@ test_lock_create_failure_is_not_stale_contention() {
   ' _ "$LIB" "$state" || rc=$?
   [ "$rc" -eq 0 ] || fail "lock creation failure recursed, waited or broke reuse (rc=$rc)"
   pass "failed lock primitives refuse without stale-steal recursion or waiting"
+}
+
+test_lock_wait_retries_released_publication_contention() {
+  local dir state rc
+  dir=$(make_case lock-publication-contention)
+  state="$dir/state"
+  rc=0
+  . "$ROOT/bin/fm-timeout-lib.sh"
+  HOME="$dir" FM_STATE_OVERRIDE="$state" fm_run_timed 10 bash -c '
+    . "$1"
+    lib=$1
+    state=$2
+    for mode in created exists; do
+      lock="$state/.$mode.lock"
+      raced="$state/$mode.raced"
+      ln() {
+        if [ ! -e "$raced" ]; then
+          bash -c '\''
+            . "$1"
+            fm_lock_try_acquire "$2" || exit 20
+            if [ "$5" = exists ]; then
+              command ln -s "$3" "$2" || exit 21
+            fi
+            command ln -s "$3" "$2"
+            rc=$?
+            fm_lock_remove_stray_owner_link "$2" "$3"
+            fm_lock_release "$2"
+            printf "%s\n" "$rc" > "$4"
+            exit "$rc"
+          '\'' _ "$lib" "$3" "$2" "$raced" "$mode"
+          return $?
+        fi
+        command ln "$@"
+      }
+      fm_lock_acquire_wait "$lock" || exit 10
+      case "$mode:$(cat "$raced")" in created:0|exists:1) ;; *) exit 11 ;; esac
+      [ "$(cat "$lock/pid")" = "$$" ] || exit 12
+      [ "$FM_LOCK_CREATE_FAILED" = 0 ] || exit 13
+      [ ! -e "$lock.steal" ] && [ ! -L "$lock.steal" ] || exit 14
+      fm_lock_release "$lock"
+      [ ! -e "$lock" ] && [ ! -L "$lock" ] || exit 15
+      unset -f ln
+    done
+  ' _ "$LIB" "$state" || rc=$?
+  [ "$rc" -eq 0 ] || fail "released publication contention was refused or leaked ownership (rc=$rc)"
+  pass "lock wait retries a competing publication released before ln returns"
 }
 
 test_lock_wait_returns_when_its_directory_is_gone() {
@@ -1167,10 +1216,9 @@ test_msys_pid_identity_uses_proc() {
   pass "MSYS process identity uses compatible /proc fields"
 }
 
-# Focused primitive proof avoids unrelated watcher startup observation windows.
 if [ -n "${FM_TEST_CASE:-}" ]; then
   case "$FM_TEST_CASE" in
-    test_lock_create_failure_is_not_stale_contention) "$FM_TEST_CASE"; exit ;;
+    test_lock_create_failure_is_not_stale_contention|test_lock_wait_retries_released_publication_contention) "$FM_TEST_CASE"; exit ;;
     *) fail "unsupported focused lock case: $FM_TEST_CASE" ;;
   esac
 fi
@@ -1186,6 +1234,7 @@ test_guard_warnings
 test_lock_single_winner_under_concurrency
 test_lock_steals_dead_pid_lock
 test_lock_create_failure_is_not_stale_contention
+test_lock_wait_retries_released_publication_contention
 test_lock_wait_returns_when_its_directory_is_gone
 test_lock_stale_steal_single_winner_under_concurrency
 test_lock_live_steal_mutex_is_not_reclaimed

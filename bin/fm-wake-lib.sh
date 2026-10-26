@@ -416,7 +416,7 @@ fm_lock_claim() {
 }
 
 fm_lock_try_create() {
-  local lockdir=$1 allowed_steal_owner=${2:-} ownerdir
+  local lockdir=$1 allowed_steal_owner=${2:-} ownerdir link_error link_created=0
   FM_LOCK_OWNER_DIR=
   FM_LOCK_CREATE_FAILED=0
   ownerdir=$(fm_lock_owner_dir "$lockdir") || { FM_LOCK_CREATE_FAILED=1; return 1; }
@@ -429,7 +429,10 @@ fm_lock_try_create() {
     FM_LOCK_CREATE_FAILED=1
     return 1
   fi
-  if ln -s "$ownerdir" "$lockdir" 2>/dev/null && fm_lock_points_to_owner "$lockdir" "$ownerdir"; then
+  if link_error=$(LC_ALL=C ln -s "$ownerdir" "$lockdir" 2>&1); then
+    link_created=1
+  fi
+  if [ "$link_created" = 1 ] && fm_lock_points_to_owner "$lockdir" "$ownerdir"; then
     if fm_lock_claim "$lockdir" "$ownerdir" "$allowed_steal_owner"; then
       FM_LOCK_OWNER_DIR=$ownerdir
       return 0
@@ -439,9 +442,12 @@ fm_lock_try_create() {
     fi
   else
     fm_lock_remove_stray_owner_link "$lockdir" "$ownerdir"
-    if [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ] \
+    if [ "$link_created" = 0 ] && [ ! -e "$lockdir" ] && [ ! -L "$lockdir" ] \
        && ! fm_lock_claim_blocked_by_steal "$lockdir" "$allowed_steal_owner"; then
-      FM_LOCK_CREATE_FAILED=1
+      case "$link_error" in
+        *': File exists') ;;
+        *) FM_LOCK_CREATE_FAILED=1 ;;
+      esac
     fi
   fi
   fm_lock_discard_owner "$ownerdir"
