@@ -560,6 +560,68 @@ test_task_named_primary_blocks_the_host() {
   pass "fm-deck-chat.sh: a task named primary blocks the host"
 }
 
+test_watcher_grace_tracks_poll() {
+  local home
+  home=$(new_home poll-grace)
+  python3 - "$BIN" "$home" <<'PY' || fail "watcher grace did not preserve a healthy long poll"
+import argparse, importlib.util, json, os, pathlib, subprocess, sys
+from unittest.mock import patch
+bin_dir, home = map(pathlib.Path, sys.argv[1:])
+spec = importlib.util.spec_from_file_location('primary_chat', bin_dir / 'fm_primary_chat.py')
+primary = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(primary)
+(home / 'state/primary-chat').mkdir()
+(home / 'state/primary-chat.json').write_text(json.dumps({'events_file': str(home / 'events')}))
+args = argparse.Namespace(home=str(home), host_pid=os.getpid(), gen='fixture',
+                          events_offset=0, effort_headers=False)
+for poll, override, expected in [('15', None, 300), ('600', None, 660),
+                                  ('600', '720', 720), ('invalid', None, 300)]:
+    env = dict(os.environ, FM_POLL=poll)
+    env.pop('FM_GUARD_GRACE', None)
+    if override is not None:
+        env['FM_GUARD_GRACE'] = override
+    with patch.dict(os.environ, env, clear=True):
+        derived = subprocess.check_output(
+            ['bash', '-c', '. "$1"; fm_poll_derived_grace', '_', str(bin_dir / 'fm-wake-lib.sh')],
+            env=dict(env, FM_STATE_OVERRIDE=str(home / 'state')), text=True)
+        assert expected == (float(override) if override else float(derived))
+        supervisor = primary.Supervisor(args)
+        assert supervisor.watch_grace == expected, supervisor.watch_grace
+        clock = [1000.0]
+        beat = home / 'state/.last-watcher-beat'
+        beat.touch()
+        os.utime(beat, (clock[0], clock[0]))
+        kills = []
+        class Stop:
+            stopped = False
+            def is_set(self):
+                return self.stopped
+            def wait(self, _):
+                assert not kills
+                assert clock[0] <= 1000 + expected + 5, 'stale watcher was never replaced'
+                if clock[0] == 1000:
+                    clock[0] += expected - 1
+                else:
+                    clock[0] += 2
+        supervisor.stop = Stop()
+        proc = argparse.Namespace(poll=lambda: None)
+        def start_watch(_):
+            supervisor.watch = proc
+            return proc, None
+        def kill_watch():
+            kills.append(clock[0] - 1000)
+            supervisor.watch = None
+            supervisor.stop.stopped = True
+        supervisor.start_watch = start_watch
+        supervisor.kill_watch = kill_watch
+        with patch.object(primary.time, 'monotonic', lambda: clock[0]), \
+             patch.object(primary.time, 'time', lambda: clock[0]):
+            supervisor.run_watch()
+        assert kills == [expected + 1], kills
+PY
+  pass "watcher grace matches poll-aware defaults and explicit overrides"
+}
+
 test_stale_owned_watcher_is_replaced() {
   local home host watch descendant foreign
   home=$(new_home stale-owned-watcher)
@@ -1821,20 +1883,13 @@ if [ -n "${FM_TEST_DECK_CHAT_CASES:-}" ]; then
   exit 0
 fi
 
-# Focused execution remains inside this suite and the guarded repository runner.
-if [ -n "${FM_TEST_CASE:-}" ]; then
-  case "$FM_TEST_CASE" in
-    test_stale_owned_watcher_is_replaced) "$FM_TEST_CASE"; exit ;;
-    *) fail "unsupported focused host case: $FM_TEST_CASE" ;;
-  esac
-fi
-
 test_steer_contract_without_a_host
 test_split_home_captain_thread_and_supervisor
 test_stop_marker
 test_service_install
 test_service_alert
 test_attach_follows_restarts
+test_watcher_grace_tracks_poll
 test_stale_owned_watcher_is_replaced
 test_open_attaches_or_starts
 test_service_launcher_shutdown

@@ -581,7 +581,9 @@ class Supervisor:
         self.steer_bin = os.environ.get('FM_PRIMARY_STEER_BIN') or str(BIN / 'fm-primary-steer.sh')
         self.backoff = float(os.environ.get('FM_DECK_CHAT_WATCH_BACKOFF', '2'))
         self.backoff_max = float(os.environ.get('FM_DECK_CHAT_WATCH_BACKOFF_MAX', '60'))
-        self.watch_grace = env_seconds('FM_GUARD_GRACE', 300)
+        poll = os.environ.get('FM_POLL', '15')
+        poll = int(poll) if re.fullmatch(r'[0-9]+', poll) else 15
+        self.watch_grace = env_seconds('FM_GUARD_GRACE', max(300, poll + 60))
         # Per-turn reasoning effort (bin/fm-effort-policy.sh owns the policy):
         # on only when the host's deck takes the `deck-effort:` header.
         self.effort_headers = args.effort_headers

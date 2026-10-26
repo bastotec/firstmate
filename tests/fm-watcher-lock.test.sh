@@ -290,7 +290,7 @@ test_lock_wait_retries_released_publication_contention() {
     . "$1"
     lib=$1
     state=$2
-    for mode in created exists; do
+    for mode in created exists vanished; do
       lock="$state/.$mode.lock"
       raced="$state/$mode.raced"
       ln() {
@@ -298,6 +298,15 @@ test_lock_wait_retries_released_publication_contention() {
           bash -c '\''
             . "$1"
             fm_lock_try_acquire "$2" || exit 20
+            if [ "$5" = vanished ]; then
+              [ -d "$2" ] || exit 22
+              nested="$2/${3##*/}"
+              fm_lock_release "$2"
+              command ln -s "$3" "$nested"
+              rc=$?
+              printf "%s\n" "$rc" > "$4"
+              exit "$rc"
+            fi
             if [ "$5" = exists ]; then
               command ln -s "$3" "$2" || exit 21
             fi
@@ -313,7 +322,7 @@ test_lock_wait_retries_released_publication_contention() {
         command ln "$@"
       }
       fm_lock_acquire_wait "$lock" || exit 10
-      case "$mode:$(cat "$raced")" in created:0|exists:1) ;; *) exit 11 ;; esac
+      case "$mode:$(cat "$raced")" in created:0|exists:1|vanished:1) ;; *) exit 11 ;; esac
       [ "$(cat "$lock/pid")" = "$$" ] || exit 12
       [ "$FM_LOCK_CREATE_FAILED" = 0 ] || exit 13
       [ ! -e "$lock.steal" ] && [ ! -L "$lock.steal" ] || exit 14

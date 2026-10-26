@@ -416,7 +416,7 @@ fm_lock_claim() {
 }
 
 fm_lock_try_create() {
-  local lockdir=$1 allowed_steal_owner=${2:-} ownerdir link_error link_created=0
+  local lockdir=$1 allowed_steal_owner=${2:-} ownerdir link_error link_parent link_created=0
   FM_LOCK_OWNER_DIR=
   FM_LOCK_CREATE_FAILED=0
   ownerdir=$(fm_lock_owner_dir "$lockdir") || { FM_LOCK_CREATE_FAILED=1; return 1; }
@@ -446,6 +446,13 @@ fm_lock_try_create() {
        && ! fm_lock_claim_blocked_by_steal "$lockdir" "$allowed_steal_owner"; then
       case "$link_error" in
         *': File exists') ;;
+        *': No such file or directory')
+          link_parent=${lockdir%/*}
+          [ "$link_parent" != "$lockdir" ] || link_parent=.
+          [ -n "$link_parent" ] || link_parent=/
+          [ -d "$link_parent" ] && [ -w "$link_parent" ] && [ -x "$link_parent" ] \
+            || FM_LOCK_CREATE_FAILED=1
+          ;;
         *) FM_LOCK_CREATE_FAILED=1 ;;
       esac
     fi

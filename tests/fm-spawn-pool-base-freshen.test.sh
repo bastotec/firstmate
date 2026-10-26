@@ -1189,6 +1189,10 @@ test_preserved_custody_refuses_before_writes() {
     [ "$(cat "$SLOT_CLAIM" 2>/dev/null || true)" = "$claim" ] || fail "$kind claim was overwritten"
     [ ! -e "$HOME_DIR/state/$id.meta" ] || fail "$kind published a new worker record"
     if [ "$kind" != unpublished ]; then
+      assert_present "$CASE_DIR/treehouse.log" "$kind did not record Treehouse calls"
+      if grep -Eq '^get([[:space:]]|$)' "$CASE_DIR/treehouse.log"; then
+        fail "$kind reached Treehouse get before refusing retained custody"
+      fi
       assert_equals "$refs" "$(git -C "$POOL_DIR" for-each-ref --format='%(refname) %(objectname)')" "$kind changed refs before proving custody"
     fi
     case "$kind" in *-clean) ;; *) [ -f "$POOL_DIR/builder.txt" ] || fail "$kind lost unpublished work" ;; esac
