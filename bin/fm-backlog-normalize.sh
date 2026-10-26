@@ -20,11 +20,14 @@
 # Reads and rewrites hold tasks-axi's <backlog>.lock, created exclusively with
 # a unique token. Lock contention retries for about 2.5 seconds, then skips
 # quietly; cleanup removes the lock only while its token still matches.
-# At most one dead-writer lock is reclaimed per invocation: this command's and
-# tasks-axi's tokens start with the writer's pid, and the token is re-read before
-# removal to avoid deleting a replacement lock. Live or unparsable pids are kept.
-# This lets later writes recover after a writer is killed while holding the lock;
-# tests/fm-backlog-normalize.test.sh covers dead, live and unparsable lock tokens.
+# Dead-lock reclaim is attempted at most once per invocation, following
+# fm-backlog-receive.sh: only regular non-symlink locks at least 30 seconds old
+# whose token starts with a dead writer pid qualify; live or unparsable pids stay.
+# The token is re-read immediately before removal. Like the receiver's reclaim
+# and tasks-axi's advisory lock, this is a low-contention single-supervisor model:
+# a sub-millisecond compare-then-remove window between two reclaimers of the same
+# dead lock is accepted; the 30 s age plus dead-pid check make it practically
+# unreachable. Atomic temp+rename keeps the file whole.
 # The rewrite preserves the file mode and uses an atomic temporary-file rename.
 # A checksum guard also skips publication if the file changed during the read.
 # A skipped run leaves repair to a later invocation, not a clean-file guarantee.
@@ -89,25 +92,37 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# Removes the lock when its writer's pid is gone; the token is re-read right
-# before removal so a lock taken over meanwhile is left alone.
+lock_age() {
+  local modified now
+  if [ "$(uname 2>/dev/null)" = Darwin ]; then
+    modified=$(/usr/bin/stat -f '%m' "$1" 2>/dev/null) || return 1
+  else
+    modified=$(stat -c '%Y' "$1" 2>/dev/null) || return 1
+  fi
+  now=$(date +%s) || return 1
+  case "$modified$now" in *[!0-9]*) return 1 ;; esac
+  printf '%s\n' "$((now - modified))"
+}
 reclaim_dead_lock() {
-  local token pid
-  token=$(cat "$LOCK" 2>/dev/null) || return 1
+  local token pid age
+  [ -f "$LOCK" ] && [ ! -L "$LOCK" ] || return 1
+  IFS= read -r token < "$LOCK" || return 1
   pid=${token%%:*}
   case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$pid" != "$$" ] || return 1
   kill -0 "$pid" 2>/dev/null && return 1
-  ps -p "$pid" >/dev/null 2>&1 && return 1
+  age=$(lock_age "$LOCK") || return 1
+  [ "$age" -ge 30 ] || return 1
   [ "$(cat "$LOCK" 2>/dev/null)" = "$token" ] || return 1
   rm -f -- "$LOCK"
 }
 attempt=0
-reclaimed=0
+reclaim_attempted=0
 until (set -C; printf '%s\n' "$LOCK_TOKEN" > "$LOCK") 2>/dev/null; do
-  if [ "$reclaimed" = 0 ] && reclaim_dead_lock; then
-    reclaimed=1
-    continue
+  if [ "$reclaim_attempted" = 0 ]; then
+    reclaim_attempted=1
+    if reclaim_dead_lock; then
+      continue
+    fi
   fi
   attempt=$((attempt + 1))
   [ "$attempt" -lt 26 ] || exit 0
