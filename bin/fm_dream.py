@@ -3171,7 +3171,11 @@ def cmd_run(args):
                 ctx.deadline = deadline
             step.update(status='failed', why='%s; %s' % (state, told),
                         unfiled=[{'what': a['what'], 'state': a['state']} for a in lost])
-        record_actions(ctx)
+        try:
+            record_actions(ctx)
+        except OSError as exc:  # the night's summary is still published without the ledger
+            run['steps'].setdefault('track', {}).update(
+                status='failed', why='improve-actions.jsonl not written: %s' % exc)
         run['finished'] = iso(time.time())
         run['skills'] = ctx.facts.get('skills', [])
         run['skills_commit'] = ctx.facts.get('skills_commit')
