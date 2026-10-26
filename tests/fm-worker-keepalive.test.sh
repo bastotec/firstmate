@@ -1585,6 +1585,127 @@ test_relay_closed_without_a_fix_goes_up_at_once() {
   pass "a relay closed without a fix reaches the captain at once and resolves with the watchdog"
 }
 
+test_relays_opened_and_closed_between_scans_are_not_lost() {
+  local dir key record
+  dir=$(make_parent between-scans dave-tools)
+  key="keepalive-dave-tools-w1-$T0"
+  record="$dir/home/state/keepalive/asks/dave-tools.json"
+  ask "$dir" dave-tools 'working: supervising workers'
+  scan "$dir" "$T0"
+  ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen on its open PR"
+  ask "$dir" dave-tools "resolved [key=$key]: answered: false positive"
+  scan "$dir" $((T0 + 300))
+  assert_equals 1 "$(notice_count "$dir" 'was closed without the stuck work moving')" "a between-scan relay was lost"
+  jq -e '.relays | length == 1 and all(.[]; .up and .dropped)' "$record" >/dev/null \
+    || fail "the missed relay was not retained as dropped"
+  scan "$dir" $((T0 + 600))
+  assert_equals 1 "$(notice_count "$dir" .)" "the missed relay was reported twice"
+  ask "$dir" dave-tools "resolved [key=$key]: worker w1 is moving again"
+  scan "$dir" $((T0 + 900))
+  assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "the missed relay did not resolve"
+  jq -e '.relays == {}' "$record" >/dev/null || fail "the missed relay remained after recovery"
+  pass "a relay opened and answered between scans reaches the captain exactly once"
+}
+
+test_relay_tail_baselines_and_channel_replacement() {
+  local dir key record mode
+  for mode in first legacy truncate replace; do
+    dir=$(make_parent "tail-$mode" dave-tools)
+    key="keepalive-dave-tools-w1-$T0"
+    record="$dir/home/state/keepalive/asks/dave-tools.json"
+    ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen"
+    ask "$dir" dave-tools "resolved [key=$key]: answered: false positive"
+    if [ "$mode" = legacy ]; then
+      mkdir -p "$(dirname "$record")"
+      printf '{"asks":{},"relays":{}}\n' > "$record"
+    fi
+    scan "$dir" "$T0"
+    assert_equals 0 "$(notice_count "$dir" .)" "the first tail scan backfilled historical closures"
+    ask "$dir" dave-tools "blocked [key=$key-new]: worker w2 is frozen"
+    ask "$dir" dave-tools "resolved [key=$key-new]: answered: false positive"
+    scan "$dir" $((T0 + 300))
+    assert_equals 1 "$(notice_count "$dir" .)" "an appended closed relay did not escalate"
+    ask "$dir" dave-tools "resolved [key=$key-new]: worker w2 is moving again"
+    scan "$dir" $((T0 + 600))
+    if [ "$mode" = truncate ] || [ "$mode" = replace ]; then
+      if [ "$mode" = replace ]; then
+        mv "$dir/home/state/dave-tools.status" "$dir/old-channel"
+      fi
+      printf 'blocked [key=%s-new]: worker w2 is frozen\nresolved [key=%s-new]: answered\n' \
+        "$key" "$key" > "$dir/home/state/dave-tools.status"
+      ask "$dir" dave-tools "blocked [key=$key-unseen]: worker w3 is frozen"
+      ask "$dir" dave-tools "resolved [key=$key-unseen]: answered: false positive"
+      scan "$dir" $((T0 + 900))
+      assert_equals 2 "$(notice_count "$dir" 'was closed without the stuck work moving')" "a reset channel lost a new key or replayed a seen key"
+      scan "$dir" $((T0 + 1200))
+      assert_equals 3 "$(notice_count "$dir" .)" "a reset channel repeated a closed relay"
+    fi
+  done
+  pass "tail baselines skip history and reset channels discover only unseen closed keys"
+}
+
+test_captain_held_relays_clear_quietly() {
+  local dir key record phase expected
+  key="keepalive-dave-tools-w1-$T0"
+  for phase in observed dropped between-scans; do
+    dir=$(make_parent "captain-held-$phase" dave-tools)
+    record="$dir/home/state/keepalive/asks/dave-tools.json"
+    ask "$dir" dave-tools 'working: supervising workers'
+    scan "$dir" "$T0"
+    ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen"
+    if [ "$phase" != between-scans ]; then
+      scan "$dir" $((T0 + 60))
+    fi
+    expected=0
+    if [ "$phase" = dropped ]; then
+      ask "$dir" dave-tools "resolved [key=$key]: answered: false positive"
+      scan "$dir" $((T0 + 120))
+      assert_equals 1 "$(notice_count "$dir" .)" "setup: the dropped relay did not escalate"
+      expected=1
+    fi
+    ask "$dir" dave-tools "captain-held [key=$key]: tracked by captain task 42"
+    scan "$dir" $((T0 + 180))
+    scan "$dir" $((T0 + 3600))
+    assert_equals "$expected" "$(notice_count "$dir" .)" "a captain-held closure emitted an escalation or false recovery"
+    jq -e '.relays == {}' "$record" >/dev/null || fail "a captain-held relay was not cleared"
+  done
+  pass "captain-held closures clear unraised and dropped relays without notices"
+}
+
+test_repaired_parent_channel_preserves_captain_resolution_route() {
+  local dir key record
+  dir=$(make_home repaired-worker ship)
+  make_secondmate "$dir" dave-tools
+  rm "$dir/home/.fm-secondmate-parent"
+  status "$dir" "$T0" 'blocked: the PR guard refused the push'
+  scan "$dir" $((T0 + 1200))
+  scan "$dir" $((T0 + 1800))
+  jq -e '.route == "captain" and .escalated' "$dir/home/state/keepalive/w1.json" >/dev/null \
+    || fail "the worker fallback route was not retained"
+  make_secondmate "$dir" dave-tools
+  status "$dir" $((T0 + 1900)) 'done: result delivered'
+  scan "$dir" $((T0 + 1900))
+  assert_equals 1 "$(notice_count "$dir" 'worker w1 is no longer blocked')" "a repaired channel stole the worker recovery notice"
+  assert_absent "$dir/parent/state/dave-tools.status" "the worker resolution changed routes"
+
+  dir=$(make_parent repaired-relay dave-tools)
+  make_secondmate "$dir" intermediary
+  rm "$dir/home/.fm-secondmate-parent"
+  key="keepalive-dave-tools-w1-$T0"
+  record="$dir/home/state/keepalive/asks/dave-tools.json"
+  ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen"
+  scan "$dir" "$T0"
+  scan "$dir" $((T0 + 1800))
+  jq -e '.relays | all(.[]; .up and .route == "captain")' "$record" >/dev/null \
+    || fail "the relay fallback route was not retained"
+  make_secondmate "$dir" intermediary
+  ask "$dir" dave-tools "resolved [key=$key]: worker w1 is moving again"
+  scan "$dir" $((T0 + 1900))
+  assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "a repaired channel stole the relay recovery notice"
+  assert_absent "$dir/parent/state/intermediary.status" "the relay resolution changed routes"
+  pass "worker and relay recoveries retain the captain fallback route after channel repair"
+}
+
 test_approval_wait_excludes_action_demands_while_bound
 test_approval_wait_is_bounded_and_wakes_the_mate_to_decide
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand
@@ -1596,3 +1717,7 @@ test_shared_hold_label_inputs
 test_done_in_a_freeze_with_an_open_pr_is_not_healthy
 test_undeliverable_parent_escalation_falls_through_to_the_captain
 test_relay_closed_without_a_fix_goes_up_at_once
+test_relays_opened_and_closed_between_scans_are_not_lost
+test_relay_tail_baselines_and_channel_replacement
+test_captain_held_relays_clear_quietly
+test_repaired_parent_channel_preserves_captain_resolution_route

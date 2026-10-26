@@ -135,7 +135,9 @@ external or non-mate-decidable wait, unless a higher-priority condition applies.
 An escalated episode's resolution is published through the same route when it
 clears or the worker leaves. A line the parent channel cannot take (unusable
 home marker, missing parent binding, unwritable channel) is never dropped: it
-falls through to a captain line from this home (see Captain lines).
+falls through to a captain line from this home (see Captain lines). The episode
+retains that captain route for its resolution even if the parent channel is
+repaired before the work recovers.
 
 Escalations from below: every still-open keepalive- blocked record on a second
 mate's channel is this home's to act on. One still open FM_KEEPALIVE_ESCALATE_SECS
@@ -148,7 +150,14 @@ A record closed before it went up by anything but the owning watchdog's own
 resolution (an "answered" line, the mate resolving its own alarm) is a dropped
 escalation, not a fix: this home sends it one level up at once, noting the
 closing line, and keeps it until the owning watchdog resolves that key, the key
-reopens as a fresh episode, or the mate leaves.
+reopens as a fresh episode, or the mate leaves. A captain-held closure transfers
+ownership to the captain: an unraised relay or a dropped record is cleared
+quietly, without an escalation or a "moving again" notice. Each asks record
+retains the channel's byte offset and inode so blocked keepalive keys opened
+and dismissed entirely between scans also go up at once. The first scan (or a
+legacy record without an offset) starts at the current end, without backfill.
+After truncation or inode replacement, the new file is read from zero, but only
+keys never seen by this watcher can seed missed closed episodes.
 
 Auto-land: a home with config/autoland.json but no state/autoland.check.sh
 has no armed auto-land check. FM_KEEPALIVE_DEAD_SECS after a scan first sees
@@ -588,25 +597,26 @@ class Scan:
 
     def report(self, wid: str, rec: dict, verb: str, text: str) -> bool:
         """Raise (blocked) or resolve one plain line beyond this home."""
-        script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
-                  'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
-        episode = str(rec["first"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
-        rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, episode, text, timeout=120).returncode
-        if rc == 1:  # the first mate's own home: its parent is the captain
-            if verb == "blocked":
-                return self.tell_captain("keepalive:%s:escalate:%d" % (wid, NOW), text,
-                                         "; the captain was told in one line - keep fixing it")
-            return self.tell_captain("keepalive:%s:resolved:%d" % (wid, NOW), text, "; the captain was told")
+        rc = 1
+        if rec.get("route") != "captain":
+            script = ('. "$1/fm-wake-lib.sh"; . "$1/fm-parent-channel-lib.sh"; hid=$(fm_parent_channel_home_id "$2" 2>/dev/null || printf home); '
+                      'fm_parent_channel_report "$2" "$3" "$4 [key=keepalive-$hid-$5-$6]: $(fm_parent_channel_clean_note "$7")"')
+            episode = str(rec["first"]) + ("-" + rec["approval_id"] if rec.get("approval_id") else "")
+            rc = bash(script, str(SCRIPT_DIR), str(self.h), str(self.state), verb, wid, episode, text, timeout=120).returncode
         if rc == 0:
             return True
-        # the parent channel cannot take the line: an escalation nobody can read is dropped, so it goes to the captain
-        print("fm-worker-keepalive: %s: parent channel refused the %s line (rc=%d); telling the captain"
-              % (wid, verb, rc), file=sys.stderr)
-        text += " (this home's parent channel could not take it, rc=%d)" % rc
-        if verb == "blocked":
-            return self.tell_captain("keepalive:%s:escalate:%d" % (wid, NOW), text,
-                                     "; the parent channel is broken, so the captain was told - keep fixing it and repair the channel")
-        return self.tell_captain("keepalive:%s:resolved:%d" % (wid, NOW), text, "; the captain was told")
+        after = "; the captain was told in one line - keep fixing it" if verb == "blocked" else "; the captain was told"
+        if rc != 1:
+            print("fm-worker-keepalive: %s: parent channel refused the %s line (rc=%d); telling the captain"
+                  % (wid, verb, rc), file=sys.stderr)
+            text += " (this home's parent channel could not take it, rc=%d)" % rc
+            if verb == "blocked":
+                after = "; the parent channel is broken, so the captain was told - keep fixing it and repair the channel"
+        event = "escalate" if verb == "blocked" else "resolved"
+        sent = self.tell_captain("keepalive:%s:%s:%d" % (wid, event, NOW), text, after)
+        if sent:
+            rec["route"] = "captain"
+        return sent
 
     def resolve(self, wid: str, rec: dict, why: str) -> bool:
         if rec.get("escalated") and not self.report(wid, rec, "resolved", "worker %s %s" % (wid, why)):
@@ -848,9 +858,53 @@ class Scan:
                 rec.pop("captain_notified", None)
         save(rec_path, rec)
 
+    def relay_tail(self, mate: str, rec: dict, now_open: dict):
+        seen = set(rec.get("tail_seen", []))
+        tracked = {ident[:-17] for ident in rec.get("relays", {})}
+        open_keys = {q["key"] for q in now_open.values()}
+        seen.update(tracked | open_keys)
+        try:
+            with (self.state / ("%s.status" % mate)).open("rb") as channel:
+                st = os.fstat(channel.fileno())
+                inode = "%d:%d" % (st.st_dev, st.st_ino)
+                offset = rec.get("tail_offset", st.st_size)
+                restarted = "tail_offset" in rec and (rec.get("tail_inode") != inode or offset > st.st_size)
+                if restarted:
+                    offset = 0
+                channel.seek(offset)
+                tail = channel.read(st.st_size - offset)
+        except FileNotFoundError:
+            rec.update(tail_offset=0, tail_inode=None, tail_seen=sorted(seen))
+            return {}, {}
+        openings, last = {}, {}
+        for index, line in enumerate(tail.decode(errors="replace").splitlines()):
+            m = STATUS_RE.match(line)
+            if not m or not (m.group(2) or "").startswith("[key=keepalive-"):
+                continue
+            key = m.group(2)[5:-1]
+            last[key] = (m.group(1), m.group(3).strip())
+            if m.group(1) == "blocked":
+                openings.setdefault(key, (index, m.group(3).strip()))
+        candidates = {}
+        for key, (index, note) in openings.items():
+            verb, closing = last[key]
+            if (key not in tracked | open_keys and not (restarted and key in seen)
+                    and verb == "resolved" and not WATCHDOG_RESOLVED_RE.match(closing)):
+                identity = "%s:%d:%d" % (inode, offset, index)
+                ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
+                candidates[ident] = {"first": NOW, "up": False, "note": note}
+        seen.update(openings)
+        rec.update(tail_offset=st.st_size, tail_inode=inode, tail_seen=sorted(seen))
+        return candidates, {key: value if value[0] in ("resolved", "captain-held") else None
+                            for key, value in last.items()}
+
     def relays(self, mate: str, rec: dict, now_open: dict, gone: bool = False) -> None:
         """Keep-alive escalations from a second mate: this home acts, else one level up."""
-        previous = rec.get("relays", {})
+        previous = dict(rec.get("relays", {}))
+        closures = {}
+        if not gone:
+            candidates, closures = self.relay_tail(mate, rec, now_open)
+            previous.update(candidates)
         relays = rec["relays"] = {}
         for ident, q in now_open.items():
             r = previous.get(ident) or {"first": NOW, "up": False}
@@ -866,14 +920,17 @@ class Scan:
             if ident in relays:
                 continue
             key = ident[:-17]  # ident is <key>-<16 hex>
-            closing = None if gone or key in open_keys or (r.get("up") and not r.get("dropped")) \
-                else self.closing_note(mate, key)
-            if closing is not None and not WATCHDOG_RESOLVED_RE.match(closing):
+            closing = None
+            if not gone and key not in open_keys and (not r.get("up") or r.get("dropped")):
+                closing = closures[key] if key in closures else self.closing_note(mate, key)
+            if closing is not None and closing[0] == "captain-held":
+                continue
+            if closing is not None and not WATCHDOG_RESOLVED_RE.match(closing[1]):
                 # closed without the stuck work moving: an answer or the mate's own dismissal is not a fix
                 if not r.get("dropped"):
                     line = ("second mate %s's keep-alive escalation (first seen %s) was closed without the stuck work "
                             "moving (closed with \"%s\"), so it comes to you: %s"
-                            % (mate, timestamp(r["first"]), closing[:300], r.get("note", "")[:600]))
+                            % (mate, timestamp(r["first"]), closing[1][:300], r.get("note", "")[:600]))
                     if self.report("%s-up-%s" % (mate, ident[-8:]), r, "blocked", line):
                         r["up"] = r["dropped"] = True
                 relays[ident] = r
@@ -885,7 +942,7 @@ class Scan:
                 relays[ident] = r
 
     def closing_note(self, mate: str, key: str):
-        """Note of the last line on <key> in the mate's channel if that line closed it, else None."""
+        """(Verb, note) of the last line on <key> if that line closed it, else None."""
         tag = "[key=%s]" % key
         last = None
         try:
@@ -895,9 +952,9 @@ class Scan:
         except OSError:
             return None
         m = STATUS_RE.match(last or "")
-        if not m or m.group(1) != "resolved":
+        if not m or m.group(1) not in ("resolved", "captain-held"):
             return None
-        return m.group(3).strip()
+        return m.group(1), m.group(3).strip()
 
     def autoland(self) -> None:
         """Watchdog for configured but disarmed auto-land; see the module contract."""
