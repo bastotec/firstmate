@@ -1350,6 +1350,137 @@ PY
   pass "improve: card timeouts preserve dispatched filings and continue triage unless the step budget is exhausted"
 }
 
+test_a_decided_change_is_filed_or_its_failure_is_loud() {
+  local d
+  d=$(new_case improve-file-loud)
+  python3 - "$d" "$ROOT/bin" <<'PY' || fail "a decided change was dropped silently, or not filed and recorded"
+import json, os, pathlib, subprocess, sys, time
+sys.path.insert(0, sys.argv[2])
+os.environ.update(FM_DREAM_TASKS='fake-tasks', FM_DREAM_HOLD='fake-hold', FM_DREAM_INBOX='fake-inbox',
+                  FM_DREAM_SEND='fake-send', FM_DREAM_HANDOFF='fake-handoff', FM_DREAM_CARD='fake-card',
+                  FM_DREAM_WAKE='fake-wake', FM_DREAM_NOTIFY='fake-notify', FM_DREAM_LOCK_RETRY_PAUSE='0')
+import fm_dream as dream
+root = pathlib.Path(sys.argv[1])
+STALE = 'error: "backlog lock looks stale: /h/data/backlog.md.lock"\ncode: LOCKED\nhelp[1]: remove it'
+
+class Context(dream.Ctx):
+    def run(self, argv, **kw):
+        self.calls.append(list(argv))
+        name = argv[0]
+        if name == 'fake-tasks' and argv[1] == 'add':
+            self.adds += 1
+            if self.adds <= self.failing_adds:
+                # the shell's own line on stderr must not hide tasks-axi's refusal on stdout
+                return subprocess.CompletedProcess(argv, 1, STALE, 'Terminated: 15\n')
+            return subprocess.CompletedProcess(argv, 0, json.dumps({'task': {'id': 'dream-k%d' % self.adds}}), '')
+        if name in self.broken:
+            return subprocess.CompletedProcess(argv, 3, '', '%s refused' % name)
+        return subprocess.CompletedProcess(argv, 0, '', '')
+
+def night(day, failing_adds=0, broken=(), changes=None):
+    os.environ['FM_DREAM_NOW'] = str(time.mktime(time.strptime(day + ' 05:00', '%Y-%m-%d %H:%M')))
+    ctx = Context(root / 'home', False)
+    ctx.calls, ctx.adds, ctx.failing_adds, ctx.broken = [], 0, failing_adds, set(broken)
+    ctx.deadline = time.time() + 600
+    ctx.only = None
+    ctx.config = {'owners': {'firstmate': 'firstmate-runtime'}}
+    ctx.facts = {'open_work': ([], [])}
+    if changes is not None:
+        ctx.facts['improve'] = {'changes': changes, 'tonight': []}
+    return ctx
+
+def code(title):
+    return {'kind': 'code', 'repo': 'firstmate', 'title': title, 'change': 'Wake the mate on a held task',
+            'fix': 'a keep-alive condition', 'evidence': 'task-x sat 22h in needs-decision', 'target': 'held_or_blocked',
+            'before': 8}
+
+def actions(ctx):
+    return [json.loads(l) for l in (ctx.dir / 'improve-actions.jsonl').read_text().splitlines()]
+
+# 1. a decided change is filed, handed to its mate, and recorded with its key
+ctx = night('2026-10-20', changes=[code('Alert the mate when a task sits in needs-decision for an hour')])
+result = dream.step_file(ctx)
+entry = ctx.facts['improve']['tonight'][0]
+assert result['status'] == 'done', result
+assert entry['state'] == 'dispatch ordered to firstmate-runtime as dream-k1' and entry['key'] == 'dream-k1', entry
+assert ['fake-handoff', 'firstmate-runtime', 'dream-k1'] in ctx.calls, ctx.calls
+assert not any(c[0] in ('fake-wake', 'fake-notify') for c in ctx.calls), ctx.calls
+dream.step_track(ctx)
+row = actions(ctx)[-1]
+assert row['key'] == 'dream-k1' and row['state'].startswith('dispatch ordered') and row['date'] == '2026-10-20', row
+
+# 2. a failed add fails the step, names tasks-axi's own error, retries a lock once, and wakes the first mate
+title = 'Flag tasks stuck in zero-run implementation and route them to their mate'
+ctx = night('2026-10-21', failing_adds=2, changes=[code(title)])
+result = dream.step_file(ctx)
+entry = ctx.facts['improve']['tonight'][0]
+assert result['status'] == 'failed' and result['unfiled'] == [title], result
+assert ctx.adds == 2, 'a LOCKED add was not retried exactly once: %d adds' % ctx.adds
+assert entry['state'].startswith('not filed: add failed (Terminated: 15; error: "backlog lock looks stale'), entry
+assert entry['state'].endswith('; first mate woken') and entry['key'] is None, entry
+assert 'first mate woken' in result['why'] and 'backlog lock looks stale' in result['why'], result
+wake = [c for c in ctx.calls if c[0] == 'fake-wake']
+assert len(wake) == 1 and wake[0][1] == 'dream-file:2026-10-21', wake
+assert wake[0][2].startswith('check: fleet dreaming could not file 1 decided change: "%s"' % title), wake
+assert 'backlog lock looks stale' in wake[0][2] and 'bin/fm-dream.sh resolve' in wake[0][2], wake
+assert not any(c[0] == 'fake-notify' for c in ctx.calls), ctx.calls
+assert not any(c[0] == 'fake-handoff' for c in ctx.calls), 'an unfiled change was handed off'
+dream.step_track(ctx)
+row = actions(ctx)[-1]
+assert row['state'].startswith('not filed') and row['repo'] == 'firstmate' and row['change'], row
+
+# 3. when the wake cannot be queued, the captain gets one notice instead; nobody told is said too
+ctx = night('2026-10-21', failing_adds=9, broken={'fake-wake'}, changes=[code('Another unfiled change')])
+result = dream.step_file(ctx)
+entry = ctx.facts['improve']['tonight'][0]
+assert result['status'] == 'failed', result
+assert entry['state'].endswith('; captain told (wake failed: fake-wake refused)'), entry
+notice = [c for c in ctx.calls if c[0] == 'fake-notify']
+assert len(notice) == 1 and notice[0][1:3] == ['--title', 'Fleet dreaming'] and 'Another unfiled change' in notice[0][3], notice
+dream.step_track(ctx)
+ctx = night('2026-10-21', failing_adds=9, broken={'fake-wake', 'fake-notify'}, changes=[code('A third unfiled change')])
+dream.step_file(ctx)
+entry = ctx.facts['improve']['tonight'][0]
+assert 'nobody told: wake failed: fake-wake refused; notice failed: fake-notify refused' in entry['state'], entry
+
+# 4. the next night files the dropped change again, even with nothing measured, and records it filed
+ctx = night('2026-10-22')
+result = dream.step_file(ctx)
+assert result['status'] == 'done', result
+retried = {a['what']: a for a in ctx.facts['charter_card']}
+assert retried[title]['state'].startswith('dispatch ordered to firstmate-runtime as dream-k'), retried
+assert retried[title]['retry_of'] == '2026-10-21', retried
+dream.step_track(ctx)
+assert dream.dropped_actions(night('2026-10-23')) == [], 'a filed change is retried'
+
+# 5. resolve records what covers a dropped change, and the file step stops retrying it
+ctx = night('2026-10-23', failing_adds=9, changes=[code('Retry the lifecycle read on gateway errors')])
+dream.step_file(ctx)
+dream.step_track(ctx)
+left = [c['title'] for c in dream.dropped_actions(night('2026-10-24'))]
+assert left == ['Retry the lifecycle read on gateway errors'], (left, actions(ctx))
+os.environ['FM_DREAM_NOW'] = str(time.mktime(time.strptime('2026-10-23 09:00', '%Y-%m-%d %H:%M')))
+home = str(root / 'home')
+assert dream.main(['resolve', '--home', home, '--what', 'LIFECYCLE read', '--state', 'not filed yet']) == 2
+assert dream.main(['resolve', '--home', home, '--what', 'no such change', '--state', 'covered by x']) == 1
+assert dream.main(['resolve', '--home', home, '--what', 'LIFECYCLE read',
+                   '--state', 'covered by https://github.com/bastotec/firstmate/pull/268']) == 0
+row = actions(ctx)[-1]
+assert row['what'] == 'Retry the lifecycle read on gateway errors' and row['resolves'] == '2026-10-23' and row['date'] == '2026-10-23', row
+assert row['state'] == 'covered by https://github.com/bastotec/firstmate/pull/268', row
+assert dream.dropped_actions(night('2026-10-24')) == [], 'a resolved change is still retried'
+assert dream.step_file(night('2026-10-24'))['status'] == 'nothing to file'
+
+# 6. a change first decided more than REFILE_DAYS ago is no longer retried
+ctx = night('2026-10-24', failing_adds=9, changes=[code('Bound the inbox drain on slow disks')])
+dream.step_file(ctx)
+dream.step_track(ctx)
+assert [c['title'] for c in dream.dropped_actions(night('2026-10-31'))] == ['Bound the inbox drain on slow disks']
+assert dream.dropped_actions(night('2026-11-01')) == []
+PY
+  pass "file: a decided change is filed and recorded; an unfiled one fails the step, wakes the first mate (or tells the captain), and is filed again later or resolved"
+}
+
 test_track_rejects_a_predecessor_deployment() {
   local d log
   d=$(new_case improve-deploy-predecessor)
@@ -2287,6 +2418,7 @@ test_charter_failures_preserve_application_and_held_lines
 test_improve_acts_on_every_kind_of_change
 test_improve_reports_last_night_s_changes_and_their_targets
 test_improve_files_no_duplicate_and_cards_charters_on_a_quiet_night
+test_a_decided_change_is_filed_or_its_failure_is_loud
 test_an_unavailable_improve_model_is_named_and_never_replaced
 test_the_improve_model_comes_from_config_and_a_bad_one_stops_the_run
 test_instructions_open_one_gated_pr_and_propose_charter_edits

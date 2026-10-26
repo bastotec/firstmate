@@ -136,6 +136,30 @@ test_held_backlog_lock_skips_without_writing() {
   pass "a held tasks-axi backlog lock skips repair quietly until a later run"
 }
 
+test_dead_writer_lock_is_reclaimed() {
+  local dir file dead out
+  dir="$TMP_ROOT/dead-lock"
+  mkdir -p "$dir"
+  file="$dir/backlog.md"
+  write_misplaced "$file"
+  # a writer killed while holding the lock: its pid no longer exists
+  sh -c 'exit 0' &
+  dead=$!
+  wait "$dead"
+  printf '%s\n' "$dead:1792917802:24048:31608" > "$file.lock"
+  out=$("$NORMALIZE" --quiet "$file" 2>&1) || fail "a dead writer's lock was an error: $out"
+  assert_equals Done "$(section_of "$file" stale-call)" "a dead writer's lock still blocked the repair"
+  [ ! -e "$file.lock" ] || fail "the reclaimed lock was left behind"
+  printf '%s\n' "$dead:tasks-axi-nonce:1792917802000:1" > "$file.lock"
+  "$NORMALIZE" --quiet "$file" || fail "a dead tasks-axi lock was an error"
+  [ ! -e "$file.lock" ] || fail "a dead tasks-axi writer's lock was not reclaimed"
+  printf '%s\n' "not-a-pid-token" > "$file.lock"
+  "$NORMALIZE" --quiet "$file" || fail "an unparsable lock was an error"
+  assert_equals "not-a-pid-token" "$(cat "$file.lock")" "a lock without a writer pid was removed"
+  rm -f "$file.lock"
+  pass "a lock left by a writer that no longer exists is reclaimed; live or unparsable locks are kept"
+}
+
 test_check_reports_without_writing() {
   local dir file before rc=0 out
   dir="$TMP_ROOT/check"
@@ -278,6 +302,7 @@ test_lifecycle_transition_heals_before_mutating() {
 test_moves_done_rows_with_their_bodies
 test_multi_paragraph_body_moves_with_internal_blanks
 test_held_backlog_lock_skips_without_writing
+test_dead_writer_lock_is_reclaimed
 test_check_reports_without_writing
 test_missing_done_section_is_created
 test_home_default_and_absent_file
