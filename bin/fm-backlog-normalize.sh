@@ -79,28 +79,47 @@ fi
 LOCK="$FILE.lock"
 LOCK_TOKEN="$$:$(date +%s):$RANDOM:$RANDOM"
 tmp=
+reclaiming=0
 # shellcheck disable=SC2329 # Invoked by the EXIT trap.
 cleanup() {
   [ -z "$tmp" ] || rm -f -- "$tmp"
   if [ "$(cat "$LOCK" 2>/dev/null)" = "$LOCK_TOKEN" ]; then
     rm -f -- "$LOCK"
   fi
+  if [ "$reclaiming" = 1 ]; then
+    rmdir -- "$LOCK.reclaim" 2>/dev/null || :
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-# Removes the lock when its writer's pid is gone; the token is re-read right
-# before removal so a lock taken over meanwhile is left alone.
 reclaim_dead_lock() {
-  local token pid
-  token=$(cat "$LOCK" 2>/dev/null) || return 1
+  local token pid modified rc=1
+  if ! mkdir -- "$LOCK.reclaim" 2>/dev/null; then
+    if ! modified=$(stat -f '%m' "$LOCK.reclaim" 2>/dev/null); then
+      modified=$(stat -c '%Y' "$LOCK.reclaim" 2>/dev/null) || return 1
+    fi
+    case "$modified" in ''|*[!0-9]*) return 1 ;; esac
+    if [ "$(( $(date +%s) - modified ))" -gt 60 ]; then
+      rmdir -- "$LOCK.reclaim" 2>/dev/null || :
+    fi
+    return 1
+  fi
+  reclaiming=1
+  token=$(cat "$LOCK" 2>/dev/null) || token=
   pid=${token%%:*}
-  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
-  [ "$pid" != "$$" ] || return 1
-  kill -0 "$pid" 2>/dev/null && return 1
-  ps -p "$pid" >/dev/null 2>&1 && return 1
-  [ "$(cat "$LOCK" 2>/dev/null)" = "$token" ] || return 1
-  rm -f -- "$LOCK"
+  case "$pid" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "$pid" != "$$" ] && ! kill -0 "$pid" 2>/dev/null && ! ps -p "$pid" >/dev/null 2>&1 \
+        && [ "$(cat "$LOCK" 2>/dev/null)" = "$token" ]; then
+        rm -f -- "$LOCK" && rc=0
+      fi
+      ;;
+  esac
+  rmdir -- "$LOCK.reclaim" 2>/dev/null || :
+  reclaiming=0
+  return "$rc"
 }
 attempt=0
 reclaimed=0

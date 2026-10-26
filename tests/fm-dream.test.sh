@@ -1783,6 +1783,41 @@ notice = [c for c in ctx.calls if c[0] == 'fake-notify']
 assert len(notice) == 1 and len(notice[0][-1]) <= 1000, notice
 assert '3 decided changes' in notice[0][-1] and ctx.facts['triage'][0]['title'] in notice[0][-1], notice
 assert 'state/dream/runs/%s.json' % ctx.day in notice[0][-1], notice
+
+for mode in ('triage-timeout', 'code-timeout', 'budget-exhausted', 'interrupted'):
+    root = base_root / ('outstanding-triage-' + mode)
+    ctx = night('2026-10-22', changes=[code('Persist priority dispatch decisions')] if mode == 'code-timeout' else None)
+    if ctx.facts.get('improve'):
+        ctx.facts['improve']['measurement_error'] = 'fixture measurements unavailable'
+    ctx.facts['triage'] = [{'repo': 'firstmate', 'title': title, 'evidence': ['slow']}
+                           for title in ('Cache independent measurements', 'Bound gateway reads', 'Surface worker failures')]
+    if mode in ('triage-timeout', 'code-timeout'):
+        ctx.expire_at_add = 1
+    if mode == 'interrupted':
+        ctx.terminate_at_add = 1
+    old_file = dream.step_file
+    def bounded_file(ctx):
+        ctx.deadline = time.time() + 20
+        return old_file(ctx)
+    try:
+        if mode == 'budget-exhausted':
+            dream.step_file = bounded_file
+        assert run_night(ctx) == int(mode == 'interrupted'), mode
+    finally:
+        dream.step_file = old_file
+    record = json.loads((ctx.dir / 'runs' / (ctx.day + '.json')).read_text())
+    result = record['steps']['file']
+    lost = {a['what']: a['state'] for a in result['unfiled']}
+    assert result['status'] == 'failed' and len(lost) == 3 + int(mode == 'code-timeout'), result
+    for i, item in enumerate(ctx.facts['triage']):
+        state = lost[item['title']]
+        expected = ('not filed: add failed (TimeoutExpired)' if mode == 'triage-timeout' and i == 0
+                    else 'not filed: the file step stopped before filing it')
+        assert state == expected + '; first mate woken', (mode, state)
+    wake = [c for c in ctx.calls if c[0] == 'fake-wake']
+    assert len(wake) == 1 and all(title in wake[0][2] for title in lost), (mode, ctx.calls)
+    assert '%d decided changes' % len(lost) in wake[0][2], wake
+    assert ctx.adds == int(mode != 'budget-exhausted'), (mode, ctx.adds)
 PY
   pass "file: a decided change is filed and recorded; an unfiled one fails the step, wakes the first mate (or tells the captain), and is filed again later or resolved"
 }

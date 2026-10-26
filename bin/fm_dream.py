@@ -2965,6 +2965,7 @@ def step_file(ctx):
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
     result = {'status': 'dry-run' if ctx.dry_run else 'done', 'raised': raised}
     ctx.facts['file_result'] = result
+    remaining = list(items)
     try:
         already = raised_titles(ctx)
         if already is None:
@@ -2973,6 +2974,7 @@ def step_file(ctx):
                 entry['state'] = 'not filed: raised.jsonl unreadable'
             for it in items:
                 unfiled(ctx, {'kind': 'triage', 'what': it['title'], 'state': 'not filed: raised.jsonl unreadable'})
+            remaining.clear()
             return result
         try:
             file_improvements(ctx, already, raised, errors, planned)
@@ -2982,10 +2984,10 @@ def step_file(ctx):
             errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
         for it in items:
             if any(similar(it['title'], t) for t in already):
+                remaining.remove(it)
                 continue
             if ctx.deadline and time.time() > ctx.deadline - 30:
                 errors.append('out of time before %s' % it['title'][:60])
-                unfiled(ctx, {'kind': 'triage', 'what': it['title'], 'state': 'not filed: file step out of time'})
                 continue
             mate = owners.get(it['repo'], 'primary')
             body = '\n'.join(['Raised by fleet dreaming (bin/fm-dream.sh) on %s.' % ctx.day, '',
@@ -2993,6 +2995,7 @@ def step_file(ctx):
                               'Evidence from the day:'] + ['- ' + e[:300] for e in it.get('evidence', [])[:4]])
             if ctx.dry_run:
                 raised.append({'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': None, 'why': it.get('why')})
+                remaining.remove(it)
                 continue
             bf = ctx.dir / '.body.md'
             write_private(bf, body)
@@ -3004,6 +3007,7 @@ def step_file(ctx):
             except (OSError, subprocess.TimeoutExpired) as exc:
                 unfiled(ctx, {'kind': 'triage', 'what': it['title'],
                               'state': 'not filed: add failed (%s)' % type(exc).__name__})
+                remaining.remove(it)
                 raise
             finally:
                 bf.unlink()
@@ -3012,7 +3016,9 @@ def step_file(ctx):
                 lost = {'kind': 'triage', 'what': it['title'], 'state': 'not filed: add failed (%s)' % tool_error(r)}
                 errors.append('%s: %s' % (it['title'][:60], lost['state']))
                 unfiled(ctx, lost)
+                remaining.remove(it)
                 continue
+            remaining.remove(it)
             row = {'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': key, 'why': it.get('why')}
             if mate != 'primary':
                 try:
@@ -3029,6 +3035,9 @@ def step_file(ctx):
             with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
                 fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
     finally:
+        for it in remaining:
+            unfiled(ctx, {'kind': 'triage', 'what': it['title'],
+                          'state': 'not filed: the file step stopped before filing it'})
         for _, entry in planned:
             if entry['state'].startswith('not filed') and entry not in (ctx.facts.get('unfiled') or []):
                 unfiled(ctx, entry)
