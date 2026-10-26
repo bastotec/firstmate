@@ -194,12 +194,12 @@ Merge task PRs only through `bin/fm-pr-merge.sh` and land local-only work only t
 
 ### Validate
 
-A no-mistakes worker starts validation itself after its implementation commit, so firstmate does not trigger it, and that worker owns every `no-mistakes axi run` and `no-mistakes axi respond` call; firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
+A no-mistakes worker starts validation itself at the minimal reviewable commit under `bin/fm-brief.sh`'s implementation and validation cadence, so firstmate does not trigger it, and that worker owns every `no-mistakes axi run` and `no-mistakes axi respond` call; firstmate never invokes `no-mistakes axi respond` for a crew-owned run.
 When the captain adds or changes an ask mid-task, append the captain's words without speaker labels or direct address to the brief's `## Captain's intent` and relay them to the worker; Firstmate constraints stay in `## Firstmate spec` or the steer.
 Judge validation only by the run step `bin/fm-crew-state.sh` prints, never by shell liveness, the last status event, or the raw run record; `task-delivery` owns the state reading, scope once validation starts, and supersession.
 An ask-user finding returns as `needs-decision`; `ask-user-authority` owns deciding or escalating it, and the implementation worker never answers its own finding.
 
-When any task reaches `needs-decision` or parks at a gate, load `ask-user-authority` for the mate's decision deadline, escalation format, default-continuation limits, and consolidated captain update.
+When any task reaches `needs-decision` or parks at a gate, its mate owns the decision first; load `ask-user-authority` for the one-hour settle-or-ask deadline, escalation format, default-continuation limits, and consolidated captain update.
 
 ### PR ready, landing, and teardown
 

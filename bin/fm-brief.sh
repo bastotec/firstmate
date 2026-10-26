@@ -254,7 +254,7 @@ $PROJECT_CLONES_NOTE
 Delegate project work to your own crewmates with the normal firstmate lifecycle: brief, spawn, status, watcher, steer, teardown, and recovery.
 Do not invent a second delegation system.
 Apply \`task-delivery\`'s implementation intervention policy: when a no-mistakes task exceeds 2h of implementation with zero runs, intervene within the next hour rather than leaving its worker implementing indefinitely.
-When a task reaches \`needs-decision\` or parks at a gate, load \`ask-user-authority\` and follow its 15-minute mate decision/escalation and default-continuation policy through the parent channel.
+When a task reaches \`needs-decision\` or parks at a gate, load \`ask-user-authority\` and apply its mate-first, one-hour settle-or-ask policy through the parent channel.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
@@ -373,7 +373,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 5. Before reporting \`blocked:\`, follow "Act within your scope" above (try the obvious fix, then the project's documented path); report it only if both failed, naming what you checked and tried.
 6. If a decision belongs to a human (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
-   Report a parked gate promptly to your parent mate, pointing it to \`ask-user-authority\`'s 15-minute decision/escalation and default-continuation policy; do not answer your own finding or bypass the gate.
+   Report a parked gate promptly to your parent mate, pointing it to \`ask-user-authority\`'s mate-first decision/escalation and default-continuation policy; do not answer your own finding or bypass the gate.
    That decision goes to your parent mate (the first mate or second mate that launched you), never to the captain:
    the mate decides within its authority or asks the captain itself, so never hold a task for the captain or write a decision card yourself.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
@@ -441,8 +441,9 @@ If the top-level path is the primary checkout or not the worktree you were launc
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
 
 # Implementation and validation cadence
-For a no-mistakes task, start the first no-mistakes run within 2h of spawn, reducing to the smallest reviewable slice of the accepted intent when needed and telling your mate what remains.
-If that deadline is at risk, report the concrete obstacle to your mate early enough for it to narrow or split the task under \`task-delivery\`'s implementation intervention policy.
+For a no-mistakes task, start the first no-mistakes run as soon as a minimal reviewable slice of the accepted intent is committed, and no later than 2h after spawn; do not wait for the whole change to be finished.
+Tell your mate what remains, and use the pipeline's fix rounds to refine the change through its supported response flow.
+Report anything blocking a run to your mate immediately rather than leaving it in implementation, so the mate can repair the obstacle or narrow or split the task under \`task-delivery\`'s implementation intervention policy.
 Before every no-mistakes run, execute the repository's own documented local test and lint commands and require them to pass, following its targeted-test policy where provided.
 When a single run reaches its third fix round, or the same check fails in two runs, stop patching and send your mate a short root-cause note naming the failing check, its cause, and the planned fix.
 Your mate reviews that note before another run starts and returns a concrete repair plan under \`task-delivery\`; this is a diagnostic intervention, not an indefinite tooling wait.
@@ -473,7 +474,7 @@ $RULE1
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
 $ASK_USER_BLOCK
-   Report a parked gate promptly to your parent mate, pointing it to \`ask-user-authority\`'s 15-minute decision/escalation and default-continuation policy; do not answer your own finding or bypass the gate.
+   Report a parked gate promptly to your parent mate, pointing it to \`ask-user-authority\`'s mate-first decision/escalation and default-continuation policy; do not answer your own finding or bypass the gate.
    A decision or blocker you opened stays open until a \`resolved\` line carrying its exact key lands; a later \`done:\` or \`working:\` line never closes it, even when the answer is what started that work.
    Firstmate's reply normally writes that closing line at answer time; when a blocker or wait clears WITHOUT a firstmate reply, append \`resolved: {how it cleared}\` yourself (same \`[key=<slug>]\` if you opened it with one) as you resume.
 7. Never stop, restart, or update a running \`no-mistakes\` daemon - it is one instance serving

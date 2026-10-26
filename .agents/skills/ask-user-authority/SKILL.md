@@ -47,11 +47,14 @@ Resume fleet supervision immediately after the decision lands.
 
 ## A parked run is never left waiting
 
-When a task reaches `needs-decision` or parks at a gate, its second mate must escalate to the main firstmate through its parent channel within 15 minutes of that event.
-The escalation is one question with 2-3 options and a recommended default.
+When a task reaches `needs-decision` or parks at a gate, its mate owns the decision first: within one hour of that event, settle it from standing captain rulings and accepted intent, or ask its own first mate through the parent channel.
+An unresolved question must be raised within that hour, not left silently paused, including when no validation run has started.
+The escalation is one plain question with 2-3 options and the mate's recommendation.
 For a default already within accepted intent and the mate's authority, return that decision to the same worker under "Return the decision" and keep the task moving without waiting for endorsement.
+For a fleet-tooling failure, repair or work around it through the affected worker or a repair worker rather than treating the failure as a product decision.
 If the choice touches safety or captain-only approval, keep the affected action stopped pending the required decision; a recommended default and elapsed time never supply approval or bypass a gate.
 The main firstmate presents all open decisions together in one captain-facing message, keeping each question and its options distinct without delaying an urgent escalation.
+For this consolidation, apply "Captain-facing escalation" below: internal repair questions stay between mates, and only genuine trade-offs or the stronger captain-only boundaries reach the captain.
 The worker executes the validation commands; the mate never takes over its run.
 [`bin/fm-parked-run-watch.sh`'s header](../../../bin/fm-parked-run-watch.sh) owns watchdog timing, nudges, and escalation beyond this home.
 
