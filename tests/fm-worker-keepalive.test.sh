@@ -1586,25 +1586,69 @@ test_relay_closed_without_a_fix_goes_up_at_once() {
 }
 
 test_relays_opened_and_closed_between_scans_are_not_lost() {
-  local dir key record
-  dir=$(make_parent between-scans dave-tools)
+  local dir key record form
+  for form in verb note-head; do
+    dir=$(make_parent "between-scans-$form" dave-tools)
+    key="keepalive-dave-tools-w1-$T0"
+    record="$dir/home/state/keepalive/asks/dave-tools.json"
+    ask "$dir" dave-tools 'working: supervising workers'
+    scan "$dir" "$T0"
+    ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen on its open PR"
+    if [ "$form" = note-head ]; then
+      ask "$dir" dave-tools "resolved: [key=$key] False unmerged alarm"
+    else
+      ask "$dir" dave-tools "resolved [key=$key]: answered: false positive"
+    fi
+    scan "$dir" $((T0 + 300))
+    assert_equals 1 "$(notice_count "$dir" 'was closed without the stuck work moving')" "a between-scan $form relay was lost"
+    jq -e '.relays | length == 1 and all(.[]; .up and .dropped)' "$record" >/dev/null \
+      || fail "the missed relay was not retained as dropped"
+    scan "$dir" $((T0 + 600))
+    assert_equals 1 "$(notice_count "$dir" .)" "the missed relay was reported twice"
+    ask "$dir" dave-tools "resolved: [key=$key] worker w1 is moving again"
+    scan "$dir" $((T0 + 900))
+    assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "the missed relay did not resolve"
+    jq -e '.relays == {}' "$record" >/dev/null || fail "the missed relay remained after recovery"
+  done
+  pass "relays closed between scans in either key position reach the captain exactly once"
+}
+
+test_relay_opened_during_the_fold_is_read_next_scan() {
+  local dir key record channel before
+  dir=$(make_parent during-fold dave-tools)
   key="keepalive-dave-tools-w1-$T0"
   record="$dir/home/state/keepalive/asks/dave-tools.json"
+  channel="$dir/home/state/dave-tools.status"
   ask "$dir" dave-tools 'working: supervising workers'
   scan "$dir" "$T0"
-  ask "$dir" dave-tools "blocked [key=$key]: worker w1 is frozen on its open PR"
+  ask "$dir" dave-tools 'working: checking workers again'
+  before=$(wc -c < "$channel" | tr -d ' ')
+  FM_HOME="$dir/home" FM_KEEPALIVE_NOW="$((T0 + 60))" FM_KEEPALIVE_NOTIFY="$dir/bin/notify" \
+    python3 -B - "$ROOT/bin/fm_worker_keepalive.py" "$key" <<'PY' || fail "the interleaved scan failed"
+import runpy
+import sys
+
+module = runpy.run_path(sys.argv[1])
+Scan = module["Scan"]
+questions = Scan.questions
+
+def append_after_fold(self, mate):
+    result = questions(self, mate)
+    with (self.state / (mate + ".status")).open("a") as channel:
+        channel.write("blocked [key=%s]: worker w1 is frozen\n" % sys.argv[2])
+    return result
+
+Scan.questions = append_after_fold
+module["main"](["scan"])
+PY
+  jq -e --argjson before "$before" '.tail_offset == $before and .relays == {}' "$record" >/dev/null \
+    || fail "the scan consumed an opening absent from its fold"
   ask "$dir" dave-tools "resolved [key=$key]: answered: false positive"
   scan "$dir" $((T0 + 300))
-  assert_equals 1 "$(notice_count "$dir" 'was closed without the stuck work moving')" "a between-scan relay was lost"
-  jq -e '.relays | length == 1 and all(.[]; .up and .dropped)' "$record" >/dev/null \
-    || fail "the missed relay was not retained as dropped"
+  assert_equals 1 "$(notice_count "$dir" 'was closed without the stuck work moving')" "an opening during the fold was lost"
   scan "$dir" $((T0 + 600))
-  assert_equals 1 "$(notice_count "$dir" .)" "the missed relay was reported twice"
-  ask "$dir" dave-tools "resolved [key=$key]: worker w1 is moving again"
-  scan "$dir" $((T0 + 900))
-  assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "the missed relay did not resolve"
-  jq -e '.relays == {}' "$record" >/dev/null || fail "the missed relay remained after recovery"
-  pass "a relay opened and answered between scans reaches the captain exactly once"
+  assert_equals 1 "$(notice_count "$dir" .)" "the interleaved relay was escalated twice"
+  pass "an opening appended after the fold is retained for the next scan"
 }
 
 test_relay_tail_baselines_and_channel_replacement() {
@@ -1706,6 +1750,43 @@ test_repaired_parent_channel_preserves_captain_resolution_route() {
   pass "worker and relay recoveries retain the captain fallback route after channel repair"
 }
 
+test_repaired_parent_channel_preserves_question_resolution_route() {
+  local dir record ending
+  for ending in answered leaves; do
+    dir=$(make_parent "repaired-questions-$ending" dave-tools)
+    make_secondmate "$dir" intermediary
+    rm "$dir/home/.fm-secondmate-parent"
+    record="$dir/home/state/keepalive/asks/dave-tools.json"
+    ask "$dir" dave-tools 'needs-decision [key=budget]: which month should the new tab cover?'
+    scan "$dir" "$T0"
+    scan "$dir" $((T0 + 600))
+    scan "$dir" $((T0 + 2400))
+    assert_equals 1 "$(notice_count "$dir" 'its parent did not answer')" "the unanswered questions did not fall through to the captain"
+    jq -e '.esc_report.route == "captain"' "$record" >/dev/null \
+      || fail "the question aggregate fallback route was not retained"
+    make_secondmate "$dir" intermediary
+    if [ "$ending" = answered ]; then
+      ask "$dir" dave-tools 'resolved [key=budget]: use January'
+    else
+      rm "$dir/home/state/dave-tools.meta"
+    fi
+    scan "$dir" $((T0 + 2500))
+    assert_equals 2 "$(notice_count "$dir" .)" "a repaired channel stole the question $ending notice"
+    if [ "$ending" = answered ]; then
+      assert_equals 1 "$(notice_count "$dir" "questions are answered")" "the captain did not receive the answer resolution"
+      jq -e 'has("esc_report") | not' "$record" >/dev/null \
+        || fail "a resolved aggregate kept its old route"
+    else
+      assert_equals 1 "$(notice_count "$dir" 'left the fleet')" "the captain did not receive the departure resolution"
+      assert_absent "$record" "the departed mate's aggregate remained"
+    fi
+    assert_absent "$dir/parent/state/intermediary.status" "the question resolution changed routes"
+    scan "$dir" $((T0 + 2800))
+    assert_equals 2 "$(notice_count "$dir" .)" "the question recovery repeated"
+  done
+  pass "question aggregates retain the captain fallback route for answers and departures"
+}
+
 test_approval_wait_excludes_action_demands_while_bound
 test_approval_wait_is_bounded_and_wakes_the_mate_to_decide
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand
@@ -1718,6 +1799,8 @@ test_done_in_a_freeze_with_an_open_pr_is_not_healthy
 test_undeliverable_parent_escalation_falls_through_to_the_captain
 test_relay_closed_without_a_fix_goes_up_at_once
 test_relays_opened_and_closed_between_scans_are_not_lost
+test_relay_opened_during_the_fold_is_read_next_scan
 test_relay_tail_baselines_and_channel_replacement
 test_captain_held_relays_clear_quietly
 test_repaired_parent_channel_preserves_captain_resolution_route
+test_repaired_parent_channel_preserves_question_resolution_route

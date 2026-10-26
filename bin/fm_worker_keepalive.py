@@ -153,9 +153,12 @@ closing line, and keeps it until the owning watchdog resolves that key, the key
 reopens as a fresh episode, or the mate leaves. A captain-held closure transfers
 ownership to the captain: an unraised relay or a dropped record is cleared
 quietly, without an escalation or a "moving again" notice. Each asks record
-retains the channel's byte offset and inode so blocked keepalive keys opened
-and dismissed entirely between scans also go up at once. The first scan (or a
-legacy record without an offset) starts at the current end, without backfill.
+retains the channel's byte offset and inode captured before the fold, and reads
+its tail only through that endpoint, so appends during a scan remain for the next
+scan. Blocked keepalive keys opened and dismissed entirely between scans also
+go up at once; both verb-bracket and note-head keys use the decision fold's
+parsers. The first scan (or a legacy record without an offset) starts at the
+current end, without backfill.
 After truncation or inode replacement, the new file is read from zero, but only
 keys never seen by this watcher can seed missed closed episodes.
 
@@ -197,7 +200,8 @@ one line per mate (blocked [key=keepalive-<home>-<mate>-ask-<epoch>] from a
 second mate's home, a captain line from the first mate's). The line describes the entire escalated-and-still-open set (count and
 oldest question); changes to that set or its note text refresh it (under the same
 report key on the parent channel). It resolves only when that set empties or
-the mate leaves.
+the mate leaves, retaining any captain fallback route on the aggregate episode
+through resolution, even after the parent channel is repaired.
 A question closes when the fold drops it (an answer sent with --resolve-key,
 the mate's own resolved line, or a captain-held transfer). Records live in
 state/keepalive/asks/<mate>.json alongside relayed escalation episodes. The record
@@ -371,9 +375,20 @@ def fingerprint(state: Path, wid: str, m: dict) -> str:
     return hashlib.sha256("\n".join(parts).encode()).hexdigest()[:16]
 
 
-def bash(script: str, *args, timeout=60) -> subprocess.CompletedProcess:
+def bash(script: str, *args, timeout=60, input=None) -> subprocess.CompletedProcess:
     return subprocess.run(["bash", "-c", script, "fm-worker-keepalive", *args],
-                          capture_output=True, text=True, timeout=timeout)
+                          capture_output=True, text=True, timeout=timeout, input=input)
+
+
+def keyed_status_lines(text: str):
+    if not text:
+        return []
+    r = bash('. "$1/fm-classify-lib.sh"; while IFS= read -r line; do '
+             '_fm_decision_key_into "$line" || continue; '
+             '_fm_status_line_verb_into "$line"; _fm_status_line_note_into "$line"; '
+             'printf "%s\\t%s\\t%s\\n" "$_FM_KEY" "$_FM_VERB" "$_FM_NOTE"; done',
+             str(SCRIPT_DIR), input=text + "\n")
+    return [line.split("\t", 2) for line in r.stdout.splitlines() if line.count("\t") >= 2]
 
 
 def liveness(h: Path, state: Path, wid: str) -> str:
@@ -801,14 +816,14 @@ class Scan:
             st = (self.state / ("%s.status" % mate)).stat()
             sig = "%d:%d:%d" % (st.st_ino, st.st_size, st.st_mtime_ns)
         except OSError:
-            sig = ""
+            st, sig = None, ""
         # the whole-file fold costs seconds on a long channel; reuse it while the file is unchanged
         if sig and rec.get("sig") == sig and isinstance(rec.get("open"), dict) and "relays" in rec:
             now_open = rec["open"]
         else:
             now_open = self.questions(mate)
             rec["sig"], rec["open"] = sig, now_open
-        self.relays(mate, rec, {i: q for i, q in now_open.items() if q.get("relay")})
+        self.relays(mate, rec, {i: q for i, q in now_open.items() if q.get("relay")}, snapshot=st)
         previous = {a["key"]: a for a in rec.get("asks", {}).values()}
         asks = rec["asks"] = {}
         for ident, q in now_open.items():
@@ -844,47 +859,52 @@ class Scan:
                        else "%d minutes" % minutes(NOW - pending[0]["first"]),
                        len(pending), "" if len(pending) == 1 else "s",
                        pending[0]["note"][:200], " and %d more" % (len(pending) - 1) if len(pending) > 1 else ""))
-            if self.report(mate + "-ask", {"first": first}, "blocked", line):
+            episode = rec.setdefault("esc_report", {"first": first})
+            if self.report(mate + "-ask", episode, "blocked", line):
                 rec["esc_first"], rec["esc_ids"] = first, esc_ids
                 if self.primary:
                     rec["captain_notified"] = True
                 for a in pending:
                     a["escalated"] = True
         elif not escalated and rec.get("esc_first"):
-            if self.report(mate + "-ask", {"first": rec["esc_first"]}, "resolved",
+            episode = rec.setdefault("esc_report", {"first": rec["esc_first"]})
+            if self.report(mate + "-ask", episode, "resolved",
                            "second mate %s's questions are answered" % mate):
                 rec.pop("esc_first")
+                rec.pop("esc_report", None)
                 rec.pop("esc_ids", None)
                 rec.pop("captain_notified", None)
         save(rec_path, rec)
 
-    def relay_tail(self, mate: str, rec: dict, now_open: dict):
+    def relay_tail(self, mate: str, rec: dict, now_open: dict, snapshot):
         seen = set(rec.get("tail_seen", []))
         tracked = {ident[:-17] for ident in rec.get("relays", {})}
         open_keys = {q["key"] for q in now_open.values()}
         seen.update(tracked | open_keys)
+        if snapshot is None:
+            rec.update(tail_offset=0, tail_inode=None, tail_seen=sorted(seen))
+            return {}, {}
+        inode = "%d:%d" % (snapshot.st_dev, snapshot.st_ino)
         try:
             with (self.state / ("%s.status" % mate)).open("rb") as channel:
                 st = os.fstat(channel.fileno())
-                inode = "%d:%d" % (st.st_dev, st.st_ino)
-                offset = rec.get("tail_offset", st.st_size)
-                restarted = "tail_offset" in rec and (rec.get("tail_inode") != inode or offset > st.st_size)
+                if (st.st_dev, st.st_ino) != (snapshot.st_dev, snapshot.st_ino):
+                    return {}, {}
+                offset = rec.get("tail_offset", snapshot.st_size)
+                restarted = "tail_offset" in rec and (rec.get("tail_inode") != inode or offset > snapshot.st_size)
                 if restarted:
                     offset = 0
                 channel.seek(offset)
-                tail = channel.read(st.st_size - offset)
+                tail = channel.read(snapshot.st_size - offset)
         except FileNotFoundError:
-            rec.update(tail_offset=0, tail_inode=None, tail_seen=sorted(seen))
             return {}, {}
         openings, last = {}, {}
-        for index, line in enumerate(tail.decode(errors="replace").splitlines()):
-            m = STATUS_RE.match(line)
-            if not m or not (m.group(2) or "").startswith("[key=keepalive-"):
+        for index, (key, verb, note) in enumerate(keyed_status_lines(tail.decode(errors="replace"))):
+            if not key.startswith("keepalive-"):
                 continue
-            key = m.group(2)[5:-1]
-            last[key] = (m.group(1), m.group(3).strip())
-            if m.group(1) == "blocked":
-                openings.setdefault(key, (index, m.group(3).strip()))
+            last[key] = (verb, note)
+            if verb == "blocked":
+                openings.setdefault(key, (index, note))
         candidates = {}
         for key, (index, note) in openings.items():
             verb, closing = last[key]
@@ -894,16 +914,16 @@ class Scan:
                 ident = key + "-" + hashlib.sha256(identity.encode()).hexdigest()[:16]
                 candidates[ident] = {"first": NOW, "up": False, "note": note}
         seen.update(openings)
-        rec.update(tail_offset=st.st_size, tail_inode=inode, tail_seen=sorted(seen))
+        rec.update(tail_offset=snapshot.st_size, tail_inode=inode, tail_seen=sorted(seen))
         return candidates, {key: value if value[0] in ("resolved", "captain-held") else None
                             for key, value in last.items()}
 
-    def relays(self, mate: str, rec: dict, now_open: dict, gone: bool = False) -> None:
+    def relays(self, mate: str, rec: dict, now_open: dict, gone: bool = False, snapshot=None) -> None:
         """Keep-alive escalations from a second mate: this home acts, else one level up."""
         previous = dict(rec.get("relays", {}))
         closures = {}
         if not gone:
-            candidates, closures = self.relay_tail(mate, rec, now_open)
+            candidates, closures = self.relay_tail(mate, rec, now_open, snapshot)
             previous.update(candidates)
         relays = rec["relays"] = {}
         for ident, q in now_open.items():
@@ -943,18 +963,15 @@ class Scan:
 
     def closing_note(self, mate: str, key: str):
         """(Verb, note) of the last line on <key> if that line closed it, else None."""
-        tag = "[key=%s]" % key
-        last = None
         try:
-            for line in (self.state / ("%s.status" % mate)).read_text(errors="replace").splitlines():
-                if tag in line:
-                    last = line
+            text = (self.state / ("%s.status" % mate)).read_text(errors="replace")
         except OSError:
             return None
-        m = STATUS_RE.match(last or "")
-        if not m or m.group(1) not in ("resolved", "captain-held"):
-            return None
-        return m.group(1), m.group(3).strip()
+        last = None
+        for line_key, verb, note in keyed_status_lines(text):
+            if line_key == key:
+                last = (verb, note)
+        return last if last and last[0] in ("resolved", "captain-held") else None
 
     def autoland(self) -> None:
         """Watchdog for configured but disarmed auto-land; see the module contract."""
@@ -1006,7 +1023,8 @@ class Scan:
             if any(r.get("up") for r in rec["relays"].values()):
                 save(rec_path, rec)
                 continue
-            if not rec.get("esc_first") or self.report(rec_path.stem + "-ask", {"first": rec["esc_first"]}, "resolved",
+            episode = rec.setdefault("esc_report", {"first": rec.get("esc_first")})
+            if not rec.get("esc_first") or self.report(rec_path.stem + "-ask", episode, "resolved",
                                                        "second mate %s left the fleet" % rec_path.stem):
                 rec_path.unlink(missing_ok=True)
         live = set()
