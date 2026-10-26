@@ -255,6 +255,7 @@ Delegate project work to your own crewmates with the normal firstmate lifecycle:
 Do not invent a second delegation system.
 Apply \`task-delivery\`'s implementation intervention policy: when a no-mistakes task exceeds 2h of implementation with zero runs, intervene within the next hour rather than leaving its worker implementing indefinitely.
 When a task reaches \`needs-decision\` or parks at a gate, load \`ask-user-authority\` and follow its 15-minute mate decision/escalation and default-continuation policy through the parent channel.
+Apply that skill's immediate-relay rule to open decisions during implementation, not only when the task finishes.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
 Never start a survey, audit, or "find improvements" sweep on your own initiative; that is not your job and it is unwanted.
@@ -470,6 +471,7 @@ $RULE1
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. Before reporting \`blocked:\`, follow "Act within your scope" above (try the obvious fix, then the project's documented path); report it only if both failed, naming what you checked and tried.
+   For unresolved product or design questions during implementation, load \`$FM_ROOT/.agents/skills/ask-user-authority/SKILL.md\` and apply "Early implementation questions" before rule 6: report early and continue only the provisional work that section permits.
 6. If a decision belongs above the implementation worker (product choices, destructive actions),
    append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
 $ASK_USER_BLOCK
