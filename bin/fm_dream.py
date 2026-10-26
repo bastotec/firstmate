@@ -1458,6 +1458,17 @@ def step_improve(ctx):
     return result
 
 
+def record_actions(ctx):
+    if ctx.dry_run or getattr(ctx, 'only', None) or ctx.facts.get('actions_written'):
+        return
+    life = ctx.facts.get('improve')
+    tonight = life['tonight'] if life else ctx.facts.get('charter_card') or []
+    with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
+        for a in tonight:
+            fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
+    ctx.facts['actions_written'] = True
+
+
 def step_track(ctx):
     """Track tonight's instructions PR through auto-land and record all actions,
     including nights without measurements; the header owns action criteria."""
@@ -1499,10 +1510,7 @@ def step_track(ctx):
     for c in skipped:
         tonight.append({'kind': 'instructions', 'what': str(c.get('change') or '')[:200], 'pr': None,
                         'state': 'skipped: %s' % str(c.get('why') or '')[:160]})
-    if not ctx.dry_run and not getattr(ctx, 'only', None):
-        with open(ctx.dir / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
-            for a in tonight:
-                fh.write(json.dumps(dict(a, date=ctx.day)) + '\n')
+    record_actions(ctx)
     taken = lambda a: (a.get('state') in ('open', 'merged and deployed', 'merged, deploy pending') and a.get('pr')
                        or str(a.get('state')).startswith(('dispatch ordered', 'applied to the charter'))
                        or a.get('state') == 'card raised')
@@ -2267,6 +2275,7 @@ def planned_code(ctx):
     for pending in ctx.facts.get('dropped_actions') or []:
         fresh = next((c for c in code if similar(pending['title'], c['title'])), None)
         if fresh is not None:
+            fresh['title'] = pending['title']
             fresh['retry_of'] = min(fresh.get('retry_of') or pending['retry_of'], pending['retry_of'])
         else:
             code.append(pending)
@@ -2473,8 +2482,8 @@ def alert_unfiled(ctx, lost):
             'hand it to its mate, or record what already covers it with bin/fm-dream.sh resolve.'
             % (len(lost), '' if len(lost) == 1 else 's', names))
     notice = ('fleet dreaming could not file %d decided changes: %s. Full list and errors: '
-              'state/dream/improve-actions.jsonl; bin/fm-dream.sh status.'
-              % (len(lost), names[:700]))
+              'state/dream/runs/%s.json.'
+              % (len(lost), names[:700], ctx.day))
     key = 'dream-file:%s' % ctx.day
     wake = os.environ.get('FM_DREAM_WAKE')
     argv = [wake, key, 'check: ' + text] if wake else [
@@ -3006,13 +3015,13 @@ def step_file(ctx):
         lost = ctx.facts.get('unfiled') or []
         if lost and not ctx.dry_run:
             result['status'] = 'failed'
-            result['unfiled'] = [a['what'] for a in lost]
             deadline = ctx.deadline
             ctx.deadline = time.time() + 12
             try:
                 told = alert_unfiled(ctx, lost)
             finally:
                 ctx.deadline = deadline
+                result['unfiled'] = [{'what': a['what'], 'state': a['state']} for a in lost]
             errors.insert(0, '%d decided change%s not filed, %s' % (len(lost), '' if len(lost) == 1 else 's', told))
             errors.extend('%s: %s' % (a['what'], a['state']) for a in lost)
         elif errors and not ctx.dry_run:
@@ -3122,6 +3131,7 @@ def cmd_run(args):
         """The run record's final state, written the same way for a completed and
         an interrupted run: latest.json included, so a terminated night still
         leaves the report a summary instead of the previous night's."""
+        record_actions(ctx)
         run['finished'] = iso(time.time())
         run['skills'] = ctx.facts.get('skills', [])
         run['skills_commit'] = ctx.facts.get('skills_commit')
