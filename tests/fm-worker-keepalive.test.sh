@@ -1490,6 +1490,101 @@ EOF
   pass "shared hold labels accept CSV and gh-view arrays without extra aliases or input modes"
 }
 
+# Case 10 (dave-tools, 2026-10-24..26): workers ended "done: ... ready-only DNM
+# freeze preserved; no edits" with their PR open, green and labelled
+# do-not-merge, and sat 17-22 h. A hold label alone made the done: worker look
+# healthy. A done: line in a freeze with its PR still open is not a finish: the
+# mate is woken to land or close it, and its parent hears of it; a freeze
+# without any PR stays undelivered; merging the PR clears it.
+test_done_in_a_freeze_with_an_open_pr_is_not_healthy() {
+  local dir channel
+  dir=$(make_home done-frozen ship)
+  make_secondmate "$dir" dave-tools
+  channel="$dir/parent/state/dave-tools.status"
+  printf 'pr=https://github.com/o/r/pull/51\n' >> "$dir/home/state/w1.meta"
+  status "$dir" "$T0" 'done: Read-only reattachment confirms PR 51 remains open/non-draft/DNM with 10 passed. Ready-only freeze retained; no edits, responses or recovery.'
+  make_pr "$dir" OPEN MERGEABLE CLEAN SUCCESS
+  jq '.labels = [{name: "do-not-merge"}]' "$dir/pr.json" > "$dir/pr-held.json"
+  mv "$dir/pr-held.json" "$dir/pr.json"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" "$T0"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 599))
+  assert_equals 0 "$(wake_count "$dir")" "a frozen done: worker woke its mate early"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 600))
+  assert_equals 1 "$(wake_count "$dir")" "a done: worker frozen on an open PR looked healthy"
+  assert_contains "$(wakes "$dir")" 'never an endpoint' "the wake lets the freeze stand"
+  assert_contains "$(wakes "$dir")" 'https://github.com/o/r/pull/51' "the wake does not name the open PR"
+  jq -e '.cond == "frozen"' "$dir/home/state/keepalive/w1.json" >/dev/null || fail "the freeze was not recorded as frozen"
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1200))
+  assert_grep "blocked [key=keepalive-dave-tools-w1-$T0]: worker w1 has been stuck (frozen)" "$channel" "the freeze did not reach the parent"
+  assert_grep 'landing or closing its open PR' "$channel" "the escalation does not say what would unstick it"
+  make_pr "$dir" MERGED UNKNOWN UNKNOWN SUCCESS
+  FM_KEEPALIVE_PR="$dir/bin/pr" scan "$dir" $((T0 + 1300))
+  assert_grep "resolved [key=keepalive-dave-tools-w1-$T0]: worker w1 is moving again" "$channel" "merging the PR did not clear the freeze"
+  jq -e '.cond == null' "$dir/home/state/keepalive/w1.json" >/dev/null || fail "a merged PR left the frozen episode open"
+
+  dir=$(make_home done-frozen-no-pr ship)
+  status "$dir" "$T0" 'done: preserved accepted read-only freeze, no edits, gate responses, monitor resume'
+  scan "$dir" "$T0"
+  scan "$dir" $((T0 + 600))
+  assert_equals 1 "$(wake_count "$dir")" "a frozen done: worker without a PR looked healthy"
+  jq -e '.cond == "undelivered"' "$dir/home/state/keepalive/w1.json" >/dev/null || fail "a freeze without a PR was not undelivered"
+  pass "a done: worker frozen on an open or missing PR wakes its mate to land or close it"
+}
+
+# A second mate whose parent channel cannot take the escalation (here the parent
+# binding is gone) must not retry it silently forever: the line falls through to
+# a captain notice from this home, once.
+test_undeliverable_parent_escalation_falls_through_to_the_captain() {
+  local dir
+  dir=$(make_home undeliverable ship)
+  make_secondmate "$dir" dave-tools
+  rm "$dir/home/.fm-secondmate-parent"
+  status "$dir" "$T0" 'blocked: the PR guard refused the push'
+  scan "$dir" $((T0 + 1200))
+  assert_equals 1 "$(wake_count "$dir")" "the blocked worker did not wake its mate"
+  scan "$dir" $((T0 + 1800))
+  assert_equals 1 "$(notice_count "$dir" 'worker w1 has been stuck (blocked)')" "an undeliverable parent escalation was dropped"
+  assert_equals 1 "$(notice_count "$dir" 'parent channel could not take it')" "the captain line does not say the channel is broken"
+  jq -e '.escalated == true' "$dir/home/state/keepalive/w1.json" >/dev/null || fail "the fall-through was not recorded"
+  scan "$dir" $((T0 + 2400))
+  assert_equals 1 "$(notice_count "$dir" .)" "the fall-through repeated"
+  pass "an escalation the parent channel cannot take falls through to the captain once"
+}
+
+# Case 10 (dave-tools, 2026-10-24): the keep-alive escalations for two frozen
+# workers reached the first mate and were closed by an "answered: ... false
+# positives" line and the mate's own "False unmerged alarm" line while the
+# workers stayed stuck. Closing a relay that never went up is not a fix: the
+# captain is told at once, and the record resolves when the owning watchdog does.
+test_relay_closed_without_a_fix_goes_up_at_once() {
+  local dir key record
+  dir=$(make_parent dropped-relay dave-tools)
+  key="keepalive-dave-tools-w1-$T0"
+  record="$dir/home/state/keepalive/asks/dave-tools.json"
+  ask "$dir" dave-tools "blocked [key=$key]: worker w1 has been stuck (unmerged) since 2027-01-15 08:00:00 UTC"
+  scan "$dir" "$T0"
+  ask "$dir" dave-tools "resolved [key=$key]: answered: false positive, PR 51 must remain unmerged"
+  scan "$dir" $((T0 + 60))
+  assert_equals 1 "$(notice_count "$dir" 'was closed without the stuck work moving')" "a dismissed relay was dropped"
+  assert_equals 1 "$(notice_count "$dir" 'false positive, PR 51 must remain unmerged')" "the captain line omits the closing line"
+  scan "$dir" $((T0 + 120))
+  scan "$dir" $((T0 + 3600))
+  assert_equals 1 "$(notice_count "$dir" .)" "a dismissed relay notified repeatedly"
+  ask "$dir" dave-tools "resolved [key=$key]: worker w1 is no longer unmerged"
+  scan "$dir" $((T0 + 3700))
+  assert_equals 1 "$(notice_count "$dir" 'stuck work is moving again')" "the watchdog's resolution did not close the dropped relay"
+  jq -e '.relays == {}' "$record" >/dev/null || fail "a resolved dropped relay stayed open"
+
+  dir=$(make_parent genuine-relay dave-tools)
+  ask "$dir" dave-tools "blocked [key=$key]: worker w1 has been stuck (blocked)"
+  scan "$dir" "$T0"
+  ask "$dir" dave-tools "resolved [key=$key]: worker w1 is moving again"
+  scan "$dir" $((T0 + 60))
+  scan "$dir" $((T0 + 3600))
+  assert_equals 0 "$(notice_count "$dir" .)" "a relay the watchdog resolved reached the captain"
+  pass "a relay closed without a fix reaches the captain at once and resolves with the watchdog"
+}
+
 test_approval_wait_excludes_action_demands_while_bound
 test_approval_wait_is_bounded_and_wakes_the_mate_to_decide
 test_hold_labelled_green_pr_is_ready_only_not_an_unmerged_demand
@@ -1498,3 +1593,6 @@ test_unreadable_approval_wait_keeps_pr_actions_excluded
 test_approval_wait_retires_escalation_and_restarts_recovery
 test_replaced_approval_wait_starts_its_own_episode
 test_shared_hold_label_inputs
+test_done_in_a_freeze_with_an_open_pr_is_not_healthy
+test_undeliverable_parent_escalation_falls_through_to_the_captain
+test_relay_closed_without_a_fix_goes_up_at_once
