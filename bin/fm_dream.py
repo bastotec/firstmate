@@ -2161,7 +2161,7 @@ def raised_titles(ctx):
         text = (ctx.dir / 'raised.jsonl').read_text(encoding='utf-8')
     except FileNotFoundError:
         return []
-    except OSError:
+    except (OSError, UnicodeError):
         return None
     for line in text.splitlines():
         try:
@@ -2259,7 +2259,29 @@ def step_triage(ctx):
 
 # --- file -------------------------------------------------------------------
 
-def file_improvements(ctx, already, rows, errors):
+def planned_code(ctx):
+    life = ctx.facts.get('improve')
+    tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
+    owners = ctx.config.get('owners') or {}
+    code = [dict(c) for c in (life or {}).get('changes') or [] if c['kind'] == 'code']
+    for pending in ctx.facts.get('dropped_actions') or []:
+        fresh = next((c for c in code if similar(pending['title'], c['title'])), None)
+        if fresh is not None:
+            fresh['retry_of'] = min(fresh.get('retry_of') or pending['retry_of'], pending['retry_of'])
+        else:
+            code.append(pending)
+    planned = []
+    for c in code:
+        mate = owners.get(c['repo'], 'primary') if c.get('repo') else c.get('mate') or 'primary'
+        entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
+                 'before': c['before'], 'state': 'not filed: file step stopped before add',
+                 **{k: c[k] for k in ('repo', 'change', 'fix', 'evidence', 'retry_of') if c.get(k)}}
+        tonight.append(entry)
+        planned.append((c, entry))
+    return planned
+
+
+def file_improvements(ctx, already, rows, errors, planned=None):
     """Publish code filings, card captain-only changes and held charter lines,
     then apply the remaining charter additions under the header's guards."""
     life = ctx.facts.get('improve')
@@ -2268,21 +2290,11 @@ def file_improvements(ctx, already, rows, errors):
     tonight = life['tonight'] if life else ctx.facts.setdefault('charter_card', [])
     owners = ctx.config.get('owners') or {}
     env = dict(os.environ, FM_HOME=str(ctx.home))
-    code = [c for c in changes if c['kind'] == 'code']
-    # earlier nights' decided changes that never got filed come back until filed or resolved
-    code += [c for c in ctx.facts.get('dropped_actions') or []
-             if not any(similar(c['title'], k['title']) for k in code)]
-    titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not code else
+    planned = planned_code(ctx) if planned is None else planned
+    titles, unchecked = ctx.facts.get('open_work') or ((None, None) if not planned else
                                                       open_items(ctx, ctx.config.get('repos') or DEFAULT_REPOS, owners))
-    for c in code:
-        mate = owners.get(c['repo'], 'primary') if c.get('repo') else c.get('mate') or 'primary'
-        entry = {'kind': 'code', 'what': c['title'], 'mate': mate, 'key': None, 'target': c['target'],
-                 'before': c['before'], 'state': 'not filed',
-                 # what a later night needs to file it again if tonight cannot
-                 **{k: c[k] for k in ('repo', 'change', 'fix', 'evidence') if c.get(k)}}
-        if c.get('retry_of'):
-            entry['retry_of'] = c['retry_of']
-        tonight.append(entry)
+    for c, entry in planned:
+        mate = entry['mate']
         if unchecked:
             entry['state'] = 'not filed: open work unreadable for %s' % ', '.join(sorted(unchecked))
             unfiled(ctx, entry)
@@ -2299,6 +2311,7 @@ def file_improvements(ctx, already, rows, errors):
             unfiled(ctx, entry)
             continue
         try:
+            entry['state'] = 'not filed: add did not complete'
             file_one(ctx, c, mate, entry, env, rows, errors, already)
         except (OSError, subprocess.TimeoutExpired) as exc:
             entry['state'] = '%s; stopped: %s' % (entry['state'], type(exc).__name__)
@@ -2441,7 +2454,8 @@ def dropped_actions(ctx):
     for what, row in latest.items():
         first = str(row.get('retry_of') or row.get('date') or '')
         if not (str(row.get('state') or '').startswith('not filed') and cutoff <= first
-                and str(row.get('date') or '') < ctx.day) or row.get('mate') in ctx.excluded:
+                and str(row.get('date') or '') < ctx.day) or row.get('mate') in ctx.excluded \
+                or mentions_excluded(ctx, json.dumps(row, ensure_ascii=False)):
             continue
         out.append({'kind': 'code', 'title': what, 'repo': row.get('repo'), 'change': row.get('change'),
                     'fix': row.get('fix') or '', 'evidence': row.get('evidence') or '', 'target': row.get('target'),
@@ -2454,10 +2468,13 @@ def alert_unfiled(ctx, lost):
     changes were not filed and why; when the wake cannot be queued, one captain
     notice through bin/fm-notify.sh instead. Each action's state says who was told."""
     env = dict(os.environ, FM_HOME=str(ctx.home))
-    names = '; '.join('"%s" (%s)' % (a['what'][:100], a['state'][:200]) for a in lost)
+    names = '; '.join('"%s" (%s)' % (a['what'], a['state'][:200]) for a in lost)
     text = ('fleet dreaming could not file %d decided change%s: %s. File each with bin/fm-tasks-axi.sh add and '
             'hand it to its mate, or record what already covers it with bin/fm-dream.sh resolve.'
-            % (len(lost), '' if len(lost) == 1 else 's', names))[:1800]
+            % (len(lost), '' if len(lost) == 1 else 's', names))
+    notice = ('fleet dreaming could not file %d decided changes: %s. Full list and errors: '
+              'state/dream/improve-actions.jsonl; bin/fm-dream.sh status.'
+              % (len(lost), names[:700]))
     key = 'dream-file:%s' % ctx.day
     wake = os.environ.get('FM_DREAM_WAKE')
     argv = [wake, key, 'check: ' + text] if wake else [
@@ -2465,7 +2482,7 @@ def alert_unfiled(ctx, lost):
         key, 'check: ' + text]
     def attempt(what, cmd):
         try:
-            r = ctx.run(cmd, env=env, timeout=30)
+            r = ctx.run(cmd, env=env, timeout=5)
         except (OSError, subprocess.TimeoutExpired) as exc:
             return '%s failed: %s' % (what, type(exc).__name__)
         return None if r.returncode == 0 else '%s failed: %s' % (what, tool_error(r)[:120])
@@ -2474,7 +2491,7 @@ def alert_unfiled(ctx, lost):
     if not wake_error:
         outcome = 'first mate woken'
     else:
-        notice_error = attempt('notice', [tool('fm-notify.sh', 'FM_DREAM_NOTIFY'), '--title', 'Fleet dreaming', text[:1000]])
+        notice_error = attempt('notice', [tool('fm-notify.sh', 'FM_DREAM_NOTIFY'), '--title', 'Fleet dreaming', notice])
         outcome = ('captain told (%s)' % wake_error if not notice_error
                    else 'nobody told: %s; %s' % (wake_error, notice_error))
     for a in lost:
@@ -2912,72 +2929,96 @@ def step_file(ctx):
             return {'status': 'partial', 'why': 'improve-actions.jsonl is unreadable; earlier unfiled changes not retried'}
         return {'status': 'nothing to file'}
     owners = ctx.config.get('owners') or {}
-    already = raised_titles(ctx)
-    if already is None:
-        return {'status': 'partial', 'why': 'raised.jsonl is unreadable; nothing filed'}
+    planned = planned_code(ctx)
     raised, errors = [], []
     if dropped is None:
         errors.append('improve-actions.jsonl is unreadable; earlier unfiled changes not retried')
     ctx.facts['raised'] = raised  # filled as each item lands, so a later failure keeps them
+    result = {'status': 'dry-run' if ctx.dry_run else 'done', 'raised': raised}
+    ctx.facts['file_result'] = result
     try:
-        file_improvements(ctx, already, raised, errors)
-    except subprocess.TimeoutExpired:
-        raise
-    except Exception as exc:  # noqa: BLE001 - the triage items still get filed
-        errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
-    for it in items:
-        if any(similar(it['title'], t) for t in already):
-            continue
-        if ctx.deadline and time.time() > ctx.deadline - 30:
-            errors.append('out of time before %s' % it['title'][:60])
-            break
-        mate = owners.get(it['repo'], 'primary')
-        body = '\n'.join(['Raised by fleet dreaming (bin/fm-dream.sh) on %s.' % ctx.day, '',
-                          'Why: ' + it.get('why', ''), '', 'Suggested fix: ' + it.get('fix', ''), '',
-                          'Evidence from the day:'] + ['- ' + e[:300] for e in it.get('evidence', [])[:4]])
-        if ctx.dry_run:
-            raised.append({'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': None, 'why': it.get('why')})
-            continue
-        bf = ctx.dir / '.body.md'
-        write_private(bf, body)
-        env = dict(os.environ, FM_HOME=str(ctx.home))
+        already = raised_titles(ctx)
+        if already is None:
+            errors.append('raised.jsonl is unreadable; nothing filed')
+            for _, entry in planned:
+                entry['state'] = 'not filed: raised.jsonl unreadable'
+            for it in items:
+                unfiled(ctx, {'kind': 'triage', 'what': it['title'], 'state': 'not filed: raised.jsonl unreadable'})
+            return result
         try:
-            r = add_task(ctx, [tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream',
-                               it['title'], '--kind', 'ship', '--repo', it['repo'], '--body-file', str(bf), '--json'],
-                         env)
-        finally:
-            bf.unlink()
-        key = task_key_of(r)
-        if r.returncode or not key:
-            lost = {'kind': 'triage', 'what': it['title'], 'state': 'not filed: add failed (%s)' % tool_error(r)}
-            errors.append('%s: %s' % (it['title'][:60], lost['state']))
-            unfiled(ctx, lost)
-            continue
-        row = {'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': key, 'why': it.get('why')}
-        if mate != 'primary':
+            file_improvements(ctx, already, raised, errors, planned)
+        except subprocess.TimeoutExpired:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the triage items still get filed
+            errors.append('improve actions failed: %s: %s' % (type(exc).__name__, str(exc)[:200]))
+        for it in items:
+            if any(similar(it['title'], t) for t in already):
+                continue
+            if ctx.deadline and time.time() > ctx.deadline - 30:
+                errors.append('out of time before %s' % it['title'][:60])
+                unfiled(ctx, {'kind': 'triage', 'what': it['title'], 'state': 'not filed: file step out of time'})
+                continue
+            mate = owners.get(it['repo'], 'primary')
+            body = '\n'.join(['Raised by fleet dreaming (bin/fm-dream.sh) on %s.' % ctx.day, '',
+                              'Why: ' + it.get('why', ''), '', 'Suggested fix: ' + it.get('fix', ''), '',
+                              'Evidence from the day:'] + ['- ' + e[:300] for e in it.get('evidence', [])[:4]])
+            if ctx.dry_run:
+                raised.append({'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': None, 'why': it.get('why')})
+                continue
+            bf = ctx.dir / '.body.md'
+            write_private(bf, body)
+            env = dict(os.environ, FM_HOME=str(ctx.home))
             try:
-                h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
-            except subprocess.TimeoutExpired:
-                h = subprocess.CompletedProcess([], 124, '', 'timed out')
-            if h.returncode:
-                # The move may have happened with only the receiver's wake failing,
-                # so the owner is not assumed back; the morning report flags it.
-                row['handoff'] = 'unconfirmed'
-                errors.append('%s: handoff to %s unconfirmed (%s)' % (key, mate, (h.stderr or h.stdout).strip()[:120]))
-        raised.append(row)
-        already.append(row['title'])
-        with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
-            fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
-    result = {'status': 'dry-run' if ctx.dry_run else ('partial' if errors else 'done'), 'raised': raised}
-    lost = ctx.facts.get('unfiled') or []
-    if lost and not ctx.dry_run:
-        # a decided change that was not filed is a failure, and the first mate hears of it now
-        told = alert_unfiled(ctx, lost)
-        result['status'] = 'failed'
-        result['unfiled'] = [a['what'] for a in lost]
-        errors.insert(0, '%d decided change%s not filed, %s' % (len(lost), '' if len(lost) == 1 else 's', told))
-    if errors:
-        result['why'] = '; '.join(errors)[:600]
+                r = add_task(ctx, [tool('fm-tasks-axi.sh', 'FM_DREAM_TASKS'), 'add', '--mint', '--prefix', 'dream',
+                                   it['title'], '--kind', 'ship', '--repo', it['repo'], '--body-file', str(bf), '--json'],
+                             env)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                unfiled(ctx, {'kind': 'triage', 'what': it['title'],
+                              'state': 'not filed: add failed (%s)' % type(exc).__name__})
+                raise
+            finally:
+                bf.unlink()
+            key = task_key_of(r)
+            if r.returncode or not key:
+                lost = {'kind': 'triage', 'what': it['title'], 'state': 'not filed: add failed (%s)' % tool_error(r)}
+                errors.append('%s: %s' % (it['title'][:60], lost['state']))
+                unfiled(ctx, lost)
+                continue
+            row = {'title': it['title'], 'repo': it['repo'], 'mate': mate, 'key': key, 'why': it.get('why')}
+            if mate != 'primary':
+                try:
+                    h = ctx.run([tool('fm-backlog-handoff.sh', 'FM_DREAM_HANDOFF'), mate, key], env=env, timeout=120)
+                except subprocess.TimeoutExpired:
+                    h = subprocess.CompletedProcess([], 124, '', 'timed out')
+                if h.returncode:
+                    # The move may have happened with only the receiver's wake failing,
+                    # so the owner is not assumed back; the morning report flags it.
+                    row['handoff'] = 'unconfirmed'
+                    errors.append('%s: handoff to %s unconfirmed (%s)' % (key, mate, (h.stderr or h.stdout).strip()[:120]))
+            raised.append(row)
+            already.append(row['title'])
+            with open(ctx.dir / 'raised.jsonl', 'a', encoding='utf-8') as fh:
+                fh.write(json.dumps(dict(row, at=ctx.now)) + '\n')
+    finally:
+        for _, entry in planned:
+            if entry['state'].startswith('not filed') and entry not in (ctx.facts.get('unfiled') or []):
+                unfiled(ctx, entry)
+        lost = ctx.facts.get('unfiled') or []
+        if lost and not ctx.dry_run:
+            result['status'] = 'failed'
+            result['unfiled'] = [a['what'] for a in lost]
+            deadline = ctx.deadline
+            ctx.deadline = time.time() + 12
+            try:
+                told = alert_unfiled(ctx, lost)
+            finally:
+                ctx.deadline = deadline
+            errors.insert(0, '%d decided change%s not filed, %s' % (len(lost), '' if len(lost) == 1 else 's', told))
+            errors.extend('%s: %s' % (a['what'], a['state']) for a in lost)
+        elif errors and not ctx.dry_run:
+            result['status'] = 'partial'
+        if errors:
+            result['why'] = '; '.join(errors)[:600]
     return result
 
 
@@ -3121,9 +3162,11 @@ def cmd_run(args):
                 try:
                     run['steps'][name] = globals()['step_' + name](ctx)
                 except subprocess.TimeoutExpired:
-                    run['steps'][name] = {'status': 'timed out', 'why': 'over its %d s budget' % BUDGET[name]}
+                    failed_file = ctx.facts.get('file_result') if name == 'file' and ctx.facts.get('unfiled') else None
+                    run['steps'][name] = failed_file or {'status': 'timed out', 'why': 'over its %d s budget' % BUDGET[name]}
                 except Exception as exc:  # noqa: BLE001 - one step never stops the next
-                    run['steps'][name] = {'status': 'failed', 'why': '%s: %s' % (type(exc).__name__, str(exc)[:300])}
+                    failed_file = ctx.facts.get('file_result') if name == 'file' and ctx.facts.get('unfiled') else None
+                    run['steps'][name] = failed_file or {'status': 'failed', 'why': '%s: %s' % (type(exc).__name__, str(exc)[:300])}
             ctx.deadline = None
             run['steps'][name]['seconds'] = round(time.time() - began)
             if WAITED.get(name):
@@ -3142,9 +3185,10 @@ def cmd_run(args):
         # previous night. The step in flight is interrupted; the ones that
         # completed keep what they earned, and the run is partial.
         if interrupted['name'] and interrupted['name'] not in run['steps']:
-            run['steps'][interrupted['name']] = {
-                'status': 'interrupted', 'seconds': round(time.time() - interrupted['began']),
-                'why': str(sys.exc_info()[1])[:120] or 'interrupted'}
+            run['steps'][interrupted['name']] = (
+                ctx.facts['file_result'] if interrupted['name'] == 'file' and ctx.facts.get('unfiled') else {
+                    'status': 'interrupted', 'seconds': round(time.time() - interrupted['began']),
+                    'why': str(sys.exc_info()[1])[:120] or 'interrupted'})
         finalize(force_partial=True)
         return 1
     finally:
@@ -3173,11 +3217,12 @@ def cmd_status(args):
 
 def cmd_resolve(args):
     """Record what became of a decided code change a night could not file:
-    'covered by <link>' or 'filed as <key>'. It appends one row per matching
-    action to improve-actions.jsonl, dated today and naming the night it
+    'covered by <link>' or 'filed as <key>'. It appends one outcome row
+    to improve-actions.jsonl, dated today and naming the night it
     resolves, so the file step stops retrying it and the next report shows it."""
-    if args.state.strip().lower().startswith('not filed'):
-        print('fm-dream: --state must say what covers the change, not that it is unfiled', file=sys.stderr)
+    state = args.state.strip()
+    if not re.fullmatch(r'(?:covered by|filed as)\s+\S.*', state):
+        print("fm-dream: --state must be 'covered by <link>' or 'filed as <key>'", file=sys.stderr)
         return 2
     d = Path(args.home) / 'state' / 'dream'
     lock_fd = os.open(d / '.lock', os.O_CREAT | os.O_WRONLY, 0o600)
@@ -3198,18 +3243,25 @@ def cmd_resolve(args):
         except (OSError, ValueError) as exc:
             print('fm-dream: improve-actions.jsonl unreadable: %s' % exc, file=sys.stderr)
             return 1
-        want = args.what.lower()
-        found = [r for w, r in latest.items() if want in w.lower() and str(r.get('state') or '').startswith('not filed')
-                 and (not args.date or args.date in (r.get('date'), r.get('retry_of')))]
+        want = args.what.strip().lower()
+        pending = [r for r in latest.values() if str(r.get('state') or '').startswith('not filed')
+                   and (not args.date or args.date in (r.get('date'), r.get('retry_of')))]
+        found = [r for r in pending if want == r['what'].lower()]
+        if not found and want:
+            found = [r for r in pending if want in r['what'].lower()]
         if not found:
             print('fm-dream: no unfiled code change matches %r' % args.what, file=sys.stderr)
             return 1
+        if len(found) != 1:
+            print('fm-dream: ambiguous action %r; candidates: %s' %
+                  (args.what, '; '.join(r['what'] for r in found)), file=sys.stderr)
+            return 1
+        r = found[0]
+        row = dict(r, state=state, resolves=r.get('retry_of') or r.get('date'), date=day)
+        row.pop('retry_of', None)
         with open(d / 'improve-actions.jsonl', 'a', encoding='utf-8') as fh:
-            for r in found:
-                row = dict(r, state=args.state.strip(), resolves=r.get('retry_of') or r.get('date'), date=day)
-                row.pop('retry_of', None)
-                fh.write(json.dumps(row) + '\n')
-                print(json.dumps(row, ensure_ascii=False))
+            fh.write(json.dumps(row) + '\n')
+        print(json.dumps(row, ensure_ascii=False))
         return 0
     finally:
         os.close(lock_fd)
