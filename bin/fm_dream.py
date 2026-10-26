@@ -197,8 +197,11 @@ is recorded and never stops the next:
            Only when the wake cannot be queued does the captain get one
            bin/fm-notify.sh notice; each unfiled state records the alert outcome.
            tests/fm-dream.test.sh covers filing, retry, resolution and alert failures.
-           Command timeouts preserve successful filings and allow remaining triage
-           work while the step budget remains. Dreaming never pushes to or opens
+           Successful filings survive later timeouts or interruptions; recoverable
+           improve-action timeouts allow triage work while the step budget remains.
+           When an exception or exhausted budget stops filing, every remaining kept
+           triage item joins the unfiled alert and run record.
+           Dreaming never pushes to or opens
            PRs on harness repositories, except the instructions step's one PR on
            firstmate, through the gate.
   memory   runs the captain memory's upkeep (bin/fm_captain_memory.py) and adds
@@ -277,8 +280,10 @@ Files under <home>/state/dream/:
   improve.jsonl      one metrics line per published night, for night-over-night change
   improve-actions.jsonl  action outcomes for the next report, appended by track
                      or, if track did not write them, run finalization (never for
-                     --only or --dry-run). Finalization also records decided code
-                     changes when file did not run, as unfiled with its status,
+                     --only or --dry-run). A write failure marks track failed but
+                     does not prevent publication of runs/<date>.json or latest.json.
+                     Finalization also records decided code changes when file did
+                     not run, as unfiled with its status,
                      and uses the file-step alert policy above.
                      Code rows keep repo, change, fix and evidence for retry;
                      retry_of preserves the original decision date across nights.
