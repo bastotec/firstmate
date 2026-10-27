@@ -47,7 +47,8 @@ Resume fleet supervision immediately after the decision lands.
 
 ## A parked run is never left waiting
 
-When a task reaches `needs-decision` or parks at a gate, its mate owns the decision first: within one hour of that event, settle it from standing captain rulings and accepted intent, or ask its own first mate through the parent channel.
+When a task reaches `needs-decision`, reports a blocker before validation, or parks at a gate, its mate owns the decision first: within one hour of that event, settle it from standing captain rulings and accepted intent, or ask its own first mate through the parent channel.
+Apply the 2026-10-16 in-scope-fix and 2026-10-18 retry-or-retire rulings to those choices rather than requesting endorsement for routine repairs or unfinished-work recovery.
 An unresolved question must be raised within that hour, not left silently paused, including when no validation run has started.
 The escalation is one plain question with 2-3 options and the mate's recommendation.
 For a default already within accepted intent and the mate's authority, return that decision to the same worker under "Return the decision" and keep the task moving without waiting for endorsement.
