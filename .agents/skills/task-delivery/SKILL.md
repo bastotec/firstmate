@@ -27,6 +27,7 @@ A semantic conflict a worker reports is yours to decide or escalate, never to ha
 ## Implementation intervention
 
 The ship template in `bin/fm-brief.sh` owns worker implementation deadlines, local pre-run checks, and repeated-failure root-cause notes.
+At dispatch, identify the smallest independently shippable slice of accepted intent with the worker so validation can start under the ship template's cadence instead of following completion of every slice.
 At dispatch and each supervision review, compare no-mistakes tasks' implementation age with their actual run history rather than treating a prior status event as proof that validation started.
 When a task passes 2h of implementation with zero runs, its mate intervenes within the next hour: narrow to the smallest reviewable slice of accepted intent, decide an in-scope open question under `ask-user-authority`, or split the task into bounded deliverables.
 Apply the accepted-intent decision policy directly rather than seeking endorsement for a choice already within the mate's authority.

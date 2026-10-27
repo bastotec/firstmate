@@ -253,7 +253,7 @@ You are in an isolated firstmate home. The local \`AGENTS.md\` is your job descr
 $PROJECT_CLONES_NOTE
 Delegate project work to your own crewmates with the normal firstmate lifecycle: brief, spawn, status, watcher, steer, teardown, and recovery.
 Do not invent a second delegation system.
-Apply \`task-delivery\`'s implementation intervention policy: when a no-mistakes task exceeds 2h of implementation with zero runs, intervene within the next hour rather than leaving its worker implementing indefinitely.
+At dispatch, require each no-mistakes worker to follow the ship template's implementation and validation cadence in \`bin/fm-brief.sh\`, and apply \`task-delivery\`'s implementation intervention policy when that cadence slips.
 When a task reaches \`needs-decision\` or parks at a gate, load \`ask-user-authority\` and apply its mate-first, one-hour settle-or-ask policy through the parent channel.
 You do not generate your own work.
 Act only on tasks the main firstmate routes to you.
@@ -441,7 +441,7 @@ If the top-level path is the primary checkout or not the worktree you were launc
 1. First action: create your branch: \`git checkout -b fm/$ID\`$SETUP2
 
 # Implementation and validation cadence
-For a no-mistakes task, start the first no-mistakes run as soon as a minimal reviewable slice of the accepted intent is committed, and no later than 2h after spawn; do not wait for the whole change to be finished.
+For a no-mistakes task, first split the accepted intent into the smallest slice that can ship on its own, and start the first no-mistakes run as soon as that slice is committed, no later than 2h after spawn; do not finish every slice before starting validation.
 Tell your mate what remains, and use the pipeline's fix rounds to refine the change through its supported response flow.
 Report anything blocking a run to your mate immediately rather than leaving it in implementation, so the mate can repair the obstacle or narrow or split the task under \`task-delivery\`'s implementation intervention policy.
 Before every no-mistakes run, execute the repository's own documented local test and lint commands and require them to pass, following its targeted-test policy where provided.
